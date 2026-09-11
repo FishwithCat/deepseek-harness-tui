@@ -9,6 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SelectItem } from '@earendil-works/pi-tui'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandExecution } from '@deepseek-ai/dsh-commands'
+import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-commands'
 
 /** One local command the composer handles without the registry. */
@@ -28,6 +29,7 @@ export const LOCAL_COMMANDS: readonly LocalCommand[] = [
   { name: 'sessions', description: 'List stored sessions', takesInput: false },
   { name: 'resume', description: 'Resume a stored session by id', takesInput: true },
   { name: 'model', description: 'Show or switch the model route', takesInput: true },
+  { name: 'effort', description: 'Show or switch reasoning effort', takesInput: true },
   { name: 'quit', description: 'Exit the TUI', takesInput: false },
 ]
 
@@ -125,4 +127,51 @@ export async function listModelChoices(ctx: Context): Promise<ModelChoice[]> {
     }
   }
   return choices
+}
+
+/** One selectable reasoning effort, or the routed model's provider default. */
+export interface EffortChoice {
+  /** Opaque effort id the adapter accepts, or undefined to send no effort. */
+  effort: ReasoningEffortId | undefined
+  /** Label shown in the picker. */
+  label: string
+  /** Supporting detail shown beside the label. */
+  description: string
+}
+
+/**
+ * List the reasoning efforts one routed model declares.
+ *
+ * A route whose adapter declares no efforts has no effort control at all. A
+ * route that declares efforts without a default also accepts the provider's own
+ * behavior, which the first choice clears back to; when the adapter does
+ * declare a default, selecting that effort is the same request, so no separate
+ * clear is offered.
+ * @param ctx - context carrying the LLM registry.
+ * @param route - the routed provider and model.
+ * @returns the selectable efforts in adapter order, or undefined when the route declares none.
+ * @throws when the route has no registered adapter or its metadata is invalid.
+ */
+export async function listEffortChoices(
+  ctx: Context,
+  route: { provider: string; model: string },
+): Promise<EffortChoice[] | undefined> {
+  const info = await ctx.llm.resolveModelInfo(route.provider, route.model)
+  const reasoning = info.reasoning
+  if (reasoning === undefined) return undefined
+  const clearToProviderDefault: EffortChoice[] = reasoning.defaultEffort === undefined
+    ? [{
+      effort: undefined,
+      label: 'Provider default',
+      description: 'Send no effort and let the provider decide',
+    }]
+    : []
+  return [
+    ...clearToProviderDefault,
+    ...reasoning.efforts.map(effort => ({
+      effort: effort.id,
+      label: effort.name,
+      description: effort.description ?? String(effort.id),
+    })),
+  ]
 }

@@ -12,10 +12,10 @@ import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
-import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm'
+import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
-import type { LlmResolvedModelInfo, ModelModality, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
+import type { LlmModelInfo, LlmModelReasoningInfo, LlmResolvedModelInfo, ModelModality, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
@@ -45,13 +45,23 @@ interface Script {
   afterPrompt(session: Agent['session'], message: UserMessage): Promise<void> | void
 }
 
-/** An adapter declaring one exact route's input modalities, so the image preflight can be driven. */
-class ModalityAdapter extends LlmAdapter {
+/** An adapter over one exact route's catalog, declared modalities, and reasoning efforts. */
+class ScriptedAdapter extends LlmAdapter {
   /**
+   * @param models - the advertised catalog; empty means the provider advertises nothing.
    * @param modalities - the declared image capability; undefined means unknown.
+   * @param reasoning - the declared reasoning efforts; undefined means the route has none.
    */
-  constructor(private readonly modalities: readonly ModelModality[] | undefined) {
+  constructor(
+    private readonly models: readonly LlmModelInfo[],
+    private readonly modalities: readonly ModelModality[] | undefined,
+    private readonly reasoning: LlmModelReasoningInfo | undefined,
+  ) {
     super()
+  }
+
+  override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    return Promise.resolve(this.models.filter(model => model.provider === provider))
   }
 
   override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
@@ -60,11 +70,27 @@ class ModalityAdapter extends LlmAdapter {
       id: model,
       name: model,
       ...this.modalities === undefined ? {} : { inputModalities: this.modalities },
+      ...this.reasoning === undefined ? {} : { reasoning: this.reasoning },
     })
   }
 
   override stream(): AsyncIterable<StreamChunk> {
     return { [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error('unused adapter stream')) }) }
+  }
+}
+
+/**
+ * The DeepSeek-shaped effort set used by the effort tests.
+ * @returns declared efforts whose default is `high`.
+ */
+function effortInfo(): LlmModelReasoningInfo {
+  return {
+    efforts: [
+      { id: ReasoningEffortId('off'), name: 'Off' },
+      { id: ReasoningEffortId('low'), name: 'Low' },
+      { id: ReasoningEffortId('high'), name: 'High' },
+    ],
+    defaultEffort: ReasoningEffortId('high'),
   }
 }
 
@@ -94,6 +120,19 @@ function plain(text: string): string {
 }
 
 /**
+ * The frame the alternate-screen renderer last composited, with styles removed.
+ * @param app - the running application.
+ * @returns one entry per terminal row.
+ */
+function screen(app: TuiApp): string[] {
+  // The renderer owns its composited rows, and the written byte stream alone
+  // does not say what a terminal ends up showing; the layout tests read the
+  // frame the renderer keeps for its own differential repaints.
+  const renderer = (app as unknown as { tui: { previousScreen: string[] } }).tui
+  return renderer.previousScreen.map(line => plain(line).replaceAll('\u001b]8;;\u0007', ''))
+}
+
+/**
  * Boot the app over the real registries and a scripted Agent factory.
  * @param script - how the scripted Agent reacts to a prompt.
  * @param options - screen mode plus the optional measurement, compaction, attachment, and adapter rows.
@@ -107,7 +146,9 @@ async function bench(
     compaction?: boolean
     projections?: boolean
     attachments?: boolean
+    models?: readonly LlmModelInfo[]
     modalities?: readonly ModelModality[]
+    reasoning?: LlmModelReasoningInfo
   } = {},
 ): Promise<Fixture> {
   const ctx = new Context()
@@ -117,7 +158,9 @@ async function bench(
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await ctx.plugin(LlmRuntime)
-  if (options.modalities !== undefined) ctx.llm.registerAdapter(['test-provider'], new ModalityAdapter(options.modalities))
+  if (options.models !== undefined || options.modalities !== undefined || options.reasoning !== undefined) {
+    ctx.llm.registerAdapter(['test-provider'], new ScriptedAdapter(options.models ?? [], options.modalities, options.reasoning))
+  }
   if (options.attachments === true) {
     const home = await mkdtemp(join(tmpdir(), 'dsh-tui-attachments-'))
     homes.push(home)
@@ -221,9 +264,113 @@ describe('TuiApp', () => {
     test.terminal.feed('/help')
     test.terminal.feed('\r')
     await vi.waitFor(() => { expect(test.terminal.output).toContain('/quit') })
+    expect(plain(test.terminal.output)).toContain('/effort')
     test.terminal.feed('/definitely-not-a-command')
     test.terminal.feed('\r')
     await vi.waitFor(() => { expect(test.terminal.output).toContain('unknown command') })
+    await test.app.stop(0)
+  })
+
+  it('switches the model route from the picker, and applies nothing when it is dismissed', async () => {
+    const test = await bench({ afterPrompt: () => {} }, {
+      screen: 'alternate',
+      models: [{ provider: 'test-provider', id: 'other-model', name: 'Other Model' }],
+    })
+    test.terminal.feed('/model')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Select a model') })
+    test.terminal.feed('\x1b')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Select a model'))).toBe(false)
+    })
+    test.terminal.feed('/model')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Select a model'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('model set to test-provider/other-model')
+    })
+    await test.app.stop(0)
+  })
+
+  it('switches the model route from the command input and rejects a malformed one', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { models: [] })
+    test.terminal.feed('/model test-provider/other-model')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('model set to test-provider/other-model')
+    })
+    test.terminal.feed('/model malformed')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('expected <provider>/<model>, got "malformed"')
+    })
+    await test.app.stop(0)
+  })
+
+  it('switches reasoning effort from the picker and reports it in the footer', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { reasoning: effortInfo() })
+    test.terminal.feed('/effort')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Select reasoning effort') })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('reasoning effort set to off') })
+    expect(plain(test.terminal.output)).toContain('test-model • off')
+    await test.app.stop(0)
+  })
+
+  it('leaves the effort unchanged when the picker is dismissed', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate', reasoning: effortInfo() })
+    test.terminal.feed('/effort')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Select reasoning effort') })
+    test.terminal.feed('\x1b')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Select reasoning effort'))).toBe(false)
+    })
+    expect(plain(test.terminal.output)).not.toContain('reasoning effort set to')
+    await test.app.stop(0)
+  })
+
+  it('switches reasoning effort from the command input and rejects an unknown one', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { reasoning: effortInfo() })
+    test.terminal.feed('/effort low')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('reasoning effort set to low') })
+    test.terminal.feed('/effort nope')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('expected one of off, low, high') })
+    await test.app.stop(0)
+  })
+
+  it('reports a route that declares no reasoning effort', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { modalities: ['text'] })
+    test.terminal.feed('/effort')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('test-provider/test-model declares no reasoning effort')
+    })
+    await test.app.stop(0)
+  })
+
+  it('clears back to the provider default when the route declares no default effort', async () => {
+    const info = effortInfo()
+    const test = await bench({ afterPrompt: () => {} }, { reasoning: { efforts: info.efforts } })
+    test.terminal.feed('/effort high')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('reasoning effort set to high') })
+    test.terminal.feed('/effort nope')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('expected one of off, low, high,') })
+    test.terminal.feed('/effort')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Provider default') })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('reasoning effort set to the provider default')
+    })
     await test.app.stop(0)
   })
 
@@ -253,6 +400,76 @@ describe('TuiApp', () => {
     expect(test.terminal.output).toContain('\x1b[?1049h')
     await test.app.stop(0)
     expect(test.exits).toEqual([0])
+  })
+
+  it('shows a modal picker as plain rows above the composer, without the transcript showing through', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    for (let index = 0; index < 3; index += 1) {
+      test.terminal.feed('/help')
+      test.terminal.feed('\r')
+    }
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('/quit') })
+    const pending = test.app.choose('Select a model', [
+      { value: 'deepseek-official/deepseek-flash', label: 'deepseek-official/deepseek-flash', description: 'DeepSeek-V4-Flash' },
+    ])
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Select a model') })
+    const rows = screen(test.app)
+    const title = rows.findIndex(row => row.trim() === 'Select a model')
+    expect(title).toBeGreaterThan(-1)
+    // The panel owns its rows: no transcript text survives beside or between them.
+    for (const row of rows.slice(title, title + 3)) {
+      expect(row).not.toContain('/help')
+      expect(row).not.toContain('List available commands')
+    }
+    expect(rows[title]).toBe('Select a model'.padEnd(test.terminal.columns))
+    // It sits as the transcript's next lines, directly above the composer.
+    const composer = rows.findIndex(row => row.includes('Enter send'))
+    expect(composer).toBeGreaterThan(title + 3)
+    expect(rows[composer - 1]).toMatch(/^─+$/)
+    expect(rows[title + 3]).toBe(rows[composer - 1])
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ value: 'deepseek-official/deepseek-flash' })
+    await test.app.stop(0)
+  })
+
+  it('shows a long model route in full instead of shortening the value column', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    const route = 'deepseek-official/deepseek-v4-flash-vision-exp'
+    const pending = test.app.choose('Select a model', [
+      { value: route, label: route, description: 'DeepSeek-V4-Flash-Vision-Exp' },
+    ])
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Select a model') })
+    const rendered = screen(test.app).join('\n')
+    expect(rendered).toContain(`→ ${route}`)
+    expect(rendered).toContain('DeepSeek-V4-Flash-Vision-Exp')
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ value: route })
+    await test.app.stop(0)
+  })
+
+  it('scrolls a picker longer than the panel budget inside the panel', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    const items = Array.from({ length: 20 }, (_, index) => ({
+      value: `model-${String(index)}`,
+      label: `model-${String(index)}`,
+      description: `Model ${String(index)}`,
+    }))
+    const pending = test.app.choose('Select a model', items)
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Select a model') })
+    const rows = screen(test.app)
+    const title = rows.findIndex(row => row.trim() === 'Select a model')
+    expect(rows[title + 2]).toContain('model-0')
+    expect(rows.join('\n')).toContain('(1/20)')
+    // The budget shows ten items and scrolls the rest, with the panel still
+    // ending on the composer's top border.
+    expect(rows.filter(row => /model-\d/.test(row))).toHaveLength(10)
+    const composer = rows.findIndex(row => row.includes('Enter send'))
+    const lastModel = rows.findLastIndex(row => /model-\d/.test(row))
+    expect(rows[lastModel + 1]).toContain('(1/20)')
+    expect(rows[lastModel + 2]).toBe(rows[composer - 1])
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ value: 'model-0' })
+    await test.app.stop(0)
   })
 
   it('reports context occupancy and the automatic policy in the footer', async () => {

@@ -213,10 +213,31 @@ export class TranscriptView implements Component {
   }
 }
 
+/** Tallest prompt panel, so a long picker does not fill a tall terminal. */
+const PROMPT_PANEL_MAX_ROWS = 18
+/** Rows a prompt spends outside its body: the title and the blank row under it. */
+export const PROMPT_PANEL_CHROME_ROWS = 2
+
 /**
- * A modal panel: a titled frame that forwards keyboard input to the control it
- * wraps. The renderer focuses the component passed to `showOverlay`, and a bare
- * container does not forward keys, so the panel is the focused component.
+ * Row budget for one prompt panel on a terminal with `rows` rows left to it.
+ * @param rows - rows available to the panel, excluding any pinned footer.
+ * @returns the largest panel height, keeping at least one body row.
+ */
+export function promptPanelRows(rows: number): number {
+  return Math.max(PROMPT_PANEL_CHROME_ROWS + 1, Math.min(PROMPT_PANEL_MAX_ROWS, rows - 2))
+}
+
+/**
+ * A modal panel: a title, a blank row, and the control that handles keys. The
+ * renderer focuses the component passed to `showOverlay`, and a bare container
+ * does not forward keys, so the panel is the focused component.
+ *
+ * The panel reads as ordinary output rather than a dialog: no border, left
+ * aligned like a transcript row. Every row is padded to the width the caller
+ * passes, though, because the renderer composites an overlay over the row it
+ * covers and leaves the rest of that row as the transcript printed it; padding
+ * the full row is what keeps the transcript from showing through beside the
+ * body, which would read as one garbled line.
  */
 export class PromptPanel implements Component, Focusable {
   /** Set by the renderer when this panel owns the keyboard. */
@@ -245,16 +266,19 @@ export class PromptPanel implements Component, Focusable {
   }
 
   /**
-   * Render the titled panel.
+   * Render the title and body, filling every row the overlay covers.
    * @param width - the viewport width in columns.
-   * @returns the panel lines, each within `width`.
+   * @returns the panel lines, each exactly `width` columns wide.
    */
   render(width: number): string[] {
-    const lines = [truncateToWidth(this.theme.bold(this.title), width), '']
-    for (const line of this.body.render(width)) {
-      lines.push(visibleWidth(line) > width ? truncateToWidth(line, width) : line)
-    }
-    return lines
+    const available = Math.max(1, width)
+    const lines = [this.theme.bold(this.title), '', ...this.body.render(available)]
+    return lines.map(line => this.row(line, available))
+  }
+
+  private row(text: string, available: number): string {
+    const clipped = visibleWidth(text) > available ? truncateToWidth(text, available, '…') : text
+    return clipped + ' '.repeat(Math.max(0, available - visibleWidth(clipped)))
   }
 }
 

@@ -3,20 +3,20 @@
  * the rows the terminal renders.
  */
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { CURSOR_MARKER, Editor, visibleWidth } from '@earendil-works/pi-tui'
-import type { TUI } from '@earendil-works/pi-tui'
+import { CURSOR_MARKER, Editor, SelectList, visibleWidth } from '@earendil-works/pi-tui'
+import type { Component, TUI } from '@earendil-works/pi-tui'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord, StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import { Transcript } from '../src/transcript.ts'
-import { PlaceholderEditor, StatusBar, TranscriptView, modelLabel, summarizeToolArguments } from '../src/views.ts'
+import { PROMPT_PANEL_CHROME_ROWS, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, summarizeToolArguments } from '../src/views.ts'
 import type { TuiStatus } from '../src/views.ts'
-import { createTheme, editorTheme } from '../src/ansi.ts'
+import { createTheme, editorTheme, selectListTheme } from '../src/ansi.ts'
 
 const contexts: Context[] = []
 afterEach(async () => {
@@ -489,6 +489,90 @@ describe('PlaceholderEditor', () => {
     view.handleInput('x')
     expect(editor.getText()).toBe('x')
     view.invalidate()
+  })
+})
+
+describe('PromptPanel', () => {
+  /**
+   * Build one picker panel.
+   * @returns the panel and its title.
+   */
+  function panel(): { view: PromptPanel; title: string } {
+    const theme = createTheme(false)
+    const list = new SelectList(
+      [{ value: 'deepseek-official/deepseek-flash', label: 'deepseek-official/deepseek-flash', description: 'DeepSeek-V4-Flash' }],
+      1,
+      selectListTheme(theme),
+    )
+    const title = 'Select a model'
+    return { view: new PromptPanel(title, theme, list), title }
+  }
+
+  it('reads as output lines while filling every row the overlay covers', () => {
+    const { view, title } = panel()
+    const lines = view.render(60)
+    for (const line of lines) expect(visibleWidth(line)).toBe(60)
+    expect(lines[0]).toBe(title.padEnd(60))
+    expect(lines[1]).toBe(' '.repeat(60))
+    expect(lines[2]).toMatch(/^→ \S+ +DeepSeek-V4-Flash +$/)
+  })
+
+  it('gives the body the full width it renders at', () => {
+    const { view } = panel()
+    const lines = view.render(100)
+    for (const line of lines) expect(visibleWidth(line)).toBe(100)
+    expect(lines[0]).toBe('Select a model'.padEnd(100))
+    expect(lines[2]).toContain('DeepSeek-V4-Flash')
+    expect(visibleWidth(lines[2] ?? '')).toBe(100)
+  })
+
+  it('keeps a long title and every body line inside a narrow panel', () => {
+    const theme = createTheme(false)
+    const list = new SelectList(
+      [{ value: 'x', label: 'a value wider than the panel', description: 'description' }],
+      1,
+      selectListTheme(theme),
+    )
+    const view = new PromptPanel('a title that cannot fit', theme, list)
+    for (const width of [12, 24, 76, 120]) {
+      for (const line of view.render(width)) expect(visibleWidth(line)).toBe(width)
+    }
+  })
+
+  it('budgets panel rows around its chrome', () => {
+    expect(promptPanelRows(4)).toBe(PROMPT_PANEL_CHROME_ROWS + 1)
+    expect(promptPanelRows(40)).toBe(18)
+    expect(promptPanelRows(13)).toBe(11)
+  })
+
+  it('clips a body line wider than the panel', () => {
+    const theme = createTheme(false)
+    const body: Component = { render: () => ['x'.repeat(200)], invalidate: () => {} }
+    const view = new PromptPanel('wide', theme, body)
+    const lines = view.render(20)
+    for (const line of lines) expect(visibleWidth(line)).toBe(20)
+    expect(lines[2]).not.toContain('x'.repeat(20))
+    // A viewport narrower than the title still yields rows inside it.
+    for (const line of view.render(2)) expect(visibleWidth(line)).toBe(2)
+  })
+
+  it('forwards invalidation to the body it shows', () => {
+    const invalidate = vi.fn()
+    const view = new PromptPanel('title', createTheme(false), { render: () => [], invalidate })
+    view.invalidate()
+    expect(invalidate).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps every row inside the viewport width when styles are emitted', () => {
+    const theme = createTheme(true)
+    const list = new SelectList(
+      [{ value: 'value', label: 'value', description: 'detail' }],
+      1,
+      selectListTheme(theme),
+    )
+    const lines = new PromptPanel('Select a model', theme, list).render(40)
+    for (const line of lines) expect(visibleWidth(line)).toBe(40)
+    expect(lines[0]).toContain('Select a model')
   })
 })
 

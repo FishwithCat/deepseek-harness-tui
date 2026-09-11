@@ -21,7 +21,7 @@ import {
   isKeyRelease,
   matchesKey,
 } from '@earendil-works/pi-tui'
-import type { OverlayHandle, SelectItem, TUI, Terminal } from '@earendil-works/pi-tui'
+import type { OverlayHandle, SelectItem, SelectListLayoutOptions, TUI, Terminal } from '@earendil-works/pi-tui'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 // Empty type import carries the optional attachment service read by image paste.
@@ -32,6 +32,7 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-compaction'
 // Empty type import carries the optional measurement projection the footer reads.
 import type {} from '@deepseek-ai/dsh-session-projection'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ContextPressureProjection } from '@deepseek-ai/dsh-token-meter/client'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
@@ -40,14 +41,14 @@ import type { TuiTheme } from './ansi.ts'
 import { readClipboardImage } from './clipboard.ts'
 import type { ClipboardImage } from './clipboard.ts'
 import type { Config } from './config.ts'
-import { commandCatalog, executeCommand, listModelChoices, parseCommand } from './commands.ts'
+import { commandCatalog, executeCommand, listEffortChoices, listModelChoices, parseCommand } from './commands.ts'
 import { imageMarker, parseImageMarkers } from './images.ts'
 import { installApprovalAnswerer, installQuestionAnswerer } from './interactions.ts'
 import type { InteractionHost } from './interactions.ts'
 import { TuiSession } from './session.ts'
 import type { TuiSessionOptions } from './session.ts'
 import type { TuiStartupValues } from './startup.ts'
-import { PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel } from './views.ts'
+import { PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
 import type { TuiContextStatus, TuiStatus } from './views.ts'
 import { Transcript } from './transcript.ts'
 
@@ -55,6 +56,18 @@ import { Transcript } from './transcript.ts'
 const SESSION_LIST_LIMIT = 20
 /** Selectable items shown at once in a prompt overlay. */
 const PROMPT_VISIBLE_ITEMS = 10
+/** Rows the alternate-screen layout pins under the transcript: the composer's three and the footer's two. */
+const PINNED_FOOTER_ROWS = 5
+/**
+ * Picker layout whose value column grows to its widest label. The component's
+ * default caps that column at 32 columns and shortens the value there, which
+ * truncates every fully qualified `provider/model` route; growing it lets the
+ * label show in full and yields the description first when space runs out.
+ */
+const PROMPT_LIST_LAYOUT: SelectListLayoutOptions = {
+  minPrimaryColumnWidth: 1,
+  maxPrimaryColumnWidth: Number.MAX_SAFE_INTEGER,
+}
 
 /** Process-facing effects the app needs; tests substitute them. */
 export const internals: {
@@ -430,6 +443,9 @@ export class TuiApp implements InteractionHost {
       case 'model':
         await this.modelCommand(input)
         return
+      case 'effort':
+        await this.effortCommand(input)
+        return
       default:
         await this.registryCommand(name, line)
     }
@@ -559,8 +575,56 @@ export class TuiApp implements InteractionHost {
       this.notice('error', `expected <provider>/<model>, got ${JSON.stringify(value)}`)
       return
     }
+    // The new route's own default effort applies, so a previous route's
+    // explicit effort never rides into a model that does not accept it.
     this.session.selectModel({ provider, model })
     this.notice('info', `model set to ${provider}/${model}`)
+    this.refresh()
+  }
+
+  /**
+   * Show or switch the reasoning effort of the routed model.
+   * @param input - the trailing `/effort` input.
+   */
+  private async effortCommand(input: string): Promise<void> {
+    const route = this.session.route
+    const choices = await listEffortChoices(this.options.ctx, route)
+    if (choices === undefined) {
+      this.notice('error', `${route.provider}/${route.model} declares no reasoning effort`)
+      return
+    }
+    const trimmed = input.trim()
+    if (trimmed !== '') {
+      const requested = choices.find(choice => choice.effort !== undefined && String(choice.effort) === trimmed)
+      if (requested === undefined) {
+        const ids = choices.flatMap(choice => choice.effort === undefined ? [] : [String(choice.effort)])
+        this.notice('error', `expected one of ${ids.join(', ')}, got ${JSON.stringify(trimmed)}`)
+        return
+      }
+      this.applyEffort(requested.effort)
+      return
+    }
+    const chosen = await this.choose('Select reasoning effort', choices.map(choice => ({
+      value: choice.effort === undefined ? '' : String(choice.effort),
+      label: choice.label,
+      description: choice.description,
+    })))
+    if (chosen === undefined) return
+    this.applyEffort(chosen.value === '' ? undefined : ReasoningEffortId(chosen.value))
+  }
+
+  /**
+   * Apply one reasoning effort to the route in force.
+   * @param effort - the selected effort, or undefined to send none and let the provider decide.
+   */
+  private applyEffort(effort: ReasoningEffortId | undefined): void {
+    const route = this.session.route
+    this.session.selectModel({
+      provider: route.provider,
+      model: route.model,
+      ...effort === undefined ? {} : { reasoningEffort: effort },
+    })
+    this.notice('info', `reasoning effort set to ${effort === undefined ? 'the provider default' : effort}`)
     this.refresh()
   }
 
@@ -658,7 +722,12 @@ export class TuiApp implements InteractionHost {
   choose(title: string, items: readonly SelectItem[], signal?: AbortSignal): Promise<SelectItem | undefined> {
     if (items.length === 0) return Promise.resolve(undefined)
     return this.enqueuePrompt(() => new Promise<SelectItem | undefined>((resolve) => {
-      const list = new SelectList([...items], Math.min(items.length, PROMPT_VISIBLE_ITEMS), selectListTheme(this.theme))
+      const capacity = Math.max(1, this.promptRows() - PROMPT_PANEL_CHROME_ROWS)
+      // A list longer than the panel budget scrolls, and the scroll indicator
+      // spends one of the body rows the panel has.
+      const scrolling = items.length > capacity
+      const visible = Math.max(1, Math.min(items.length, PROMPT_VISIBLE_ITEMS, capacity - (scrolling ? 1 : 0)))
+      const list = new SelectList([...items], visible, selectListTheme(this.theme), PROMPT_LIST_LAYOUT)
       const handle = this.showPrompt(title, list)
       const settle = (item: SelectItem | undefined): void => {
         this.dismissPrompt(handle)
@@ -703,22 +772,32 @@ export class TuiApp implements InteractionHost {
 
   /**
    * Show one modal over the transcript.
+   *
+   * The alternate-screen layout pins the composer and the footer, so the panel
+   * is anchored directly above them and reads as the transcript's next lines;
+   * the inline layout has no fixed footer position, so the panel is centered.
    * @param title - the heading line.
    * @param body - the component that owns input while the modal is up.
    * @returns the overlay handle.
    */
   private showPrompt(title: string, body: SelectList | Input): OverlayHandle {
-    const width = Math.max(24, Math.min(76, this.tui.terminal.columns - 6))
-    const height = Math.max(5, Math.min(18, this.tui.terminal.rows - 4))
+    const place = this.viewport === undefined
+      ? { anchor: 'center' as const }
+      : { anchor: 'bottom-center' as const, margin: { bottom: PINNED_FOOTER_ROWS } }
     const handle = this.tui.showOverlay(new PromptPanel(title, this.theme, body), {
-      width,
-      maxHeight: height,
-      anchor: 'center',
-      margin: 1,
+      width: '100%',
+      maxHeight: this.promptRows(),
+      ...place,
     })
     this.promptActive = true
     this.editor.disableSubmit = true
     return handle
+  }
+
+  /** Rows one prompt panel may occupy above the pinned footer. */
+  private promptRows(): number {
+    const reserved = this.viewport === undefined ? 0 : PINNED_FOOTER_ROWS
+    return promptPanelRows(this.tui.terminal.rows - reserved)
   }
 
   /**
