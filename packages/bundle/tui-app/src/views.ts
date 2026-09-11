@@ -12,7 +12,7 @@ import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import { isFocusable } from '@earendil-works/pi-tui'
 import { markdownTheme } from './ansi.ts'
 import type { TuiTheme } from './ansi.ts'
-import type { ToolEntry, TranscriptEntry } from './transcript.ts'
+import type { ToolEntry, TranscriptEntry, UserEntry } from './transcript.ts'
 import { Transcript } from './transcript.ts'
 
 /** Indent applied to a Tool row's result body. */
@@ -88,6 +88,15 @@ function prefixBody(text: string, width: number, first: string, rest: string): s
 }
 
 /**
+ * One prompt row's visible body: the markers of its attached images, then its text.
+ * @param entry - the prompt row.
+ * @returns the row's body on one logical line.
+ */
+function promptText(entry: UserEntry): string {
+  return [...entry.images, entry.text].filter(part => part !== '').join(' ')
+}
+
+/**
  * Fold a Tool result body to a bounded number of lines.
  * @param text - the result text.
  * @param width - the viewport width.
@@ -153,7 +162,7 @@ export class TranscriptView implements Component {
   private renderEntry(entry: TranscriptEntry, width: number): string[] {
     switch (entry.kind) {
       case 'user':
-        return prefixBody(entry.text, width, this.theme.user('› '), '  ')
+        return prefixBody(promptText(entry), width, this.theme.user('› '), '  ')
       case 'assistant': {
         const body = this.assistantMarkdown(entry.id, entry.text, width)
         if (!entry.interrupted) return body

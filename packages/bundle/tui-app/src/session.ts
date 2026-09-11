@@ -13,6 +13,7 @@ import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef } from '@dee
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 
 /** Invocation facts and route overrides for a session this app opens. */
@@ -108,11 +109,11 @@ export class TuiSession {
 
   /**
    * Queue one human prompt as its own turn.
-   * @param text - the prompt text.
+   * @param content - the prompt's content blocks in message order.
    */
-  submit(text: string): void {
+  submit(content: readonly ContentBlock[]): void {
     this.agent.followup(createUserMessage({
-      content: [{ type: 'text', text }],
+      content: [...content],
       source: { kind: 'user' },
     }))
   }
@@ -120,11 +121,11 @@ export class TuiSession {
   /**
    * Submit steering that the running turn consumes at its next step, or that
    * starts a turn when the Agent is idle.
-   * @param text - the steering text.
+   * @param content - the steering content blocks in message order.
    */
-  steer(text: string): void {
+  steer(content: readonly ContentBlock[]): void {
     this.agent.steer(createUserMessage({
-      content: [{ type: 'text', text }],
+      content: [...content],
       source: { kind: 'user' },
     }))
   }

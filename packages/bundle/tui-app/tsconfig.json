@@ -30,6 +30,9 @@
       "path": "../../core/session"
     },
     {
+      "path": "../../attachment/attachment"
+    },
+    {
       "path": "../../compaction/compaction"
     },
     {

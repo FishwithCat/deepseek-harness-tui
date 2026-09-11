@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-tui-app` 是 dsh 的交互式终端界面。运行 `dsh` 即在当前目录启动一个 Agent，其模型、工具、沙箱与审批默认值与其他界面完全一致，但以全屏终端应用呈现：可滚动的对话记录、位于固定页脚之上的输入框，以及报告工作区、上下文占用与路由模型的状态行。由于 Agent 运行在同一进程内，它不监听端口、也不启动服务。主要边界：每次调用只有一个会话，没有浏览器、图片附件与文件侧栏。
+`dsh-tui-app` 是 dsh 的交互式终端界面。运行 `dsh` 即在当前目录启动一个 Agent，其模型、工具、沙箱与审批默认值与其他界面完全一致，但以全屏终端应用呈现：可滚动的对话记录、位于固定页脚之上的输入框，以及报告工作区、上下文占用与路由模型的状态行。由于 Agent 运行在同一进程内，它不监听端口、也不启动服务。主要边界：每次调用只有一个会话，没有浏览器与文件侧栏。
 
 ## 目录
 
@@ -37,9 +37,12 @@ dsh
 
 输入提示并按 Enter 提交。Agent 工作期间，输入框切换为 steer 模式：Enter 提交的文本会在运行的 turn 的下一个 step 被消费，Ctrl+C 取消该 turn。PageUp/PageDown、鼠标滚轮与终端搜索可在不退出应用的情况下滚动对话记录；当视图滚离最新一行时，状态栏会给出提示。
 
+按 `Ctrl+V` 可把系统剪贴板中的图片附到草稿上。输入框把每个已持有的图片显示为 `[Image #1]` 标记，其行为与键入文本一致：移动或删除标记即移动或删除对应图片。该粘贴直接读取剪贴板，因此终端自身的文本粘贴仍保留原有按键。
+
 | 按键 | 作用 |
 |---|---|
 | `Enter` | 提交提示；若 turn 正在运行则作为 steer |
+| `Ctrl+V` | 把系统剪贴板中的图片附到草稿（Windows 与 WSL 上为 `Alt+V`，因为那里的终端占用了 Ctrl+V） |
 | `Ctrl+C` | 取消正在运行的 turn；无运行时退出 |
 | `Ctrl+D` | 退出 |
 | `PageUp` / `PageDown` | 滚动对话记录 |
@@ -80,11 +83,15 @@ dsh
 
 ### 渲染
 
-[`src/transcript.ts`](src/transcript.ts) 把这些事件折叠为有序行——提示、assistant 消息、实时 reasoning、带最终结果的工具调用与应用通知——并通过修订计数器使其渲染行失效。注入的上下文是模型输入而非对话，因此只有生产者声明了一行式 `notice` 形式时才产生行：工作区指令、技能目录与运行时上下文消息只留在会话日志中，而模型切换、plan 模式变化与 goal 以应用通知呈现。两种屏幕策略下页脚都位于输入框之下，共两行：第一行是工作区与 Agent 状态，其右侧右对齐路由模型名及其推理档位；第二行是 token 计数与「下一次请求相对路由模型容量的占用」。快捷键提示是空输入框的 placeholder 而非页脚的一行：应用包装了输入框，使其内容行在用户键入第一个字符前显示这些提示，因为编辑器组件本身不渲染 placeholder。占用与容量取自已挂载 `ctx.tokenMeter` 的 `contextPressure` 投影；`(auto)` 标记取自 `ctx.compaction.autoCompactionEnabled`；只有当部署注册了多个 provider 时，模型标签才会带上 provider。[`src/views.ts`](src/views.ts) 使用 [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) 组件把行转为终端行，并把每一行截断到视口宽度，因为渲染器会把超宽行视为组件缺陷；工具标题还会被压成单行，因为一行只拥有一个终端行：多行参数否则会打印出自身的换行，使该行越出转录区压到固定页脚上。滚动由备用屏幕渲染器负责：对话记录是它的主滚动视图，因此 PageUp/PageDown 与滚轮移动对话记录，而页脚与输入框保持固定。
+[`src/transcript.ts`](src/transcript.ts) 把这些事件折叠为有序行——提示、assistant 消息、实时 reasoning、带最终结果的工具调用与应用通知——并通过修订计数器使其渲染行失效。提示会先渲染其图片标记、再渲染文本，每个标记按内容顺序对应一张已附图片，因为终端没有缩略图，而持久内容块才是所附内容的记录。注入的上下文是模型输入而非对话，因此只有生产者声明了一行式 `notice` 形式时才产生行：工作区指令、技能目录与运行时上下文消息只留在会话日志中，而模型切换、plan 模式变化与 goal 以应用通知呈现。两种屏幕策略下页脚都位于输入框之下，共两行：第一行是工作区与 Agent 状态，其右侧右对齐路由模型名及其推理档位；第二行是 token 计数与「下一次请求相对路由模型容量的占用」。快捷键提示是空输入框的 placeholder 而非页脚的一行：应用包装了输入框，使其内容行在用户键入第一个字符前显示这些提示，因为编辑器组件本身不渲染 placeholder。占用与容量取自已挂载 `ctx.tokenMeter` 的 `contextPressure` 投影；`(auto)` 标记取自 `ctx.compaction.autoCompactionEnabled`；只有当部署注册了多个 provider 时，模型标签才会带上 provider。[`src/views.ts`](src/views.ts) 使用 [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) 组件把行转为终端行，并把每一行截断到视口宽度，因为渲染器会把超宽行视为组件缺陷；工具标题还会被压成单行，因为一行只拥有一个终端行：多行参数否则会打印出自身的换行，使该行越出转录区压到固定页脚上。滚动由备用屏幕渲染器负责：对话记录是它的主滚动视图，因此 PageUp/PageDown 与滚轮移动对话记录，而页脚与输入框保持固定。
 
 ### 交互接缝
 
 应用应答 Agent 会暂停等待的两个接缝。`ctx.on('approval/request', …)` 针对本应用自己的 Agent 提供「允许一次／拒绝」并委托其他 Agent 的请求，因此同时挂载子 Agent 的组合仍由自己的应答者负责；被取消的提示解析为 `cancelled`，审批服务本就把它当作 fail-closed。`ctx.on('user-questions/request', …)` 把问题选项渲染为选择器，或在问题未声明选项时渲染自由文本输入，并在用户取消时以 `ASK_ABORTED` 让提问的工具失败。同一时刻只有一个提示占用键盘。
+
+### 剪贴板图片
+
+Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`](src/clipboard.ts)）：macOS 用 `osascript`，Windows 与 WSL 用 PowerShell，Wayland 用 `wl-paste`，X11 用 `xclip`。读取器把字节落到临时文件，读取后即删除；它声明的媒体类型只是声明——附件服务会对照解码后的字节校验。字节以标记为键留在内存中。提交时若引用了标记，应用先解析精确路由模型声明的输入模态，再通过 `ctx.attachments.admitPromptContent(…)` 准入该批次，并把提示文本与其后已准入的图片块作为一条用户消息交给 Agent。被拒绝时——没有附件存储、模型排除图片输入或准入失败——应用恢复草稿，而不是发送残缺的提示。
 
 ### 基于 base 的补丁面
 
@@ -99,14 +106,18 @@ dsh
 | [`src/app.ts`](src/app.ts) | 界面构建、事件接线、输入路由与收尾 |
 | [`src/session.ts`](src/session.ts) | Agent 创建／恢复、提示提交、路由切换 |
 | [`src/transcript.ts`](src/transcript.ts) | 把事件折叠为可渲染行 |
+| [`src/images.ts`](src/images.ts) | 输入框图片标记与提交时的折叠 |
+| [`src/clipboard.ts`](src/clipboard.ts) | 各平台剪贴板图片读取器与其暂存文件 |
 | [`src/views.ts`](src/views.ts) | 对话记录、状态栏与模态面板组件 |
 | [`src/commands.ts`](src/commands.ts) | 斜杠命令目录、派发与模型目录 |
 | [`src/interactions.ts`](src/interactions.ts) | 审批与用户提问应答者 |
 | [`src/ansi.ts`](src/ansi.ts) | 语义样式与组件主题 |
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端补丁 |
 | — | 不发布运行时 invariant 伴随模块；应用不注册任何注册表，也不持有树内可变关系，其可观察契约就是终端界面本身。 |
-| [`tests/tui-app.spec.ts`](tests/tui-app.spec.ts) | 输入路由、渲染、模态应答与退出 |
+| [`tests/tui-app.spec.ts`](tests/tui-app.spec.ts) | 输入路由、剪贴板粘贴、渲染、模态应答与退出 |
 | [`tests/transcript.spec.ts`](tests/transcript.spec.ts) | 事件折叠、页脚、placeholder 输入框与行宽边界 |
+| [`tests/clipboard.spec.ts`](tests/clipboard.spec.ts) | 各平台读取器路径与暂存文件适配器 |
+| [`tests/images.spec.ts`](tests/images.spec.ts) | 输入框标记解析 |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | 在真实 Loader 树上的命令行解析 |
 
 ### invariant 归属
@@ -138,11 +149,11 @@ dsh
 
 #### 模型看到什么
 
-应用把输入的提示作为普通用户消息提交，并把模型自身的输出渲染回来；`/help`、`/quit`、`/new`、`/sessions`、`/resume` 与 `/model` 永远不会到达模型。切换模型会追加共享的模型选择通知，与其他界面完全一致。
+应用把输入的提示作为普通用户消息提交，并把模型自身的输出渲染回来；`/help`、`/quit`、`/new`、`/sessions`、`/resume` 与 `/model` 永远不会到达模型。切换模型会追加共享的模型选择通知，与其他界面完全一致。剪贴板粘贴会像其他界面的上传一样，把已准入图片作为持久的图片引用加入同一条消息；输入框中的 `[Image N]` 标记只是输入框文本，永远不会到达模型。
 
 #### Token 影响
 
-提示与回复承担其常规 token 成本。终端渲染的任何内容——页脚、工具行折叠或滚动窗口——都不会增加请求或 token；占用数字读取自本地测量投影，而非额外的 provider 调用。
+提示与回复承担其常规 token 成本。终端渲染的任何内容——页脚、工具行折叠或滚动窗口——都不会增加请求或 token；占用数字读取自本地测量投影，而非额外的 provider 调用。当路由模型声明了图片计价时，所附图片按该计价计入，因此页脚反映的是模型实际会收到的请求。
 
 #### KV Cache 影响
 
@@ -157,7 +168,7 @@ dsh
 
 - **每次调用一个 Agent**——应用只拥有一个会话；切换到其他 Agent 意味着先关闭当前会话的 `/new` 或 `/resume`。
 - **多选问题会降级**——`multiSelect` 问题每次提示只呈现一个选项，因此多选答案需要多轮。
-- **没有附件与图片**——输入框只发送文本；图片与文件块既不能组合也不能渲染。
+- **图片只来自剪贴板**——输入框只附加从系统剪贴板读到的 PNG、JPEG、WebP 与 GIF 字节：macOS 用 `osascript`，Windows 与 WSL 用 PowerShell，Wayland 用 `wl-paste`，X11 用 `xclip`。缺少这些读取器的主机会把粘贴报告为空剪贴板；没有文件选择器、拖放或非图片附件。
 - **工具输出会被折叠**——工具结果只显示前若干行加剩余行数；完整输出留在会话日志中，而不在屏幕上。
 - **占用是估算值**——页脚百分比锚定最近一次 provider 报告的提示规模，并对表层此后的增减做启发式重新计价；它是给用户看的参考，不是计费或准入依据。
 - **退出由启动器拥有**——与所有界面一样，应用只能通过 `dsh` profile 启动，因为只有启动器提供有界退出请求。

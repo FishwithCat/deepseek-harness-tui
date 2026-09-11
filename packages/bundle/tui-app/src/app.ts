@@ -5,6 +5,7 @@
  * @module @deepseek-ai/dsh-tui-app/app
  */
 
+import { Buffer } from 'node:buffer'
 import { homedir } from 'node:os'
 import type { Context } from '@deepseek-ai/cordis'
 import {
@@ -17,22 +18,30 @@ import {
   TuiAltScreen,
   TuiMainScreen,
   VStack,
+  isKeyRelease,
   matchesKey,
 } from '@earendil-works/pi-tui'
 import type { OverlayHandle, SelectItem, TUI, Terminal } from '@earendil-works/pi-tui'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+// Empty type import carries the optional attachment service read by image paste.
+import type {} from '@deepseek-ai/dsh-attachment'
 // Empty type import carries the optional persistence read used by `/resume`.
 import type {} from '@deepseek-ai/dsh-session-persistence'
 // Empty type import carries the optional compaction policy read used by the footer.
 import type {} from '@deepseek-ai/dsh-compaction'
 // Empty type import carries the optional measurement projection the footer reads.
 import type {} from '@deepseek-ai/dsh-session-projection'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ContextPressureProjection } from '@deepseek-ai/dsh-token-meter/client'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { createTheme, editorTheme, selectListTheme, supportsColor } from './ansi.ts'
 import type { TuiTheme } from './ansi.ts'
+import { readClipboardImage } from './clipboard.ts'
+import type { ClipboardImage } from './clipboard.ts'
 import type { Config } from './config.ts'
 import { commandCatalog, executeCommand, listModelChoices, parseCommand } from './commands.ts'
+import { imageMarker, parseImageMarkers } from './images.ts'
 import { installApprovalAnswerer, installQuestionAnswerer } from './interactions.ts'
 import type { InteractionHost } from './interactions.ts'
 import { TuiSession } from './session.ts'
@@ -53,12 +62,21 @@ export const internals: {
   createTerminal: () => Terminal
   /** Whether this invocation has an interactive terminal. */
   isInteractive: () => boolean
+  /** Read one image from the system clipboard, or undefined when it holds none. */
+  readClipboardImage: () => Promise<ClipboardImage | undefined>
   /** Sink for boot failures the app cannot report through the UI. */
   stderr: { write(chunk: string): unknown }
 } = {
   createTerminal: () => new ProcessTerminal(),
   isInteractive: () => process.stdin.isTTY && process.stdout.isTTY,
+  readClipboardImage: () => readClipboardImage(),
   stderr: process.stderr,
+}
+
+/** One clipboard image the composer holds under its marker number. */
+interface PendingImage extends ClipboardImage {
+  /** Marker number the composer shows for this image. */
+  index: number
 }
 
 /** Everything one TUI invocation needs from its launcher. */
@@ -100,6 +118,10 @@ export class TuiApp implements InteractionHost {
   private stopped = false
   private promptActive = false
   private promptChain: Promise<unknown> = Promise.resolve()
+  /** Clipboard images the composer holds, by the marker number the draft shows. */
+  private readonly pendingImages = new Map<number, PendingImage>()
+  /** Whether this host's terminal claims Ctrl+V, so image paste belongs on Alt+V. */
+  private readonly altPaste = reservesCtrlV(process.platform, process.env)
   /** Providers the deployment registered; more than one qualifies the footer's model label. */
   private readonly providerCount: number
   /** Whether the mounted compaction engine schedules its own work. */
@@ -229,6 +251,17 @@ export class TuiApp implements InteractionHost {
   /** Install the global key bindings; the viewport owns scrolling keys. */
   private registerKeys(): void {
     this.disposers.push(this.tui.addInputListener((data) => {
+      // A terminal reporting the kitty keyboard protocol sends a release event
+      // after the press for one keystroke. The renderer drops that release only
+      // after this listener chain, so a binding that did not would run twice.
+      if (isKeyRelease(data)) return undefined
+      // Windows terminals keep Ctrl+V for their own paste, so the surface binds
+      // the same action to Alt+V there.
+      if (matchesKey(data, Key.ctrl('v')) || (this.altPaste && matchesKey(data, Key.alt('v')))) {
+        if (this.promptActive) return undefined
+        void this.pasteClipboardImage()
+        return { consume: true }
+      }
       if (matchesKey(data, Key.ctrl('c'))) {
         // A focused prompt owns Ctrl+C as its own cancel gesture.
         if (this.promptActive) return undefined
@@ -255,13 +288,40 @@ export class TuiApp implements InteractionHost {
 
   /**
    * Route one composer submission.
+   *
+   * A line citing images the composer holds becomes a prompt carrying those
+   * images; every other line runs a command or reaches the Agent as text.
    * @param text - the submitted text.
    */
   private submit(text: string): void {
     const value = text.trim()
     if (value === '') return
-    this.editor.addToHistory(value)
+    const marked = parseImageMarkers(value, new Set(this.pendingImages.keys()))
+    const images = marked.indices.flatMap((index) => {
+      const image = this.pendingImages.get(index)
+      return image === undefined ? [] : [image]
+    })
+    const prompt = marked.text.trim()
+    if (prompt !== '') this.editor.addToHistory(prompt)
     this.editor.setText('')
+    if (images.length === 0) {
+      this.runLine(value)
+      return
+    }
+    // The markers name images this draft owns; this submission consumes them.
+    this.pendingImages.clear()
+    this.sendImages(prompt, images).catch((error: unknown) => {
+      this.restoreDraft(value, images)
+      this.notice('error', error instanceof Error ? error.message : String(error))
+    })
+  }
+
+  /**
+   * Run one composer line that carries no image: an app command, a registry
+   * command, or the Agent's next prompt.
+   * @param value - the trimmed line.
+   */
+  private runLine(value: string): void {
     const parsed = parseCommand(value)
     if (parsed !== undefined) {
       void this.runCommand(parsed.name, parsed.input, value).catch((error: unknown) => {
@@ -269,8 +329,77 @@ export class TuiApp implements InteractionHost {
       })
       return
     }
-    if (this.session.running) this.session.steer(value)
-    else this.session.submit(value)
+    const content: ContentBlock[] = [{ type: 'text', text: value }]
+    if (this.session.running) this.session.steer(content)
+    else this.session.submit(content)
+    this.refresh()
+  }
+
+  /**
+   * Attach one clipboard image to the composing draft.
+   *
+   * The bytes stay in memory until the submission citing the marker admits them
+   * to the durable attachment store, so a draft that never submits writes
+   * nothing.
+   */
+  private async pasteClipboardImage(): Promise<void> {
+    const image = await internals.readClipboardImage()
+    if (this.stopped) return
+    if (image === undefined) {
+      this.notice('error', 'no image on the clipboard')
+      return
+    }
+    const index = Math.max(0, ...this.pendingImages.keys()) + 1
+    this.pendingImages.set(index, { ...image, index })
+    this.editor.insertTextAtCursor(`${imageMarker(index)} `)
+    this.refresh()
+  }
+
+  /**
+   * Admit one prompt's images and hand the Agent the text and durable references.
+   * @param text - the model-visible prompt text; empty for an image-only prompt.
+   * @param images - the prompt's images, in content order.
+   * @throws when the deployment stores no attachments, the routed model refuses images, or admission fails.
+   */
+  private async sendImages(text: string, images: readonly PendingImage[]): Promise<void> {
+    const attachments = this.options.ctx.get('attachments')
+    if (attachments === undefined) throw new Error('this deployment stores no attachments')
+    const route = this.session.route
+    const model = await this.options.ctx.llm.resolveModelInfo(route.provider, route.model)
+    if (model.inputModalities !== undefined && !model.inputModalities.includes('image')) {
+      throw new Error(`model "${route.model}" does not accept image input`)
+    }
+    const admitted = await attachments.admitPromptContent([
+      ...(text === '' ? [] : [{ type: 'text' as const, text }]),
+      ...images.map(image => ({
+        type: 'image' as const,
+        mediaType: image.mediaType,
+        data: Buffer.from(image.data).toString('base64'),
+      })),
+    ])
+    const content: ContentBlock[] = admitted.map((part) => {
+      switch (part.type) {
+        case 'text': return { type: 'text', text: part.text }
+        case 'image': return { type: 'image', attachment: part.attachment }
+        case 'file': return { type: 'file', attachment: part.attachment }
+        /* v8 ignore next -- closed-union exhaustiveness guard */
+        default: return assertNever(part, 'admitted prompt content')
+      }
+    })
+    if (this.session.running) this.session.steer(content)
+    else this.session.submit(content)
+    this.refresh()
+  }
+
+  /**
+   * Put a refused submission back into the composer without discarding what the
+   * user typed while its images were being admitted.
+   * @param text - the refused line, markers included.
+   * @param images - the images the line cites.
+   */
+  private restoreDraft(text: string, images: readonly PendingImage[]): void {
+    for (const image of images) this.pendingImages.set(image.index, image)
+    this.editor.insertTextAtCursor(text)
     this.refresh()
   }
 
@@ -504,6 +633,7 @@ export class TuiApp implements InteractionHost {
   /** The placeholder the empty composer shows: the keys valid in the current state. */
   private hints(): string {
     const parts: string[] = [this.session.running ? 'Enter steer' : 'Enter send']
+    parts.push(`${this.altPaste ? 'Alt+V' : 'Ctrl+V'} image`)
     if (this.session.running) parts.push('Ctrl+C cancel')
     if (this.viewport !== undefined) parts.push('PgUp/PgDn scroll')
     parts.push('/help commands', 'Ctrl+D quit')
@@ -621,6 +751,19 @@ function splitRoute(value: string): [string | undefined, string | undefined] {
   const index = value.indexOf('/')
   if (index <= 0 || index === value.length - 1) return [undefined, undefined]
   return [value.slice(0, index), value.slice(index + 1)]
+}
+
+/**
+ * Whether this host's terminals claim Ctrl+V for their own paste.
+ *
+ * Windows consoles and WSL distribute Ctrl+V to the terminal's paste, so the
+ * surface binds image paste to Alt+V there.
+ * @param platform - the platform the surface runs on.
+ * @param env - the process environment.
+ * @returns whether the alternate paste key governs this host.
+ */
+export function reservesCtrlV(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): boolean {
+  return platform === 'win32' || env.WSL_DISTRO_NAME !== undefined
 }
 
 /**

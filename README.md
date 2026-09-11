@@ -24,7 +24,7 @@ Install `Node.js`, then run:
 npx @deepseek-ai/dsh
 ```
 
-`dsh` with no profile opens the terminal UI in the current directory: one Agent, one session, drawn in the terminal with no server and no port. `Ctrl+D` exits, `/help` lists the commands, and `--resume <session-id>` continues a stored session. This fork defaults a bare `dsh` to the terminal profile; set `DSH_DEFAULT_PROFILE=web` to make the browser the default again, or pass `--profile web` explicitly.
+`dsh` with no profile opens the terminal UI in the current directory: one Agent, one session, drawn in the terminal with no server and no port. `Ctrl+D` exits, `/help` lists the commands, `Ctrl+V` attaches an image from the system clipboard, and `--resume <session-id>` continues a stored session. This fork defaults a bare `dsh` to the terminal profile; set `DSH_DEFAULT_PROFILE=web` to make the browser the default again, or pass `--profile web` explicitly.
 
 ### Run from `npm`
 

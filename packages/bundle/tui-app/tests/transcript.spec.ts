@@ -5,6 +5,8 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { CURSOR_MARKER, Editor, visibleWidth } from '@earendil-works/pi-tui'
 import type { TUI } from '@earendil-works/pi-tui'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
@@ -30,6 +32,20 @@ async function makeSession() {
   contexts.push(ctx)
   await ctx.plugin(SessionStore)
   return ctx.sessions.create()
+}
+
+/**
+ * One durable image reference a folded prompt can carry.
+ * @returns the attachment reference.
+ */
+function imageRef(): ImageAttachmentRef {
+  return {
+    attachmentId: AttachmentId('sha256:spec'),
+    mediaType: 'image/png',
+    bytes: 3,
+    width: 1,
+    height: 1,
+  }
 }
 
 /**
@@ -229,6 +245,38 @@ describe('Transcript', () => {
     for (const event of session.ownEvents()) expect(typeof transcript.applyEvent(event)).toBe('boolean')
     expect(transcript.entries()).toHaveLength(0)
   })
+
+  it('labels the images a prompt carries in content order', async () => {
+    const session = await makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      content: [
+        { type: 'text', text: 'compare these' },
+        { type: 'image', attachment: imageRef() },
+        { type: 'image', attachment: imageRef() },
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const transcript = new Transcript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    expect(transcript.entries().at(-1)).toMatchObject({
+      kind: 'user',
+      text: 'compare these',
+      images: ['[Image #1]', '[Image #2]'],
+    })
+  })
+
+  it('keeps an image-only prompt as its own row', async () => {
+    const session = await makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'image', attachment: imageRef() }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const transcript = new Transcript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    expect(transcript.entries().at(-1)).toMatchObject({ kind: 'user', text: '', images: ['[Image #1]'] })
+  })
 })
 
 describe('TranscriptView', () => {
@@ -245,6 +293,22 @@ describe('TranscriptView', () => {
     for (const line of view.render(40)) {
       expect(line.length).toBeLessThanOrEqual(40)
     }
+  })
+
+  it('renders a prompt as its image markers followed by its text', async () => {
+    const session = await makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      content: [
+        { type: 'image', attachment: imageRef() },
+        { type: 'text', text: 'what is this?' },
+      ],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const transcript = new Transcript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    const view = new TranscriptView(transcript, createTheme(false))
+    expect(view.render(60).join('\n')).toContain('› [Image #1] what is this?')
   })
 
   it('folds a long tool result and summarizes its arguments', async () => {

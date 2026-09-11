@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-tui-app` is the interactive terminal surface for dsh. Run `dsh` and one Agent starts in the current directory with the same model, tools, sandbox, and approval defaults as every other surface — but rendered as a full-screen terminal application: a scrolling transcript, a composer that stays above a pinned footer, and status lines that report the workspace, the context occupancy, and the routed model. It opens no port and starts no server, because the Agent runs in the same process. The main boundary: one session per invocation, with no browser, image attachment, or file sidebar.
+`dsh-tui-app` is the interactive terminal surface for dsh. Run `dsh` and one Agent starts in the current directory with the same model, tools, sandbox, and approval defaults as every other surface — but rendered as a full-screen terminal application: a scrolling transcript, a composer that stays above a pinned footer, and status lines that report the workspace, the context occupancy, and the routed model. It opens no port and starts no server, because the Agent runs in the same process. The main boundary: one session per invocation, with no browser or file sidebar.
 
 ## Table of Contents
 
@@ -37,9 +37,12 @@ dsh
 
 Type a prompt and press Enter. While the Agent works, the composer switches to steering: an Enter submits text the running turn consumes at its next step, and Ctrl+C cancels the turn. PageUp/PageDown, the mouse wheel, and terminal search scroll the transcript without leaving the app; the status bar reports when the view has scrolled away from the newest row.
 
+Press Ctrl+V to attach the image on the system clipboard to the draft. The composer shows every held image as an `[Image #1]` marker, which behaves like typed text: moving or deleting a marker moves or drops its image. The paste reads the clipboard directly, so the terminal's own text paste keeps its usual key.
+
 | Key | Action |
 |---|---|
 | `Enter` | Submit the prompt, or steer the running turn |
+| `Ctrl+V` | Attach the image on the system clipboard to the draft (`Alt+V` on Windows and WSL, where the terminal owns Ctrl+V) |
 | `Ctrl+C` | Cancel the running turn; with nothing running, exit |
 | `Ctrl+D` | Exit |
 | `PageUp` / `PageDown` | Scroll the transcript |
@@ -80,11 +83,15 @@ The app owns one `TuiSession` and one terminal UI. It waits for the complete com
 
 ### Rendering
 
-[`src/transcript.ts`](src/transcript.ts) folds those events into ordered rows — prompts, assistant messages, live reasoning, Tool calls with their settled outcome, and app notices — and invalidates its rendered lines through a revision counter. Injected context is model input rather than conversation, so it produces a row only when its producer declared a one-line `notice` form: a workspace-instruction, skill-catalog, or runtime-context message stays in the session log, while a model switch, a plan-mode change, or a goal appears as an app notice. The footer sits under the composer in both screen strategies and occupies two lines: the workspace and Agent state right-aligned against the routed model and its reasoning effort, then the token accounting and the occupancy of the next request against the routed model's capacity. The key hints are the placeholder of the empty composer rather than a footer line: the composer is wrapped so its content line shows them until the first typed character, because the editor component renders no placeholder of its own. Occupancy and capacity come from the `contextPressure` projection of the mounted `ctx.tokenMeter`; the `(auto)` marker comes from `ctx.compaction.autoCompactionEnabled`; the model's provider qualifies the label only when the deployment registers several. [`src/views.ts`](src/views.ts) turns rows into terminal lines with [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) components, truncating every line to the viewport width because the renderer treats an over-wide line as a component defect, and flattening a Tool heading to one line because one row owns exactly one terminal row: a multi-line argument would otherwise print its own line breaks and spill the row into the pinned footer. The alternate-screen renderer owns scrolling: the transcript is its primary scroll view, so PageUp/PageDown and the wheel move the transcript while the status bar and composer stay pinned.
+[`src/transcript.ts`](src/transcript.ts) folds those events into ordered rows — prompts, assistant messages, live reasoning, Tool calls with their settled outcome, and app notices — and invalidates its rendered lines through a revision counter. A prompt renders its image markers before its text, one marker per attached image in content order, because the terminal has no thumbnail and the durable content blocks are the record of what was attached. Injected context is model input rather than conversation, so it produces a row only when its producer declared a one-line `notice` form: a workspace-instruction, skill-catalog, or runtime-context message stays in the session log, while a model switch, a plan-mode change, or a goal appears as an app notice. The footer sits under the composer in both screen strategies and occupies two lines: the workspace and Agent state right-aligned against the routed model and its reasoning effort, then the token accounting and the occupancy of the next request against the routed model's capacity. The key hints are the placeholder of the empty composer rather than a footer line: the composer is wrapped so its content line shows them until the first typed character, because the editor component renders no placeholder of its own. Occupancy and capacity come from the `contextPressure` projection of the mounted `ctx.tokenMeter`; the `(auto)` marker comes from `ctx.compaction.autoCompactionEnabled`; the model's provider qualifies the label only when the deployment registers several. [`src/views.ts`](src/views.ts) turns rows into terminal lines with [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) components, truncating every line to the viewport width because the renderer treats an over-wide line as a component defect, and flattening a Tool heading to one line because one row owns exactly one terminal row: a multi-line argument would otherwise print its own line breaks and spill the row into the pinned footer. The alternate-screen renderer owns scrolling: the transcript is its primary scroll view, so PageUp/PageDown and the wheel move the transcript while the status bar and composer stay pinned.
 
 ### Interaction seams
 
 The app answers the two seams the Agent pauses on. `ctx.on('approval/request', …)` offers Allow once / Reject for this app's own Agent and delegates every other Agent's request, so a composition that also mounts subagents keeps its own answerers authoritative; a dismissed prompt resolves `cancelled`, which the approval service already treats as fail-closed. `ctx.on('user-questions/request', …)` renders the question's options as a picker, or a free-text input when the question declares none, and fails the asking Tool with `ASK_ABORTED` when the user dismisses it. One prompt owns the keyboard at a time.
+
+### Clipboard images
+
+Ctrl+V reads the system clipboard through the platform's own reader ([`src/clipboard.ts`](src/clipboard.ts)): `osascript` on macOS, PowerShell on Windows and WSL, `wl-paste` on Wayland, and `xclip` on X11. A reader stages bytes in a temporary file that the read deletes, and its declared media type is only a claim — the attachment service verifies it against the decoded bytes. The bytes stay in memory under the marker the composer shows. A submission citing a marker resolves the exact routed model's declared input modalities, admits the batch through `ctx.attachments.admitPromptContent(…)`, and hands the Agent one user message carrying the prompt text followed by the admitted image blocks. A refusal — no attachment store, a model that excludes image input, or a failed admission — restores the draft rather than sending a partial prompt.
 
 ### Patch surface over base
 
@@ -99,14 +106,18 @@ The patch rides over `dsh-base` and adds no host, HTTP, or browser row. It resta
 | [`src/app.ts`](src/app.ts) | Surface construction, event wiring, input routing, teardown |
 | [`src/session.ts`](src/session.ts) | Agent create/resume, prompt submission, route switching |
 | [`src/transcript.ts`](src/transcript.ts) | The event fold into renderable rows |
+| [`src/images.ts`](src/images.ts) | Composer image markers and the submission fold |
+| [`src/clipboard.ts`](src/clipboard.ts) | Platform clipboard image readers and their staging files |
 | [`src/views.ts`](src/views.ts) | Transcript, status bar, and modal panel components |
 | [`src/commands.ts`](src/commands.ts) | Slash-command catalog, dispatch, and model catalog |
 | [`src/interactions.ts`](src/interactions.ts) | Approval and user-question answerers |
 | [`src/ansi.ts`](src/ansi.ts) | Semantic styles and the component themes |
 | [`cordis.patch.yml`](cordis.patch.yml) | The terminal patch over `dsh-base` |
 | — | No runtime invariant companion is published; the app registers no registry and holds no intra-tree relation to audit, because its observable contract is the terminal surface itself. |
-| [`tests/tui-app.spec.ts`](tests/tui-app.spec.ts) | Composer routing, rendering, modal answers, and exit |
+| [`tests/tui-app.spec.ts`](tests/tui-app.spec.ts) | Composer routing, clipboard paste, rendering, modal answers, and exit |
 | [`tests/transcript.spec.ts`](tests/transcript.spec.ts) | The event fold, the footer, the placeholder composer, and line-width bounds |
+| [`tests/clipboard.spec.ts`](tests/clipboard.spec.ts) | Every platform reader path and the staging-file adapters |
+| [`tests/images.spec.ts`](tests/images.spec.ts) | Composer marker parsing |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | Command-line parsing over a real Loader tree |
 
 ### Invariant ownership
@@ -138,11 +149,11 @@ Read these pages to go deeper into the shared core, the sibling surfaces, or the
 
 #### What the model sees
 
-The app submits the typed prompt as an ordinary user message and renders the model's own output back; `/help`, `/quit`, `/new`, `/sessions`, `/resume`, and `/model` never reach the model. A model switch appends the shared model-selection notice, exactly as it does on the other surfaces.
+The app submits the typed prompt as an ordinary user message and renders the model's own output back; `/help`, `/quit`, `/new`, `/sessions`, `/resume`, and `/model` never reach the model. A model switch appends the shared model-selection notice, exactly as it does on the other surfaces. A clipboard paste adds the admitted image to that same message as a durable image reference, exactly as an upload from another surface does; the composer's `[Image N]` markers are composer text and never reach the model.
 
 #### Token effect
 
-Prompts and responses carry their ordinary token cost. Nothing the terminal renders — the footer, the Tool row folding, or the scroll window — adds a request or a token; the occupancy figure is read from the local measurement projection, not from an extra provider call.
+Prompts and responses carry their ordinary token cost. Nothing the terminal renders — the footer, the Tool row folding, or the scroll window — adds a request or a token; the occupancy figure is read from the local measurement projection, not from an extra provider call. An attached image is counted at the routed model's declared image pricing when it declares one, so the footer reflects the request the model will actually receive.
 
 #### KV Cache effect
 
@@ -157,7 +168,7 @@ These limits define what the terminal surface does not do. They are current cons
 
 - **One Agent per invocation** — the app owns a single session; switching to another Agent means `/new` or `/resume`, which closes the current one first.
 - **Multi-select questions degrade** — a `multiSelect` question is presented one choice per prompt, so a multiple-choice answer needs several rounds.
-- **No attachments or images** — the composer sends text only; image and file blocks are not composed or rendered.
+- **Images come only from the clipboard** — the composer attaches PNG, JPEG, WebP, and GIF bytes read from the system clipboard, through `osascript` on macOS, PowerShell on Windows and WSL, `wl-paste` on Wayland, or `xclip` on X11. A host with none of those readers reports the paste as an empty clipboard, and no file picker, drag-and-drop, or non-image attachment exists.
 - **Tool output is folded** — a Tool result shows its first lines plus a count of the remainder; the complete output stays in the session log, not on screen.
 - **Occupancy is an estimate** — the footer's percentage anchors on the last provider-reported prompt size and heuristically reprices what the surface gained or lost since; it is a reference for the user, not a billing or admission input.
 - **Launcher-owned exit** — like every surface, the app starts only through the `dsh` profile, because only the launcher provides the bounded exit request.

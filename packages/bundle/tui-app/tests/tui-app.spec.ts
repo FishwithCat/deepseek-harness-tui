@@ -4,35 +4,68 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
-import LlmRuntime from '@deepseek-ai/dsh-llm'
+import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
+import LlmRuntime, { LlmAdapter } from '@deepseek-ai/dsh-llm'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
-import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import type { LlmResolvedModelInfo, ModelModality, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
 import UserApprovalService from '@deepseek-ai/dsh-user-approval'
-import { TuiApp, internals } from '../src/app.ts'
+import { TuiApp, internals, reservesCtrlV } from '../src/app.ts'
+import type { ClipboardImage } from '../src/clipboard.ts'
 import { apply, inject, name, TUI_STARTUP_SERVICE } from '../src/index.ts'
 import type { Config } from '../src/config.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
 
+/** A two-by-two PNG; the mounted attachment store decodes and admits real bytes. */
+const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVQImWP4z8DwH4QZYAwAR8oH+Xm0fdIAAAAASUVORK5CYII='
+
 const originalInternals = { ...internals }
 const contexts: Context[] = []
+const homes: string[] = []
 
 afterEach(async () => {
   Object.assign(internals, originalInternals)
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose()
+  for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true })
 })
 
 /** One scripted prompt reaction. */
 interface Script {
   afterPrompt(session: Agent['session'], message: UserMessage): Promise<void> | void
+}
+
+/** An adapter declaring one exact route's input modalities, so the image preflight can be driven. */
+class ModalityAdapter extends LlmAdapter {
+  /**
+   * @param modalities - the declared image capability; undefined means unknown.
+   */
+  constructor(private readonly modalities: readonly ModelModality[] | undefined) {
+    super()
+  }
+
+  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return Promise.resolve({
+      provider,
+      id: model,
+      name: model,
+      ...this.modalities === undefined ? {} : { inputModalities: this.modalities },
+    })
+  }
+
+  override stream(): AsyncIterable<StreamChunk> {
+    return { [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new Error('unused adapter stream')) }) }
+  }
 }
 
 /** The booted fixture: the app, its terminal, and the observed process facts. */
@@ -41,6 +74,10 @@ interface Fixture {
   terminal: FakeTerminal
   app: TuiApp
   exits: number[]
+  /** Prompts the app queued as their own turns. */
+  submitted: UserMessage[]
+  /** Steering content the app handed the running turn. */
+  steered: UserMessage[]
   /** Cancellation requests the scripted Agent received. */
   cancelled(): number
   /** Flip the scripted Agent's lifecycle status. */
@@ -59,12 +96,19 @@ function plain(text: string): string {
 /**
  * Boot the app over the real registries and a scripted Agent factory.
  * @param script - how the scripted Agent reacts to a prompt.
- * @param options - screen mode plus the optional measurement and compaction rows.
+ * @param options - screen mode plus the optional measurement, compaction, attachment, and adapter rows.
  * @returns the running fixture.
  */
 async function bench(
   script: Script,
-  options: { screen?: Config['screen']; tokenMeter?: boolean; compaction?: boolean; projections?: boolean } = {},
+  options: {
+    screen?: Config['screen']
+    tokenMeter?: boolean
+    compaction?: boolean
+    projections?: boolean
+    attachments?: boolean
+    modalities?: readonly ModelModality[]
+  } = {},
 ): Promise<Fixture> {
   const ctx = new Context()
   contexts.push(ctx)
@@ -73,10 +117,18 @@ async function bench(
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await ctx.plugin(LlmRuntime)
+  if (options.modalities !== undefined) ctx.llm.registerAdapter(['test-provider'], new ModalityAdapter(options.modalities))
+  if (options.attachments === true) {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-tui-attachments-'))
+    homes.push(home)
+    await ctx.plugin(LocalAttachmentStore, { dshHome: home })
+  }
   if (options.tokenMeter === true || options.compaction === true) await ctx.plugin(TokenMeter)
   if (options.compaction === true) await ctx.plugin(BasicCompactionEngine, { auto: true })
   await ctx.plugin(UserApprovalService, { policy: 'ask' })
   const exits: number[] = []
+  const submitted: UserMessage[] = []
+  const steered: UserMessage[] = []
   const observed = { cancelled: 0, running: false }
   ctx.agents.setFactory({
     async createAgent(ownerCtx: Context, createOptions: CreateAgentOptions): Promise<AgentHandle> {
@@ -94,10 +146,11 @@ async function bench(
         runMaintenance: () => Promise.reject(new Error('not used')),
         send: () => {},
         followup: (message: UserMessage) => {
+          submitted.push(message)
           agent.inbox.append('next-turn', message)
           idle = Promise.resolve().then(() => script.afterPrompt(session, message))
         },
-        steer: () => {},
+        steer: (message: UserMessage) => { steered.push(message) },
         inject: () => {},
         whenIdle: () => idle,
       }
@@ -123,6 +176,8 @@ async function bench(
     terminal,
     app,
     exits,
+    submitted,
+    steered,
     cancelled: () => observed.cancelled,
     setRunning: (value: boolean) => { observed.running = value },
   }
@@ -323,5 +378,148 @@ describe('TuiApp prompt routing', () => {
     test.terminal.feed('\r')
     await expect(second).resolves.toMatchObject({ value: 'ok' })
     await test.app.stop(0)
+  })
+})
+
+describe('TuiApp image paste', () => {
+  /** One staged clipboard image, exactly as a platform reader would return it. */
+  function clipboardImage(): ClipboardImage {
+    return { data: Buffer.from(PNG_BASE64, 'base64'), mediaType: 'image/png' }
+  }
+
+  /** Substitute the image the app reads from the clipboard. */
+  function pasteClipboard(image: ClipboardImage | undefined): void {
+    internals.readClipboardImage = () => Promise.resolve(image)
+  }
+
+  it('submits a clipboard image with its prompt', async () => {
+    const test = await bench({
+      afterPrompt(session, message) { appendAnsweredTurn(session, message, 'a red square') },
+    }, { attachments: true, modalities: ['text', 'image'] })
+    pasteClipboard(clipboardImage())
+    test.terminal.feed('\x16')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+    test.terminal.feed('what is this?')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(test.submitted).toHaveLength(1) })
+    const content = test.submitted[0]!.content
+    expect(content[0]).toEqual({ type: 'text', text: 'what is this?' })
+    expect(content[1]).toMatchObject({
+      type: 'image',
+      attachment: { mediaType: 'image/png', width: 2, height: 2 },
+    })
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('› [Image #1] what is this?') })
+    await test.app.stop(0)
+  })
+
+  it('submits an image-only prompt', async () => {
+    const test = await bench({
+      afterPrompt(session, message) { appendAnsweredTurn(session, message, 'a red square') },
+    }, { attachments: true, modalities: ['text', 'image'] })
+    pasteClipboard(clipboardImage())
+    test.terminal.feed('\x16')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(test.submitted).toHaveLength(1) })
+    expect(test.submitted[0]!.content).toHaveLength(1)
+    expect(test.submitted[0]!.content[0]).toMatchObject({ type: 'image', attachment: { mediaType: 'image/png' } })
+    await test.app.stop(0)
+  })
+
+  it('pastes once when the terminal reports the key press and its release', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { attachments: true, modalities: ['text', 'image'] })
+    const reads = vi.fn(() => Promise.resolve(clipboardImage()))
+    internals.readClipboardImage = reads
+    // One Ctrl+V as a kitty-protocol terminal reports it: press, then release.
+    test.terminal.feed('\x1b[118;5u')
+    test.terminal.feed('\x1b[118;5:3u')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+    expect(reads).toHaveBeenCalledTimes(1)
+    expect(plain(test.terminal.output)).not.toContain('[Image #2]')
+    await test.app.stop(0)
+  })
+
+  it('reports a clipboard that holds no image', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    pasteClipboard(undefined)
+    test.terminal.feed('\x16')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('no image on the clipboard') })
+    await test.app.stop(0)
+  })
+
+  it('restores the draft when the routed model refuses images', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { attachments: true, modalities: ['text'] })
+    pasteClipboard(clipboardImage())
+    test.terminal.feed('\x16')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+    test.terminal.feed('what is this?')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('does not accept image input') })
+    expect(test.submitted).toHaveLength(0)
+    // The composer still shows the refused draft after its refusal is reported.
+    const rendered = plain(test.terminal.output)
+    expect(rendered.lastIndexOf('what is this?')).toBeGreaterThan(rendered.lastIndexOf('does not accept image input'))
+    await test.app.stop(0)
+  })
+
+  it('keeps text typed while a refused prompt was being admitted', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { attachments: true, modalities: ['text'] })
+    pasteClipboard(clipboardImage())
+    test.terminal.feed('\x16')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+    test.terminal.feed('what is this?')
+    test.terminal.feed('\r')
+    // Typed while the refused admission was still in flight.
+    test.terminal.feed('and this')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('and this[Image #1] what is this?')
+    })
+    expect(test.submitted).toHaveLength(0)
+    await test.app.stop(0)
+  })
+
+  it('restores the draft when the store refuses the pasted bytes', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { attachments: true, modalities: ['text', 'image'] })
+    pasteClipboard({ data: new Uint8Array([1, 2, 3]), mediaType: 'image/png' })
+    test.terminal.feed('\x16')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Unsupported or malformed image data.') })
+    expect(test.submitted).toHaveLength(0)
+    await test.app.stop(0)
+  })
+
+  it('reports a deployment that stores no attachments', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { modalities: ['text', 'image'] })
+    pasteClipboard(clipboardImage())
+    test.terminal.feed('\x16')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('this deployment stores no attachments') })
+    expect(test.submitted).toHaveLength(0)
+    await test.app.stop(0)
+  })
+
+  it('binds image paste to Alt+V where the terminal reserves Ctrl+V', async () => {
+    process.env.WSL_DISTRO_NAME = 'Ubuntu'
+    try {
+      const test = await bench({ afterPrompt: () => {} }, { attachments: true, modalities: ['text', 'image'] })
+      expect(plain(test.terminal.output)).toContain('Alt+V image')
+      pasteClipboard(clipboardImage())
+      test.terminal.feed('a')
+      test.terminal.feed('\x1bv')
+      await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+      await test.app.stop(0)
+    } finally {
+      delete process.env.WSL_DISTRO_NAME
+    }
+  })
+})
+
+describe('reservesCtrlV', () => {
+  it('reserves the key only for Windows consoles and WSL', () => {
+    expect(reservesCtrlV('darwin', {})).toBe(false)
+    expect(reservesCtrlV('win32', {})).toBe(true)
+    expect(reservesCtrlV('linux', { WSL_DISTRO_NAME: 'Ubuntu' })).toBe(true)
   })
 })

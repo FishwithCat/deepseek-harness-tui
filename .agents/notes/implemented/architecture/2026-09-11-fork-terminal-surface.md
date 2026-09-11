@@ -58,6 +58,6 @@ The fork gains an interactive terminal surface without changing how any existing
 
 The cost is a new runtime dependency and its closure, which the third-party notices now disclose; the initial profile boot is heavier than headless because the interactive surface keeps the full base composition (session titles, goals, commands, and the projection registry) mounted.
 
-Boundaries are deliberate and recorded in the package README: one Agent per invocation, a text-only composer with no attachments, folded Tool output, injected context shown only as the notice its producer declared, one choice per prompt for a `multiSelect` question, and the launcher-owned exit that every surface shares.
+Boundaries are deliberate and recorded in the package README: one Agent per invocation, a composer whose only attachment is a clipboard image ([TUI clipboard image paste](../feature/2026-09-11-tui-clipboard-image-paste.md)), folded Tool output, injected context shown only as the notice its producer declared, one choice per prompt for a `multiSelect` question, and the launcher-owned exit that every surface shares.
 
 One coverage gap is named rather than closed: the keyless snapshot harness drives shipped profiles over stdio, so it cannot record this surface's terminal output. Its acceptance is the package tests plus a pseudo-terminal run, and a terminal-layout regression needs those tests extended rather than a snapshot re-recorded.

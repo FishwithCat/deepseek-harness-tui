@@ -11,14 +11,17 @@ import { expandAssistantStream } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord, ContentBlock, MessageSource, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
+import { imageMarker } from './images.ts'
 
 /** A human prompt row. */
 export interface UserEntry {
   kind: 'user'
   /** Row identity, stable for the life of the row. */
   id: number
-  /** The prompt text. */
+  /** The prompt text, without the composer markers of its images. */
   text: string
+  /** One label per attached image, in content order; empty for a text-only prompt. */
+  images: readonly string[]
 }
 
 /** An assistant message row. */
@@ -90,6 +93,19 @@ export function textOfBlocks(blocks: readonly ContentBlock[]): string {
     if (block.type === 'text') text += block.text
   }
   return text
+}
+
+/**
+ * Label one prompt's attached images in content order.
+ * @param blocks - message content.
+ * @returns the marker text for each image block, in order.
+ */
+function imageLabels(blocks: readonly ContentBlock[]): string[] {
+  const labels: string[] = []
+  for (const block of blocks) {
+    if (block.type === 'image') labels.push(imageMarker(labels.length + 1))
+  }
+  return labels
 }
 
 /**
@@ -267,8 +283,9 @@ export class Transcript {
       return this.notice('info', summary)
     }
     const text = textOfBlocks(message.content)
-    if (text === '') return false
-    this.rows.push({ kind: 'user', id: this.nextId++, text })
+    const images = imageLabels(message.content)
+    if (text === '' && images.length === 0) return false
+    this.rows.push({ kind: 'user', id: this.nextId++, text, images })
     return this.changed()
   }
 

@@ -28,7 +28,7 @@ DeepSeek Harness 处于 _开发者预览_ 阶段，正在快速迭代。**未来
 npx @deepseek-ai/dsh
 ```
 
-不带 profile 的 `dsh` 会在当前目录打开终端界面：一个 Agent、一个会话，直接绘制在终端中，没有服务器也没有端口。`Ctrl+D` 退出，`/help` 列出命令，`--resume <session-id>` 继续已存储的会话。本 fork 把裸 `dsh` 默认为终端 profile；设置 `DSH_DEFAULT_PROFILE=web` 可让浏览器重新成为默认，或显式传入 `--profile web`。
+不带 profile 的 `dsh` 会在当前目录打开终端界面：一个 Agent、一个会话，直接绘制在终端中，没有服务器也没有端口。`Ctrl+D` 退出，`/help` 列出命令，`Ctrl+V` 附加系统剪贴板中的图片，`--resume <session-id>` 继续已存储的会话。本 fork 把裸 `dsh` 默认为终端 profile；设置 `DSH_DEFAULT_PROFILE=web` 可让浏览器重新成为默认，或显式传入 `--profile web`。
 
 <a id="run-from-npm"></a>
 
