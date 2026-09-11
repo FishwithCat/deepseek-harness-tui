@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-tui-app` 是 dsh 的交互式终端界面。运行 `dsh` 即在当前目录启动一个 Agent，其模型、工具、沙箱与审批默认值与其他界面完全一致，但以全屏终端应用呈现：可滚动的对话记录、固定在底部的状态栏与输入框。由于 Agent 运行在同一进程内，它不监听端口、也不启动服务。主要边界：每次调用只有一个会话，没有浏览器、图片附件与文件侧栏。
+`dsh-tui-app` 是 dsh 的交互式终端界面。运行 `dsh` 即在当前目录启动一个 Agent，其模型、工具、沙箱与审批默认值与其他界面完全一致，但以全屏终端应用呈现：可滚动的对话记录、位于固定页脚之上的输入框，以及报告工作区、上下文占用与路由模型的状态行。由于 Agent 运行在同一进程内，它不监听端口、也不启动服务。主要边界：每次调用只有一个会话，没有浏览器、图片附件与文件侧栏。
 
 ## 目录
 
@@ -80,7 +80,7 @@ dsh
 
 ### 渲染
 
-[`src/transcript.ts`](src/transcript.ts) 把这些事件折叠为有序行——提示、assistant 消息、实时 reasoning、带最终结果的工具调用与应用通知——并通过修订计数器使其渲染行失效。[`src/views.ts`](src/views.ts) 使用 [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) 组件把行转为终端行，并把每一行截断到视口宽度，因为渲染器会把超宽行视为组件缺陷。滚动由备用屏幕渲染器负责：对话记录是它的主滚动视图，因此 PageUp/PageDown 与滚轮移动对话记录，而状态栏与输入框保持固定。
+[`src/transcript.ts`](src/transcript.ts) 把这些事件折叠为有序行——提示、assistant 消息、实时 reasoning、带最终结果的工具调用与应用通知——并通过修订计数器使其渲染行失效。注入的上下文是模型输入而非对话，因此只有生产者声明了一行式 `notice` 形式时才产生行：工作区指令、技能目录与运行时上下文消息只留在会话日志中，而模型切换、plan 模式变化与 goal 以应用通知呈现。两种屏幕策略下页脚都位于输入框之下，共两行：第一行是工作区与 Agent 状态，其右侧右对齐路由模型名及其推理档位；第二行是 token 计数与「下一次请求相对路由模型容量的占用」。快捷键提示是空输入框的 placeholder 而非页脚的一行：应用包装了输入框，使其内容行在用户键入第一个字符前显示这些提示，因为编辑器组件本身不渲染 placeholder。占用与容量取自已挂载 `ctx.tokenMeter` 的 `contextPressure` 投影；`(auto)` 标记取自 `ctx.compaction.autoCompactionEnabled`；只有当部署注册了多个 provider 时，模型标签才会带上 provider。[`src/views.ts`](src/views.ts) 使用 [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) 组件把行转为终端行，并把每一行截断到视口宽度，因为渲染器会把超宽行视为组件缺陷；工具标题还会被压成单行，因为一行只拥有一个终端行：多行参数否则会打印出自身的换行，使该行越出转录区压到固定页脚上。滚动由备用屏幕渲染器负责：对话记录是它的主滚动视图，因此 PageUp/PageDown 与滚轮移动对话记录，而页脚与输入框保持固定。
 
 ### 交互接缝
 
@@ -106,7 +106,7 @@ dsh
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端补丁 |
 | — | 不发布运行时 invariant 伴随模块；应用不注册任何注册表，也不持有树内可变关系，其可观察契约就是终端界面本身。 |
 | [`tests/tui-app.spec.ts`](tests/tui-app.spec.ts) | 输入路由、渲染、模态应答与退出 |
-| [`tests/transcript.spec.ts`](tests/transcript.spec.ts) | 事件折叠与行宽边界 |
+| [`tests/transcript.spec.ts`](tests/transcript.spec.ts) | 事件折叠、页脚、placeholder 输入框与行宽边界 |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | 在真实 Loader 树上的命令行解析 |
 
 ### invariant 归属
@@ -142,7 +142,7 @@ dsh
 
 #### Token 影响
 
-提示与回复承担其常规 token 成本。终端渲染的任何内容——状态栏、工具行折叠或滚动窗口——都不会增加请求或 token。
+提示与回复承担其常规 token 成本。终端渲染的任何内容——页脚、工具行折叠或滚动窗口——都不会增加请求或 token；占用数字读取自本地测量投影，而非额外的 provider 调用。
 
 #### KV Cache 影响
 
@@ -159,6 +159,7 @@ dsh
 - **多选问题会降级**——`multiSelect` 问题每次提示只呈现一个选项，因此多选答案需要多轮。
 - **没有附件与图片**——输入框只发送文本；图片与文件块既不能组合也不能渲染。
 - **工具输出会被折叠**——工具结果只显示前若干行加剩余行数；完整输出留在会话日志中，而不在屏幕上。
+- **占用是估算值**——页脚百分比锚定最近一次 provider 报告的提示规模，并对表层此后的增减做启发式重新计价；它是给用户看的参考，不是计费或准入依据。
 - **退出由启动器拥有**——与所有界面一样，应用只能通过 `dsh` profile 启动，因为只有启动器提供有界退出请求。
 - **没有录制会话快照**——无密钥快照框架通过 stdio 驱动随附 profile，而本界面拥有一个终端；它的验收是包测试加一次伪终端运行，而不是快照夹具，因此终端布局的回归需要扩展界面测试，而不是重新录制快照。
 

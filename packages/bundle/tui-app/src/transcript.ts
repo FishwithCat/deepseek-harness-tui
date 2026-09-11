@@ -8,7 +8,7 @@
 
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { expandAssistantStream } from '@deepseek-ai/dsh-llm'
-import type { AssistantStreamRecord, ContentBlock, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord, ContentBlock, MessageSource, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 
@@ -107,13 +107,19 @@ function streamFailure(stream: readonly AssistantStreamRecord[]): string | undef
 }
 
 /**
- * One-line account of a non-prompt user message (injected context).
- * @param text - the message's visible text.
- * @returns the producer's own summary when one is short enough to stand alone, otherwise the first line.
+ * The one-line account a producer declared for injected context.
+ *
+ * Injected context is model input rather than conversation, so the transcript
+ * shows only rows whose producer declared a `notice` form; instructions,
+ * catalogs, and state snapshots stay in the session log. `MessageSourceMap` is
+ * merge-extensible and declares `form` only on the members that own one, so the
+ * field is read from the source rather than from a `kind` switch.
+ * @param source - the durable `user/message` source.
+ * @returns the declared summary, or null when this source carries no notice.
  */
-function contextAccount(text: string): string {
-  const firstLine = text.split('\n', 1)[0] ?? ''
-  return firstLine.length <= 120 ? firstLine : `${firstLine.slice(0, 119)}…`
+function noticeSummary(source: MessageSource): string | null {
+  if (!('form' in source) || source.form !== 'notice') return null
+  return source.summary === '' ? null : source.summary
 }
 
 /**
@@ -255,13 +261,14 @@ export class Transcript {
   }
 
   private applyUserMessage(message: SessionEvent<'user/message'>['data']): boolean {
+    if (message.source.kind !== 'user') {
+      const summary = noticeSummary(message.source)
+      if (summary === null) return false
+      return this.notice('info', summary)
+    }
     const text = textOfBlocks(message.content)
     if (text === '') return false
-    this.rows.push({
-      kind: 'user',
-      id: this.nextId++,
-      text: message.source.kind === 'user' ? text : contextAccount(text),
-    })
+    this.rows.push({ kind: 'user', id: this.nextId++, text })
     return this.changed()
   }
 

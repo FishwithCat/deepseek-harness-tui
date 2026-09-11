@@ -14,6 +14,8 @@ import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import TokenMeter from '@deepseek-ai/dsh-token-meter'
+import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
 import UserApprovalService from '@deepseek-ai/dsh-user-approval'
 import { TuiApp, internals } from '../src/app.ts'
 import { apply, inject, name, TUI_STARTUP_SERVICE } from '../src/index.ts'
@@ -46,19 +48,33 @@ interface Fixture {
 }
 
 /**
+ * Remove ANSI escape sequences from captured terminal output.
+ * @param text - raw terminal bytes.
+ * @returns the visible text.
+ */
+function plain(text: string): string {
+  return text.replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, '')
+}
+
+/**
  * Boot the app over the real registries and a scripted Agent factory.
  * @param script - how the scripted Agent reacts to a prompt.
- * @param options - screen mode and the route/cwd overrides.
+ * @param options - screen mode plus the optional measurement and compaction rows.
  * @returns the running fixture.
  */
-async function bench(script: Script, options: { screen?: Config['screen'] } = {}): Promise<Fixture> {
+async function bench(
+  script: Script,
+  options: { screen?: Config['screen']; tokenMeter?: boolean; compaction?: boolean; projections?: boolean } = {},
+): Promise<Fixture> {
   const ctx = new Context()
   contexts.push(ctx)
   await ctx.plugin(SessionStore)
-  await ctx.plugin(SessionProjectionRegistry)
+  if (options.projections !== false) await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await ctx.plugin(LlmRuntime)
+  if (options.tokenMeter === true || options.compaction === true) await ctx.plugin(TokenMeter)
+  if (options.compaction === true) await ctx.plugin(BasicCompactionEngine, { auto: true })
   await ctx.plugin(UserApprovalService, { policy: 'ask' })
   const exits: number[] = []
   const observed = { cancelled: 0, running: false }
@@ -182,6 +198,54 @@ describe('TuiApp', () => {
     expect(test.terminal.output).toContain('\x1b[?1049h')
     await test.app.stop(0)
     expect(test.exits).toEqual([0])
+  })
+
+  it('reports context occupancy and the automatic policy in the footer', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { tokenMeter: true, compaction: true })
+    const session = test.ctx.agents.list()[0]!.session
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('request/context', { provider: 'test-provider', model: 'test-model', contextWindow: 262_144 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      stream: [],
+      usage: { inputTokens: 65_536, outputTokens: 12 },
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: 'done' }],
+        source: { provider: 'test-provider', model: 'test-model' },
+      }),
+    }, { surfaceOp: 'append' })
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('25.0%/262k (auto)') })
+    expect(plain(test.terminal.output)).toContain('test-model')
+    // A local command repaints with the log unchanged, reading the cached occupancy.
+    test.terminal.feed('/help')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('/quit') })
+    await test.app.stop(0)
+  })
+
+  it('omits the occupancy until the meter knows a capacity', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { tokenMeter: true })
+    expect(plain(test.terminal.output)).toContain('Enter send')
+    expect(plain(test.terminal.output)).not.toContain('%')
+    await test.app.stop(0)
+  })
+
+  it('omits the occupancy when the composition mounts no measurement service', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { projections: false })
+    expect(plain(test.terminal.output)).toContain('Enter send')
+    expect(plain(test.terminal.output)).not.toContain('%')
+    await test.app.stop(0)
+  })
+
+  it('shows the key hints inside the empty composer, between its borders', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const rendered = plain(test.terminal.output)
+    const hint = rendered.lastIndexOf('Enter send')
+    expect(rendered.lastIndexOf('\u2500', hint)).toBeGreaterThan(-1)
+    expect(rendered.indexOf('\u2500', hint)).toBeGreaterThan(hint)
+    await test.app.stop(0)
   })
 
   it('rejects a non-interactive invocation before touching the terminal', async () => {

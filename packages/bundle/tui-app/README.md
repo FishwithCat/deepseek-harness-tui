@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-tui-app` is the interactive terminal surface for dsh. Run `dsh` and one Agent starts in the current directory with the same model, tools, sandbox, and approval defaults as every other surface — but rendered as a full-screen terminal application: a scrolling transcript, a pinned status bar, and a composer that stays at the bottom. It opens no port and starts no server, because the Agent runs in the same process. The main boundary: one session per invocation, with no browser, image attachment, or file sidebar.
+`dsh-tui-app` is the interactive terminal surface for dsh. Run `dsh` and one Agent starts in the current directory with the same model, tools, sandbox, and approval defaults as every other surface — but rendered as a full-screen terminal application: a scrolling transcript, a composer that stays above a pinned footer, and status lines that report the workspace, the context occupancy, and the routed model. It opens no port and starts no server, because the Agent runs in the same process. The main boundary: one session per invocation, with no browser, image attachment, or file sidebar.
 
 ## Table of Contents
 
@@ -80,7 +80,7 @@ The app owns one `TuiSession` and one terminal UI. It waits for the complete com
 
 ### Rendering
 
-[`src/transcript.ts`](src/transcript.ts) folds those events into ordered rows — prompts, assistant messages, live reasoning, Tool calls with their settled outcome, and app notices — and invalidates its rendered lines through a revision counter. [`src/views.ts`](src/views.ts) turns rows into terminal lines with [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) components, truncating every line to the viewport width because the renderer treats an over-wide line as a component defect. The alternate-screen renderer owns scrolling: the transcript is its primary scroll view, so PageUp/PageDown and the wheel move the transcript while the status bar and composer stay pinned.
+[`src/transcript.ts`](src/transcript.ts) folds those events into ordered rows — prompts, assistant messages, live reasoning, Tool calls with their settled outcome, and app notices — and invalidates its rendered lines through a revision counter. Injected context is model input rather than conversation, so it produces a row only when its producer declared a one-line `notice` form: a workspace-instruction, skill-catalog, or runtime-context message stays in the session log, while a model switch, a plan-mode change, or a goal appears as an app notice. The footer sits under the composer in both screen strategies and occupies two lines: the workspace and Agent state right-aligned against the routed model and its reasoning effort, then the token accounting and the occupancy of the next request against the routed model's capacity. The key hints are the placeholder of the empty composer rather than a footer line: the composer is wrapped so its content line shows them until the first typed character, because the editor component renders no placeholder of its own. Occupancy and capacity come from the `contextPressure` projection of the mounted `ctx.tokenMeter`; the `(auto)` marker comes from `ctx.compaction.autoCompactionEnabled`; the model's provider qualifies the label only when the deployment registers several. [`src/views.ts`](src/views.ts) turns rows into terminal lines with [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) components, truncating every line to the viewport width because the renderer treats an over-wide line as a component defect, and flattening a Tool heading to one line because one row owns exactly one terminal row: a multi-line argument would otherwise print its own line breaks and spill the row into the pinned footer. The alternate-screen renderer owns scrolling: the transcript is its primary scroll view, so PageUp/PageDown and the wheel move the transcript while the status bar and composer stay pinned.
 
 ### Interaction seams
 
@@ -106,7 +106,7 @@ The patch rides over `dsh-base` and adds no host, HTTP, or browser row. It resta
 | [`cordis.patch.yml`](cordis.patch.yml) | The terminal patch over `dsh-base` |
 | — | No runtime invariant companion is published; the app registers no registry and holds no intra-tree relation to audit, because its observable contract is the terminal surface itself. |
 | [`tests/tui-app.spec.ts`](tests/tui-app.spec.ts) | Composer routing, rendering, modal answers, and exit |
-| [`tests/transcript.spec.ts`](tests/transcript.spec.ts) | The event fold and line-width bounds |
+| [`tests/transcript.spec.ts`](tests/transcript.spec.ts) | The event fold, the footer, the placeholder composer, and line-width bounds |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | Command-line parsing over a real Loader tree |
 
 ### Invariant ownership
@@ -142,7 +142,7 @@ The app submits the typed prompt as an ordinary user message and renders the mod
 
 #### Token effect
 
-Prompts and responses carry their ordinary token cost. Nothing the terminal renders — the status bar, the Tool row folding, or the scroll window — adds a request or a token.
+Prompts and responses carry their ordinary token cost. Nothing the terminal renders — the footer, the Tool row folding, or the scroll window — adds a request or a token; the occupancy figure is read from the local measurement projection, not from an extra provider call.
 
 #### KV Cache effect
 
@@ -159,6 +159,7 @@ These limits define what the terminal surface does not do. They are current cons
 - **Multi-select questions degrade** — a `multiSelect` question is presented one choice per prompt, so a multiple-choice answer needs several rounds.
 - **No attachments or images** — the composer sends text only; image and file blocks are not composed or rendered.
 - **Tool output is folded** — a Tool result shows its first lines plus a count of the remainder; the complete output stays in the session log, not on screen.
+- **Occupancy is an estimate** — the footer's percentage anchors on the last provider-reported prompt size and heuristically reprices what the surface gained or lost since; it is a reference for the user, not a billing or admission input.
 - **Launcher-owned exit** — like every surface, the app starts only through the `dsh` profile, because only the launcher provides the bounded exit request.
 - **No recorded-session snapshot** — the keyless snapshot harness drives shipped profiles over stdio, while this surface owns a terminal; its acceptance is the package tests plus a pseudo-terminal run rather than a snapshot fixture, so a regression in terminal layout needs the surface tests to be extended rather than a re-recorded snapshot.
 

@@ -6,7 +6,6 @@
  */
 
 import { homedir } from 'node:os'
-import { basename } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   Editor,
@@ -25,18 +24,22 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 // Empty type import carries the optional persistence read used by `/resume`.
 import type {} from '@deepseek-ai/dsh-session-persistence'
-import type { TokenUsage } from '@deepseek-ai/dsh-llm'
+// Empty type import carries the optional compaction policy read used by the footer.
+import type {} from '@deepseek-ai/dsh-compaction'
+// Empty type import carries the optional measurement projection the footer reads.
+import type {} from '@deepseek-ai/dsh-session-projection'
+import type { ContextPressureProjection } from '@deepseek-ai/dsh-token-meter/client'
 import { createTheme, editorTheme, selectListTheme, supportsColor } from './ansi.ts'
 import type { TuiTheme } from './ansi.ts'
 import type { Config } from './config.ts'
-import { commandCatalog, executeCommand, formatRoute, listModelChoices, parseCommand } from './commands.ts'
+import { commandCatalog, executeCommand, listModelChoices, parseCommand } from './commands.ts'
 import { installApprovalAnswerer, installQuestionAnswerer } from './interactions.ts'
 import type { InteractionHost } from './interactions.ts'
 import { TuiSession } from './session.ts'
 import type { TuiSessionOptions } from './session.ts'
 import type { TuiStartupValues } from './startup.ts'
-import { PromptPanel, StatusBar, TranscriptView } from './views.ts'
-import type { TuiStatus } from './views.ts'
+import { PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel } from './views.ts'
+import type { TuiContextStatus, TuiStatus } from './views.ts'
 import { Transcript } from './transcript.ts'
 
 /** Longest stored-session list rendered by `/sessions`. */
@@ -90,12 +93,19 @@ export class TuiApp implements InteractionHost {
   private readonly transcriptView: TranscriptView
   private readonly statusBar: StatusBar
   private readonly editor: Editor
+  private readonly composer: PlaceholderEditor
   private readonly disposers: (() => void)[] = []
   private session: TuiSession
   private leaving = false
   private stopped = false
   private promptActive = false
   private promptChain: Promise<unknown> = Promise.resolve()
+  /** Providers the deployment registered; more than one qualifies the footer's model label. */
+  private readonly providerCount: number
+  /** Whether the mounted compaction engine schedules its own work. */
+  private readonly autoCompaction: boolean
+  /** Context occupancy cached against the session log position it was read at. */
+  private contextCache: { seq: number; value: TuiContextStatus | undefined } | undefined
 
   private constructor(
     private readonly options: TuiAppOptions,
@@ -104,12 +114,15 @@ export class TuiApp implements InteractionHost {
   ) {
     this.session = session
     this.theme = createTheme(supportsColor(process.env, process.stdout.isTTY))
+    this.providerCount = options.ctx.llm.listProviders().length
+    this.autoCompaction = options.ctx.get('compaction')?.autoCompactionEnabled ?? false
     this.viewport = options.config.screen === 'alternate' ? new TuiAltScreen(terminal, true, undefined, { mouse: true }) : undefined
     this.tui = this.viewport ?? new TuiMainScreen(terminal, true)
     this.transcriptView = new TranscriptView(this.transcript, this.theme)
     this.statusBar = new StatusBar(this.theme)
     this.editor = new Editor(this.tui, editorTheme(this.theme), { paddingX: 1 })
     this.editor.onSubmit = (text) => { this.submit(text) }
+    this.composer = new PlaceholderEditor(this.editor, this.theme)
   }
 
   /**
@@ -146,19 +159,23 @@ export class TuiApp implements InteractionHost {
     this.attach(this.session)
     if (this.viewport === undefined) {
       this.tui.addChild(this.transcriptView)
+      this.tui.addChild(this.composer)
       this.tui.addChild(this.statusBar)
-      this.tui.addChild(this.editor)
     } else {
       // The transcript is the primary scroll view: the alternate-screen
-      // renderer routes PageUp/PageDown and the wheel to it while the status
-      // bar and composer stay pinned below.
+      // renderer routes PageUp/PageDown and the wheel to it while the composer
+      // and the footer stay pinned below.
       const scroll = new ScrollView(this.transcriptView, { follow: 'end', primary: true, scrollbar: 'auto' })
-      this.viewport.setLayoutRoot(new VStack([{ component: scroll, grow: 1, basis: 0 }, this.statusBar, this.editor]))
+      this.viewport.setLayoutRoot(new VStack([
+        { component: scroll, grow: 1, basis: 0 },
+        this.composer,
+        this.statusBar,
+      ]))
     }
     this.registerKeys()
     this.options.ctx.effect(() => () => { this.teardown() }, 'tui-app.terminal')
     this.refresh()
-    this.tui.setFocus(this.editor)
+    this.tui.setFocus(this.composer)
     this.tui.start()
     this.tui.renderNow(true)
   }
@@ -193,7 +210,10 @@ export class TuiApp implements InteractionHost {
     const owned = session.agent
     this.disposers.push(this.options.ctx.on('session/event', (source: Session, event: SessionEvent) => {
       if (source !== session.session) return
-      if (this.transcript.applyEvent(event)) this.refresh()
+      // Every appended event can move a footer fact, including the ones the
+      // transcript does not show.
+      this.transcript.applyEvent(event)
+      this.refresh()
     }))
     this.disposers.push(this.options.ctx.on('agent/assistant-stream', ({ agent, frame }) => {
       if (agent !== owned) return
@@ -434,23 +454,54 @@ export class TuiApp implements InteractionHost {
     this.refresh()
   }
 
-  /** Push the current facts into the status bar and request a repaint. */
+  /** Push the current facts into the footer and request a repaint. */
   private refresh(): void {
     // Teardown restores the terminal; a late event must not repaint it.
     if (this.stopped) return
     const session = this.session
+    const route = session.route
     const status: TuiStatus = {
-      title: basename(this.options.cwd) || shortId(session.session.id),
-      route: formatRoute(session.route),
       workspace: this.options.cwd.replace(homedir(), '~'),
       state: session.running ? 'running' : 'idle',
-      ...(this.transcript.usage === undefined ? {} : { usage: formatUsage(this.transcript.usage) }),
+      model: modelLabel(route.provider, route.model, this.providerCount),
+      effort: route.reasoningEffort,
+      usage: this.transcript.usage,
+      context: this.contextStatus(session.session),
     }
-    this.statusBar.set(status, this.hints())
+    this.statusBar.set(status)
+    this.composer.setHint(this.hints())
     this.tui.requestRender()
   }
 
-  /** The key hints for the current state. */
+  /**
+   * Context occupancy for the footer, read from the measurement projection.
+   *
+   * The live Assistant stream repaints far more often than it appends session
+   * events, and a projection read folds every registered unit, so the value is
+   * cached against the log position it was read at.
+   * @param session - the session whose pressure is presented.
+   * @returns the occupancy, or undefined while no request has been measured or no capacity is known.
+   */
+  private contextStatus(session: Session): TuiContextStatus | undefined {
+    const cached = this.contextCache
+    if (cached !== undefined && cached.seq === session.seq) return cached.value
+    const pressure = this.measurePressure(session)
+    const window = pressure?.contextWindow
+    const tokens = pressure?.projectedTokens ?? pressure?.pressureTokens
+    const value = window === undefined || tokens === undefined
+      ? undefined
+      : { tokens, window, automatic: this.autoCompaction }
+    this.contextCache = { seq: session.seq, value }
+    return value
+  }
+
+  private measurePressure(session: Session): ContextPressureProjection | undefined {
+    const projections = this.options.ctx.get('sessionProjections')
+    if (projections === undefined) return undefined
+    return projections.snapshot(session, ['contextPressure']).values['contextPressure']
+  }
+
+  /** The placeholder the empty composer shows: the keys valid in the current state. */
   private hints(): string {
     const parts: string[] = [this.session.running ? 'Enter steer' : 'Enter send']
     if (this.session.running) parts.push('Ctrl+C cancel')
@@ -548,7 +599,7 @@ export class TuiApp implements InteractionHost {
     handle.hide()
     this.promptActive = false
     this.editor.disableSubmit = false
-    this.tui.setFocus(this.editor)
+    this.tui.setFocus(this.composer)
     this.refresh()
   }
 
@@ -589,13 +640,4 @@ function shortId(id: string): string {
 function describeSession(header: { id: string; createdAt: number; cwd?: string }): string {
   const created = new Date(header.createdAt).toISOString().replace('T', ' ').slice(0, 16)
   return `${shortId(header.id)}  ${created}  ${header.cwd ?? '(no workspace)'}`
-}
-
-/**
- * Format provider token accounting.
- * @param usage - the last call's usage.
- * @returns a compact `↑in ↓out` summary.
- */
-function formatUsage(usage: TokenUsage): string {
-  return `↑${String(usage.inputTokens)} ↓${String(usage.outputTokens)}`
 }

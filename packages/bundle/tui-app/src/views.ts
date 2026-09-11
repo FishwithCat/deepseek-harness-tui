@@ -6,8 +6,9 @@
  * @module @deepseek-ai/dsh-tui-app/views
  */
 
-import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
-import type { Component, Focusable, MarkdownTheme } from '@earendil-works/pi-tui'
+import { CURSOR_MARKER, Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
+import type { Component, Editor, Focusable, MarkdownTheme } from '@earendil-works/pi-tui'
+import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import { isFocusable } from '@earendil-works/pi-tui'
 import { markdownTheme } from './ansi.ts'
 import type { TuiTheme } from './ansi.ts'
@@ -24,9 +25,23 @@ const TOOL_SUMMARY_MAX_CHARS = 96
 const TOOL_SUMMARY_KEYS = ['command', 'path', 'file_path', 'pattern', 'query', 'url', 'prompt', 'description', 'name']
 
 /**
+ * Collapse text to a single terminal line.
+ *
+ * A transcript row owns exactly one terminal row, so a Tool argument carrying
+ * newlines, tabs, or escape sequences must not reach a heading verbatim: the
+ * terminal would print the embedded breaks and spill the row into the pinned
+ * footer. Control characters become spaces; nothing else changes.
+ * @param text - the text to flatten.
+ * @returns the same text on one line.
+ */
+function singleLine(text: string): string {
+  return text.replace(/[\u0000-\u001f\u007f]/g, ' ')
+}
+
+/**
  * One-line account of a Tool call's arguments.
  * @param args - the raw arguments JSON string.
- * @returns a short, human-readable summary.
+ * @returns a short, human-readable summary on one line.
  */
 export function summarizeToolArguments(args: string): string {
   const trimmed = args.trim()
@@ -36,16 +51,16 @@ export function summarizeToolArguments(args: string): string {
     parsed = JSON.parse(trimmed) as unknown
   } catch {
     // The model produced arguments the Tool will reject; show them verbatim.
-    return trimmed
+    return singleLine(trimmed)
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return trimmed
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return singleLine(trimmed)
   const record = parsed as Record<string, unknown>
   for (const key of TOOL_SUMMARY_KEYS) {
     const value = record[key]
-    if (typeof value === 'string' && value !== '') return `${key}=${value}`
+    if (typeof value === 'string' && value !== '') return singleLine(`${key}=${value}`)
   }
   const pairs = Object.entries(record).map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`)
-  return pairs.length === 0 ? '' : pairs.join(' ')
+  return pairs.length === 0 ? '' : singleLine(pairs.join(' '))
 }
 
 /**
@@ -181,7 +196,7 @@ export class TranscriptView implements Component {
     const style = entry.status === 'running'
       ? this.theme.tool
       : entry.status === 'ok' ? this.theme.toolOk : this.theme.toolError
-    const heading = `${style(marker)} ${this.theme.bold(entry.name)}${summary === '' ? '' : this.theme.dim(`(${summary})`)}`
+    const heading = `${style(marker)} ${this.theme.bold(singleLine(entry.name))}${summary === '' ? '' : this.theme.dim(`(${summary})`)}`
     const lines = [truncateToWidth(heading, width)]
     if (entry.error !== undefined) lines.push(...prefixBody(entry.error, width, this.theme.error('  '), '  '))
     if (entry.result !== '') lines.push(...toolBody(entry.result, width))
@@ -234,29 +249,83 @@ export class PromptPanel implements Component, Focusable {
   }
 }
 
+/** Context occupancy the footer reports against the routed model's capacity. */
+export interface TuiContextStatus {
+  /** Estimated tokens of the next request's prompt. */
+  tokens: number
+  /** The routed model's context window in tokens. */
+  window: number
+  /** Whether the mounted engine compacts automatically at this pressure. */
+  automatic: boolean
+}
+
 /** One frame of the status bar. */
 export interface TuiStatus {
-  /** Session title or short id. */
-  title: string
-  /** Provider and model route. */
-  route: string
-  /** Workspace directory. */
+  /** Workspace directory, abbreviated against the home directory. */
   workspace: string
   /** Agent lifecycle state. */
   state: 'idle' | 'running'
-  /** Token accounting for the last provider call, already formatted. */
-  usage?: string
+  /** Display label for the routed model, provider-qualified when the deployment registers several. */
+  model: string
+  /** Reasoning effort in force, when the route declares one. */
+  effort?: string | undefined
+  /** Token accounting for the last provider call. */
+  usage?: TokenUsage | undefined
+  /** Context occupancy, absent until the meter reports both a pressure and a capacity. */
+  context?: TuiContextStatus | undefined
 }
 
-/** The pinned two-line footer: identity and state, then the key hints. */
+/** Fewest columns kept between the stats and the model when both are shown. */
+const STATUS_MIN_GAP = 2
+/** Share of the context window at which the occupancy figure reads as a warning. */
+const STATUS_CONTEXT_WARN = 0.7
+/** Share of the context window at which the occupancy figure reads as a failure. */
+const STATUS_CONTEXT_ERROR = 0.9
+
+/**
+ * Compact token count for the footer.
+ * @param count - a token count.
+ * @returns whole units below 1000, one decimal below 10000, then whole thousands or millions.
+ */
+function formatTokens(count: number): string {
+  if (count < 1000) return String(count)
+  if (count < 10_000) return `${(count / 1000).toFixed(1)}k`
+  if (count < 1_000_000) return `${String(Math.round(count / 1000))}k`
+  if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`
+  return `${String(Math.round(count / 1_000_000))}M`
+}
+
+/**
+ * Display label for the routed model: the provider qualifies it only when the
+ * deployment registers several, so the common single-provider footer stays short.
+ * @param provider - the routed provider.
+ * @param model - the routed model id.
+ * @param providerCount - providers the deployment registered.
+ * @returns the label the footer's right side shows.
+ */
+export function modelLabel(provider: string, model: string, providerCount: number): string {
+  return providerCount > 1 ? `(${provider}) ${model}` : model
+}
+
+/**
+ * Format provider token accounting.
+ * @param usage - the last call's usage.
+ * @returns a compact `↑in ↓out` summary.
+ */
+function formatUsage(usage: TokenUsage): string {
+  return `↑${String(usage.inputTokens)} ↓${String(usage.outputTokens)}`
+}
+
+/**
+ * The pinned footer under the composer: the workspace and Agent state against
+ * the routed model, then the token accounting and context occupancy.
+ */
 export class StatusBar implements Component {
   private status: TuiStatus = {
-    title: '',
-    route: '',
     workspace: '',
     state: 'idle',
+    model: '',
   }
-  private hints = ''
 
   /**
    * @param theme - the surface theme.
@@ -266,11 +335,9 @@ export class StatusBar implements Component {
   /**
    * Replace the rendered status.
    * @param status - the current facts.
-   * @param hints - the key hints line.
    */
-  set(status: TuiStatus, hints: string): void {
+  set(status: TuiStatus): void {
     this.status = status
-    this.hints = hints
   }
 
   /** Drop cached render state. */
@@ -282,15 +349,135 @@ export class StatusBar implements Component {
    * @returns the footer lines, each within `width`.
    */
   render(width: number): string[] {
-    const status = this.status
-    const state = status.state === 'running' ? this.theme.accent('● running') : this.theme.dim('○ idle')
-    const usage = status.usage === undefined ? '' : `  ${this.theme.dim(status.usage)}`
-    const head = `${this.theme.bold(status.title)}  ${state}${usage}`
-    const detail = this.theme.dim(`${status.route}  ${status.workspace}`)
     return [
-      truncateToWidth(head, width),
-      truncateToWidth(detail, width),
-      truncateToWidth(this.theme.dim(this.hints), width),
+      this.pairLine(this.headText(), this.modelText(), width),
+      truncateToWidth(this.statsLeft(), width),
     ]
+  }
+
+  /**
+   * Place a right side against a left side at the footer's edges.
+   *
+   * The right side yields first — truncated, then dropped — so the identity and
+   * state a user reads stay intact on a narrow terminal; only a left side wider
+   * than the terminal is truncated itself.
+   * @param left - the already styled left side.
+   * @param right - the already styled right side.
+   * @param width - the viewport width in columns.
+   * @returns one line within `width`.
+   */
+  private pairLine(left: string, right: string, width: number): string {
+    const leftWidth = visibleWidth(left)
+    const available = width - leftWidth - STATUS_MIN_GAP
+    const rightWidth = visibleWidth(right)
+    if (rightWidth <= available) return left + ' '.repeat(width - leftWidth - rightWidth) + right
+    if (available > 0) {
+      const truncated = truncateToWidth(right, available, '')
+      return left + ' '.repeat(width - leftWidth - visibleWidth(truncated)) + truncated
+    }
+    return truncateToWidth(left, width)
+  }
+
+  private headText(): string {
+    const state = this.status.state === 'running' ? this.theme.accent('● running') : this.theme.dim('○ idle')
+    return `${this.theme.dim(this.status.workspace)}  ${state}`
+  }
+
+  private modelText(): string {
+    return this.theme.dim(this.status.effort === undefined
+      ? this.status.model
+      : `${this.status.model} • ${this.status.effort}`)
+  }
+
+  private statsLeft(): string {
+    const parts: string[] = []
+    if (this.status.usage !== undefined) parts.push(this.theme.dim(formatUsage(this.status.usage)))
+    const context = this.contextPart()
+    if (context !== '') parts.push(context)
+    return parts.join(this.theme.dim('  '))
+  }
+
+  private contextPart(): string {
+    const context = this.status.context
+    if (context === undefined) return ''
+    const share = context.tokens / context.window
+    const text = `${(share * 100).toFixed(1)}%/${formatTokens(context.window)}${context.automatic ? ' (auto)' : ''}`
+    if (share > STATUS_CONTEXT_ERROR) return this.theme.error(text)
+    if (share > STATUS_CONTEXT_WARN) return this.theme.warning(text)
+    return this.theme.dim(text)
+  }
+}
+
+/**
+ * The composer with a placeholder.
+ *
+ * While the composer is empty, its content row shows the key hints, so the
+ * surface does not spend a footer line on keys the user already knows; the
+ * first typed character replaces them.
+ */
+export class PlaceholderEditor implements Component, Focusable {
+  private hint = ''
+
+  /**
+   * @param editor - the composer the user types into.
+   * @param theme - the surface theme.
+   */
+  constructor(
+    private readonly editor: Editor,
+    private readonly theme: TuiTheme,
+  ) {}
+
+  /** Forward focus to the composer so it emits its cursor marker. */
+  get focused(): boolean {
+    return this.editor.focused
+  }
+
+  set focused(value: boolean) {
+    this.editor.focused = value
+  }
+
+  /**
+   * Replace the placeholder text.
+   * @param hint - the key hints line.
+   */
+  setHint(hint: string): void {
+    this.hint = hint
+  }
+
+  /** Forward input to the composer. */
+  handleInput(data: string): void {
+    this.editor.handleInput(data)
+  }
+
+  /** Drop the composer's cached render state. */
+  invalidate(): void {
+    this.editor.invalidate()
+  }
+
+  /**
+   * Render the composer, showing the hints in place of an empty content line.
+   * @param width - the viewport width in columns.
+   * @returns the composer lines, each within `width`.
+   */
+  render(width: number): string[] {
+    const lines = this.editor.render(width)
+    if (this.hint === '' || this.editor.getText() !== '') return lines
+    // An empty composer draws one content line between its two border lines.
+    return lines.map((line, index) => (index === 1 ? this.placeholderLine(width) : line))
+  }
+
+  /**
+   * The empty composer's content line: the hints with the cursor on their first
+   * character, so an untouched composer still shows where typing lands. A focused
+   * composer emits the hardware-cursor marker exactly as the editor does.
+   * @param width - the viewport width in columns.
+   * @returns the padded content line.
+   */
+  private placeholderLine(width: number): string {
+    const available = Math.max(1, width - 2)
+    const hint = truncateToWidth(this.hint, available, '')
+    const cursor = `\x1b[7m${this.theme.dim(hint.slice(0, 1))}\x1b[27m`
+    const content = `${this.focused ? CURSOR_MARKER : ''}${cursor}${this.theme.dim(hint.slice(1))}`
+    return ` ${content}${' '.repeat(Math.max(0, available - visibleWidth(content)))} `
   }
 }

@@ -29,6 +29,8 @@ export interface TuiTheme {
   notice: Styler
   /** Failure notice. */
   error: Styler
+  /** Approaching a budget the user still has room to act on. */
+  warning: Styler
   /** Emphasis on a value or label. */
   accent: Styler
   /** Rules, separators, and other low-signal chrome. */
@@ -78,6 +80,7 @@ export function createTheme(enabled: boolean): TuiTheme {
     toolError: sgr('1;38;5;203', enabled),
     notice: sgr('38;5;245', enabled),
     error: sgr('38;5;203', enabled),
+    warning: sgr('38;5;214', enabled),
     accent: sgr('38;5;45', enabled),
     border: sgr('38;5;240', enabled),
     dim: sgr('2', enabled),

@@ -20,6 +20,11 @@ import type { ManualCompactAgentContext } from '@deepseek-ai/dsh-compaction'
  * declaration merge.
  */
 class StubCompactionEngine extends CompactionEngine {
+  /** The stub never schedules its own work. */
+  override get autoCompactionEnabled(): boolean {
+    return false
+  }
+
   /** Records the signal handed to the most recent call, to prove it threads through. */
   lastSignal: AbortSignal | undefined
 

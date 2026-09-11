@@ -99,6 +99,15 @@ export abstract class CompactionEngine extends Service {
   }
 
   /**
+   * Whether this engine compacts on its own: between steps, once pressure
+   * crosses the routed model's threshold, and after a provider-confirmed
+   * context overflow. An engine that compacts only on an explicit request
+   * reports false. A consumer that presents the policy reads this fact rather
+   * than the provider's configuration.
+   */
+  abstract get autoCompactionEnabled(): boolean
+
+  /**
    * Consider automatic compaction for one explicit trigger. Pressure policy
    * uses the latest durable routed request, while context-overflow policy may
    * force a useful balanced reduction even below the normal threshold. Return

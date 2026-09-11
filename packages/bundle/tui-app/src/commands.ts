@@ -7,7 +7,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { SelectItem } from '@earendil-works/pi-tui'
-import type { Agent, ModelSelection } from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandExecution } from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-commands'
 
@@ -125,13 +125,4 @@ export async function listModelChoices(ctx: Context): Promise<ModelChoice[]> {
     }
   }
   return choices
-}
-
-/**
- * Format a route for the status bar.
- * @param route - the selection in force.
- * @returns `provider/model`.
- */
-export function formatRoute(route: ModelSelection): string {
-  return `${route.provider}/${route.model}`
 }

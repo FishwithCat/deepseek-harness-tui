@@ -130,6 +130,11 @@ export class BasicCompactionEngine extends CompactionEngine {
     if (this.config.auto) this._registerAutomaticCompaction()
   }
 
+  /** Reported from the resolved policy so consumers see the same decision the registration made. */
+  override get autoCompactionEnabled(): boolean {
+    return this.config.auto
+  }
+
   /**
    * Register automatic between-step pressure and model-request overflow
    * recovery. `compactIfNeeded` stays dynamically dispatched so subclass

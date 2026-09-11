@@ -30,6 +30,9 @@
       "path": "../../core/session"
     },
     {
+      "path": "../../compaction/compaction"
+    },
+    {
       "path": "../../interaction/commands"
     },
     {
@@ -42,7 +45,13 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../../llm/token-meter"
+    },
+    {
       "path": "../../session/session-persistence"
+    },
+    {
+      "path": "../../session/session-projection"
     },
     {
       "path": "../../util/brand"

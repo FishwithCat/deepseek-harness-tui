@@ -1948,15 +1948,22 @@ describe('automatic listener and loader composition', () => {
 
   it('auto:false installs neither automatic listener', async () => {
     const ctx = createContext()
-    void new TestCompactionEngine(ctx, {
+    const compact = new TestCompactionEngine(ctx, {
       auto: false,
       thresholdRatio: 0.5,
       retainTokens: 180,
     })
+    expect(compact.autoCompactionEnabled).toBe(false)
     const session = conversation(4)
     await preStep(ctx, agent(session, MODEL))
     expect(session.snapshotEvents().some(event => event.type === 'compaction/start')).toBe(false)
     expect(await recover(ctx, agent(session, MODEL), overflow())).toBe(false)
+  })
+
+  it('reports the configured automatic policy', async () => {
+    const ctx = createContext()
+    const compact = new TestCompactionEngine(ctx, { auto: true, thresholdRatio: 0.9 })
+    expect(compact.autoCompactionEnabled).toBe(true)
   })
 
   it('loads and disposes the real zero-config service stack', async () => {

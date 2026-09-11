@@ -29,6 +29,11 @@ const RESULT: CompactionResult = {
 }
 
 class StubCompactionEngine extends CompactionEngine {
+  /** The stub never schedules its own work. */
+  override get autoCompactionEnabled(): boolean {
+    return false
+  }
+
   result: CompactionResult | null = RESULT
   failure: unknown
   operation: (() => Promise<CompactionResult | null>) | undefined

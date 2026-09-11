@@ -33,6 +33,11 @@ const RESULT: CompactionResult = {
 }
 
 class LoaderCompactionEngine extends CompactionEngine {
+  /** The stub never schedules its own work. */
+  override get autoCompactionEnabled(): boolean {
+    return false
+  }
+
   override compactIfNeeded(
     _agent: CompactionAgentContext,
     _trigger: CompactionTrigger,
