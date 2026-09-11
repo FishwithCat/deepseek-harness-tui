@@ -1,0 +1,25 @@
+# The dsh terminal application over dsh-base: one interactive TUI driving a
+# single in-process Agent. It mounts no Host, HTTP server, Web runtime, or
+# browser plugin, and it leaves the base's model-facing rows in the host plane
+# because this surface is single-session (see dsh-base's README).
+
+- id: system-prompt
+  config:
+    personaSuffix: Your working directory is {{cwd}}.
+    personaPrefix: >-
+      You are a coding agent powered by the {{model}} model.
+
+- insert:
+    # An ordinary provider for this app's parsed flags. Its plugin-level
+    # injection waits for cmdlineArgs; `--help` provides nothing, so no TUI is
+    # built for a help invocation.
+    - id: tui-startup
+      name: '@deepseek-ai/dsh-tui-app/startup'
+
+    # The interactive runner. It reads its invocation from the provider above
+    # and owns the terminal for the life of the process.
+    - id: tui-app
+      name: '@deepseek-ai/dsh-tui-app'
+      inject: [tuiStartup]
+      config:
+        screen: !!js process.env.DSH_TUI_SCREEN ?? 'alternate'

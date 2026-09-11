@@ -51,6 +51,17 @@ interface PluginInvocation {
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
 export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation
 
+/** Environment variable that overrides which profile a bare `dsh` boots. */
+const DEFAULT_PROFILE_ENV = 'DSH_DEFAULT_PROFILE'
+
+/**
+ * Profile a bare `dsh` boots when the invocation names none. This fork defaults
+ * to its terminal UI; name another shipped profile through
+ * {@link DEFAULT_PROFILE_ENV} to change the default, or set that variable empty
+ * to require `--profile` as upstream does.
+ */
+const DEFAULT_PROFILE = 'tui'
+
 /** Launcher flags shared by the default command and the `web` alias. */
 interface BootOptions {
   patch?: string[]
@@ -74,6 +85,7 @@ function rejectElectronProfile(program: Command, profile: string): void {
 /** The launcher's own help text; each app prints its own. */
 const HELP_EXAMPLES = `
 Examples:
+  dsh                                        boot the default terminal UI profile (same as: dsh --profile tui)
   dsh --profile web                          boot the web profile (same as: dsh web)
   dsh --profile rescue --from-default-profile web
                                              create rescue from the shipped web template, then boot it
@@ -150,12 +162,11 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
     .action((args: string[], options: BootOptions & { profile?: string }) => {
       // With the app owning -h, the launcher's own help is what a bare
       // `dsh -h` (no profile to hand it to) must print.
-      if (options.profile === undefined) {
-        if (args.some(argument => argument === '-h' || argument === '--help')) program.help()
-        program.error('error: --profile <name> is required')
-      }
-      const profile = options.profile
-      if (profile === '') program.error('error: --profile needs a name')
+      if (options.profile === undefined
+        && args.some(argument => argument === '-h' || argument === '--help')) program.help()
+      if (options.profile === '') program.error('error: --profile needs a name')
+      const profile = options.profile ?? process.env[DEFAULT_PROFILE_ENV] ?? DEFAULT_PROFILE
+      if (profile === '') program.error('error: --profile <name> is required')
       rejectElectronProfile(program, profile)
       resolved = resolveBoot(program, profile, options, args)
     })

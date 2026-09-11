@@ -16,9 +16,17 @@ Review the [safety notice](SAFETY.md) before running the project.
 
 ## Run
 
-### Run from `npm`
+### Run the terminal UI
 
 Install `Node.js`, then run:
+
+```sh
+npx @deepseek-ai/dsh
+```
+
+`dsh` with no profile opens the terminal UI in the current directory: one Agent, one session, drawn in the terminal with no server and no port. `Ctrl+D` exits, `/help` lists the commands, and `--resume <session-id>` continues a stored session. This fork defaults a bare `dsh` to the terminal profile; set `DSH_DEFAULT_PROFILE=web` to make the browser the default again, or pass `--profile web` explicitly.
+
+### Run from `npm`
 
 ```sh
 npx @deepseek-ai/dsh web
@@ -35,10 +43,22 @@ git clone https://github.com/deepseek-ai/deepseek-harness.git
 cd deepseek-harness
 pnpm install
 pnpm run build
-pnpm dsh web
+pnpm dsh
 ```
 
-`pnpm run build` prepares the repository artifacts. `pnpm dsh web` uses those built artifacts without rebuilding.
+`pnpm run build` prepares the repository artifacts. `pnpm dsh` uses those built artifacts without rebuilding and opens the terminal UI; `pnpm dsh web` opens the browser UI instead.
+
+### Install the `dsh` command on a new machine
+
+On a fresh clone, one command installs the dependencies, runs the complete build, and links `dsh` into a directory on `PATH`:
+
+```sh
+pnpm run setup:dsh
+```
+
+The complete build matters: `pnpm run build` also builds the native system addon and both compiler faces, and a checkout built without them starts the terminal UI but hangs when the session flushes on exit. The installer then links `apps/cli/lib/bin.js` into `$HOME/.local/bin` (`%APPDATA%\npm` on Windows), so `dsh` — and therefore the terminal UI — runs from any directory. It is idempotent: re-run `pnpm run link:dsh` after a rebuild, or to repair a link left dangling by a moved or cleaned checkout. `pnpm run link:dsh -- --dir <path>` installs elsewhere, and `DSH_LINK_BIN_DIR` sets the target; `pnpm run unlink:dsh` removes a link this checkout installed. An entry owned by another program is refused rather than overwritten.
+
+A registry install (`npx @deepseek-ai/dsh` or `npm install -g`) cannot carry this fork's terminal surface, because `@deepseek-ai/dsh-tui-app` is not published and the launcher's other dependencies would resolve to the upstream packages.
 
 ## Community and support
 

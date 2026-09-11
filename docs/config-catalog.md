@@ -3191,6 +3191,34 @@ export type ToolPresentationMode = 'native' | 'ptc' | 'both'
 
 Source: [`packages/core/tools/src/index.ts:647`](../packages/core/tools/src/index.ts)
 
+<a id="deepseek-aidsh-tui-app"></a>
+
+## `@deepseek-ai/dsh-tui-app`
+
+Requires: `agents` · `agentDefaultModel` · `llm` · `sessions`
+
+```ts config-catalog
+/** The terminal application's settings. */
+export interface Config {
+  /** Screen strategy; see {@link TuiScreen}. */
+  screen: TuiScreen
+}
+
+/**
+ * Where the TUI draws:
+ *
+ * - `'alternate'` — the alternate screen buffer with the app's own scroll
+ *   window. The composer and status bar stay pinned and PageUp/PageDown scroll
+ *   the transcript; the terminal's own scrollback is untouched.
+ * - `'inline'` — the terminal's normal screen. The transcript grows past the
+ *   viewport and the terminal's native scrollback keeps the history, while the
+ *   composer stays at the bottom.
+ */
+export type TuiScreen = 'alternate' | 'inline'
+```
+
+Source: [`packages/bundle/tui-app/src/config.ts:21`](../packages/bundle/tui-app/src/config.ts)
+
 <a id="deepseek-aidsh-typert-loader"></a>
 
 ## `@deepseek-ai/dsh-typert-loader`

@@ -56,9 +56,12 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   # Fresh pi-ai releases carry the model catalog updates that are the whole
-  # point of bumping it; waiting out the release age would defeat that.
+  # point of bumping it; waiting out the release age would defeat that. The
+  # terminal UI ships from the same release train, so its exact version shares
+  # the exemption instead of holding the TUI back one window.
   - '@earendil-works/pi-ai@0.85.1'
   - '@earendil-works/pi-telemetry@0.85.1'
+  - '@earendil-works/pi-tui@0.85.1'
   - node-addon-native-custom-loader@0.1.4
   - node-addon-require-builtin-darwin-arm64@0.1.4
   - node-addon-require-builtin-darwin-x64@0.1.4

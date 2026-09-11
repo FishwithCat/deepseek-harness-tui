@@ -1,0 +1,173 @@
+---
+description: "dsh 的交互式终端界面：在单个进程内驱动一个 Agent、一个会话，提供全屏终端交互，适合通过 SSH 工作或偏好终端而非浏览器的使用者。"
+kind: "package-bundle"
+---
+
+# @deepseek-ai/dsh-tui-app
+
+[English](README.md) | 中文
+
+## 概述
+
+`dsh-tui-app` 是 dsh 的交互式终端界面。运行 `dsh` 即在当前目录启动一个 Agent，其模型、工具、沙箱与审批默认值与其他界面完全一致，但以全屏终端应用呈现：可滚动的对话记录、固定在底部的状态栏与输入框。由于 Agent 运行在同一进程内，它不监听端口、也不启动服务。主要边界：每次调用只有一个会话，没有浏览器、图片附件与文件侧栏。
+
+## 目录
+
+- [使用本包](#use-this-package)
+- [理解实现](#understand-the-implementation)
+- [进一步探索](#further-exploration)
+- [模型体验](#model-experience)
+- [已知限制与延期工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
+
+-----
+
+<a id="use-this-package"></a>
+## 使用本包
+
+在应作为工作区的目录中打开终端界面：
+
+```sh
+dsh
+```
+
+不带 profile 的 `dsh` 即启动本 bundle；`dsh --profile tui` 显式指定它，并接受同一组参数。`DSH_DEFAULT_PROFILE` 可为裸调用选择其他默认 profile（`DSH_DEFAULT_PROFILE=web dsh`），将其设为空字符串则恢复上游「每次启动都必须指定 profile」的要求。没有交互式终端时应用会拒绝启动，因此管道或重定向调用会明确报错，而不是等待无法读取的按键。
+
+### 组合、提问与中断
+
+输入提示并按 Enter 提交。Agent 工作期间，输入框切换为 steer 模式：Enter 提交的文本会在运行的 turn 的下一个 step 被消费，Ctrl+C 取消该 turn。PageUp/PageDown、鼠标滚轮与终端搜索可在不退出应用的情况下滚动对话记录；当视图滚离最新一行时，状态栏会给出提示。
+
+| 按键 | 作用 |
+|---|---|
+| `Enter` | 提交提示；若 turn 正在运行则作为 steer |
+| `Ctrl+C` | 取消正在运行的 turn；无运行时退出 |
+| `Ctrl+D` | 退出 |
+| `PageUp` / `PageDown` | 滚动对话记录 |
+| `Ctrl+L` | 全量重绘 |
+
+### 命令
+
+以 `/` 开头的行会执行命令，而不会到达模型。下列会话命令由本应用自己实现；其他已注册命令——`/compact`、`/goal`、`/plan` 以及部署提供的命令——都从命令注册表发现，并针对当前 Agent 派发。
+
+| 命令 | 作用 |
+|---|---|
+| `/help` | 列出本应用的命令与全部已注册命令 |
+| `/new` | 落盘并关闭当前会话，然后新建会话 |
+| `/sessions` | 按时间倒序列出已存储会话 |
+| `/resume [id]` | 按 id 恢复已存储会话，或从选择器中挑选 |
+| `/model [provider/model]` | 从实时目录中选择模型，或直接切换 |
+| `/quit` | 退出 |
+
+### 设置
+
+本应用唯一的部署设置决定绘制位置：
+
+| 字段 | 默认值 | 含义 |
+|---|---|---|
+| `screen` | `'alternate'` | `'alternate'` 在备用屏幕中绘制对话记录并使用应用自己的滚动窗口；`'inline'` 绘制到普通屏幕，把历史留给终端自身的回滚缓冲。 |
+
+生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tui-app)是全部可接受字段及其 JSDoc 的完整来源。bundle 补丁中的 `DSH_TUI_SCREEN` 提供该默认值。
+
+-----
+
+<a id="understand-the-implementation"></a>
+## 理解实现
+
+<details>
+<summary>实现细节——点击展开</summary>
+
+应用拥有一个 `TuiSession` 与一个终端界面。它先等待组合完成（`ctx.get('loader')?.await()`），以确保 Agent 的 scoped 工具与适配器已挂载，再通过核心注册表创建或恢复 Agent，然后订阅持久的 `session/event` 日志、实时的 `agent/assistant-stream` 流与 `agent/status`。
+
+### 渲染
+
+[`src/transcript.ts`](src/transcript.ts) 把这些事件折叠为有序行——提示、assistant 消息、实时 reasoning、带最终结果的工具调用与应用通知——并通过修订计数器使其渲染行失效。[`src/views.ts`](src/views.ts) 使用 [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) 组件把行转为终端行，并把每一行截断到视口宽度，因为渲染器会把超宽行视为组件缺陷。滚动由备用屏幕渲染器负责：对话记录是它的主滚动视图，因此 PageUp/PageDown 与滚轮移动对话记录，而状态栏与输入框保持固定。
+
+### 交互接缝
+
+应用应答 Agent 会暂停等待的两个接缝。`ctx.on('approval/request', …)` 针对本应用自己的 Agent 提供「允许一次／拒绝」并委托其他 Agent 的请求，因此同时挂载子 Agent 的组合仍由自己的应答者负责；被取消的提示解析为 `cancelled`，审批服务本就把它当作 fail-closed。`ctx.on('user-questions/request', …)` 把问题选项渲染为选择器，或在问题未声明选项时渲染自由文本输入，并在用户取消时以 `ASK_ABORTED` 让提问的工具失败。同一时刻只有一个提示占用键盘。
+
+### 基于 base 的补丁面
+
+补丁叠加在 `dsh-base` 之上，不添加任何 host、HTTP 或浏览器行。它重述其他界面设置的编码 persona，插入启动 provider 与应用本身，并把 base 的面向模型的行保留在 host 平面：本界面是单会话的，其 Agent 进程级组合这些行，而非按会话组合。启动 provider（[`src/startup.ts`](src/startup.ts)）注入 `ctx.cmdlineArgs`（[`dsh-cmdline`](../../boot/cmdline/README.zh.md)），解析 `--resume`、`--provider` 与 `--model`，并提供 `tuiStartup`；应用行注入该服务，因此 `--help` 与被拒绝的调用完全不会挂载终端界面。
+
+### 源码索引
+
+| 文件 | 职责 |
+|---|---|
+| [`src/index.ts`](src/index.ts) | `tui-app` 插件：启动器事实、启动与失败退出 |
+| [`src/startup.ts`](src/startup.ts) | `tui-startup` provider：参数族与 `--help` |
+| [`src/app.ts`](src/app.ts) | 界面构建、事件接线、输入路由与收尾 |
+| [`src/session.ts`](src/session.ts) | Agent 创建／恢复、提示提交、路由切换 |
+| [`src/transcript.ts`](src/transcript.ts) | 把事件折叠为可渲染行 |
+| [`src/views.ts`](src/views.ts) | 对话记录、状态栏与模态面板组件 |
+| [`src/commands.ts`](src/commands.ts) | 斜杠命令目录、派发与模型目录 |
+| [`src/interactions.ts`](src/interactions.ts) | 审批与用户提问应答者 |
+| [`src/ansi.ts`](src/ansi.ts) | 语义样式与组件主题 |
+| [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端补丁 |
+| — | 不发布运行时 invariant 伴随模块；应用不注册任何注册表，也不持有树内可变关系，其可观察契约就是终端界面本身。 |
+| [`tests/tui-app.spec.ts`](tests/tui-app.spec.ts) | 输入路由、渲染、模态应答与退出 |
+| [`tests/transcript.spec.ts`](tests/transcript.spec.ts) | 事件折叠与行宽边界 |
+| [`tests/startup.spec.ts`](tests/startup.spec.ts) | 在真实 Loader 树上的命令行解析 |
+
+### invariant 归属
+
+不发布 invariant 伴随模块：应用不贡献任何注册表，也不持有树内可变关系，其可观察契约是终端界面，而该界面由测试通过替换 Terminal 驱动。
+
+</details>
+
+-----
+
+<a id="further-exploration"></a>
+## 进一步探索
+
+以下页面可深入了解共享核心、同类界面与终端库。
+
+- [Bundle 包地图](../README.zh.md)——构建在同一核心之上的各个界面。
+- [dsh-base](../base/README.zh.md)——本界面运行的共享核心。
+- [dsh-headless](../headless/README.zh.md)——面向脚本与 CI 的一次性同类界面。
+- [dsh-web-app](../web-app/README.zh.md)——面向多轮工作的浏览器同类界面。
+- [dsh-cmdline](../../boot/cmdline/README.zh.md)——启动器如何把命令行交给应用。
+- [生成的配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tui-app)——全部可接受配置字段及其来源声明。
+
+-----
+
+<a id="model-experience"></a>
+## 模型体验
+
+### 交互式编码会话
+
+#### 模型看到什么
+
+应用把输入的提示作为普通用户消息提交，并把模型自身的输出渲染回来；`/help`、`/quit`、`/new`、`/sessions`、`/resume` 与 `/model` 永远不会到达模型。切换模型会追加共享的模型选择通知，与其他界面完全一致。
+
+#### Token 影响
+
+提示与回复承担其常规 token 成本。终端渲染的任何内容——状态栏、工具行折叠或滚动窗口——都不会增加请求或 token。
+
+#### KV Cache 影响
+
+应用不向请求前缀添加任何内容；它只把用户输入的提示送入已组合的树中。
+
+## 已知限制与延期工作
+
+<a id="known-limitations-and-deferred-work"></a>
+
+
+这些限制说明终端界面不做什么。它们是本 bundle 的当前约束，而不是浏览器界面的待办列表。
+
+- **每次调用一个 Agent**——应用只拥有一个会话；切换到其他 Agent 意味着先关闭当前会话的 `/new` 或 `/resume`。
+- **多选问题会降级**——`multiSelect` 问题每次提示只呈现一个选项，因此多选答案需要多轮。
+- **没有附件与图片**——输入框只发送文本；图片与文件块既不能组合也不能渲染。
+- **工具输出会被折叠**——工具结果只显示前若干行加剩余行数；完整输出留在会话日志中，而不在屏幕上。
+- **退出由启动器拥有**——与所有界面一样，应用只能通过 `dsh` profile 启动，因为只有启动器提供有界退出请求。
+- **没有录制会话快照**——无密钥快照框架通过 stdio 驱动随附 profile，而本界面拥有一个终端；它的验收是包测试加一次伪终端运行，而不是快照夹具，因此终端布局的回归需要扩展界面测试，而不是重新录制快照。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者的工作上下文——点击展开</summary>
+
+无。
+
+</details>
