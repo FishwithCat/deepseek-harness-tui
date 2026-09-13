@@ -805,6 +805,54 @@ describe('TuiApp question detail', () => {
     await test.app.stop(0)
   })
 
+  it('scrolls a plan with the arrows and keeps planning without sending the model back', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    test.ctx.planMode.set(agent, true)
+    const plan = `# Widget migration\n\n${Array.from(
+      { length: 30 },
+      (_, index) => `Step ${String(index + 1).padStart(2, '0')} of the migration.`,
+    ).join('\n\n')}`
+    const execution = test.ctx.tools.execute({
+      callId: ToolCallId('call-exit-2'),
+      name: 'exit_plan_mode',
+      arguments: { plan },
+      signal: new AbortController().signal,
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Step 01'))).toBe(true)
+    })
+    const before = screen(test.app).findIndex(row => row.includes('scroll'))
+    expect(before).toBeGreaterThanOrEqual(0)
+
+    // A long plan owns Up/Down; the first press scrolls the detail instead of
+    // moving the Approve / Keep planning selection.
+    test.terminal.feed('\x1b[B')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('2–'))).toBe(true)
+    })
+    expect(screen(test.app).some(row => row.includes('→ Approve'))).toBe(true)
+
+    // Left/Right moves the selection while the plan owns the arrows.
+    test.terminal.feed('\x1b[C')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Keep planning'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+
+    // Keep planning hands the turn back: the tool result tells the model to
+    // stay in plan mode and wait for the user's next message instead of
+    // revising the plan immediately.
+    await expect(execution).resolves.toMatchObject({ isError: true })
+    const result = await execution
+    expect(result.content).toEqual([{
+      type: 'text',
+      text: 'Error: The user dismissed the plan review to speak instead; stay in plan mode, stop here, and wait for their message.',
+    }])
+    await test.app.stop(0)
+  })
+
   it('scrolls a question detail longer than the panel', async () => {
     const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
     const agent = owned(test)
@@ -839,6 +887,46 @@ describe('TuiApp question detail', () => {
 
     test.terminal.feed('\r')
     await expect(pending).resolves.toMatchObject({ answers: [{ id: 'detail', selected: ['Alpha'] }] })
+    await test.app.stop(0)
+  })
+
+  it('keeps arrow selection when a short detail fits above the picker', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{
+        id: 'short',
+        question: 'Pick one',
+        detail: 'Context: one line.',
+        options: [{ label: 'Alpha' }, { label: 'Beta' }],
+      }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true)
+    })
+    // The detail fits, so Up/Down keep their ordinary picker meaning.
+    test.terminal.feed('\x1b[B')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Beta'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'short', selected: ['Beta'] }] })
+    await test.app.stop(0)
+  })
+
+  it('fails a dismissed question with the seam abort code', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{ id: 'plain', question: 'Pick one', options: [{ label: 'Alpha' }] }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true)
+    })
+    test.terminal.feed('\x1b')
+    await expect(pending).rejects.toMatchObject({ code: 'ASK_ABORTED' })
     await test.app.stop(0)
   })
 

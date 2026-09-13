@@ -4,17 +4,18 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { Mock } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { CURSOR_MARKER, Editor, SelectList, visibleWidth } from '@earendil-works/pi-tui'
-import type { Component, TUI } from '@earendil-works/pi-tui'
+import type { Component, TUI, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord, StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import { Transcript } from '../src/transcript.ts'
-import { PROMPT_PANEL_CHROME_ROWS, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, summarizeToolArguments } from '../src/views.ts'
+import { PROMPT_PANEL_CHROME_ROWS, DetailBody, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, summarizeToolArguments } from '../src/views.ts'
 import type { TuiStatus } from '../src/views.ts'
 import { createTheme, editorTheme, selectListTheme } from '../src/ansi.ts'
 
@@ -499,6 +500,134 @@ describe('PlaceholderEditor', () => {
   })
 })
 
+/** One normalized mouse event for component tests. */
+function mouseEvent(type: TuiMouseEvent['type'], overrides: Partial<TuiMouseEvent> = {}): TuiMouseEvent {
+  return {
+    type, button: 'none', x: 0, y: 0, screenX: 0, screenY: 0,
+    width: 40, height: 12, shift: false, alt: false, ctrl: false,
+    ...overrides,
+  }
+}
+
+/** A fixed-height control whose scroll-affecting input stays observable. */
+interface StubControl {
+  render: () => string[]
+  invalidate: () => void
+  handleInput: Mock<(data: string) => void>
+  handleMouse: Mock<(event: TuiMouseEvent) => TuiMouseEventResult | undefined>
+}
+
+describe('DetailBody', () => {
+  /** Build one stub control. */
+  function control(): StubControl {
+    return {
+      render: () => ['→ Approve', '  Keep planning'],
+      invalidate: () => {},
+      handleInput: vi.fn(),
+      handleMouse: vi.fn(),
+    }
+  }
+
+  /** A detail of `count` one-line paragraphs. */
+  function detail(count: number): string {
+    return Array.from({ length: count }, (_, index) => `marker-${String(index + 1).padStart(2, '0')}`).join('\n\n')
+  }
+
+  /** One wheel event over the panel body. */
+  function wheel(delta: number): TuiMouseEvent {
+    return mouseEvent('wheel', { wheelDelta: delta })
+  }
+
+  it('scrolls an overflowing detail line by line and viewport by viewport', () => {
+    const body = control()
+    const view = new DetailBody(detail(40), body, createTheme(false), 12)
+    const first = view.render(40).join('\n')
+    expect(first).toContain('marker-01')
+    expect(first).toContain('↑↓/PgUp/PgDn scroll')
+    expect(first).not.toContain('←→ choose')
+
+    view.handleInput('\x1b[B')
+    const down = view.render(40).join('\n')
+    expect(down).toContain('marker-02')
+    expect(down).not.toContain('marker-01')
+    expect(body.handleInput).not.toHaveBeenCalled()
+
+    view.handleInput('\x1b[A')
+    expect(view.render(40).join('\n')).toContain('marker-01')
+
+    view.handleInput('\x1b[6~')
+    const paged = view.render(40).join('\n')
+    expect(paged).toContain('10–18/')
+    expect(paged).not.toContain('marker-01')
+  })
+
+  it('moves the control selection with Left/Right and Tab while the detail overflows', () => {
+    const step = vi.fn()
+    const view = new DetailBody(detail(40), control(), createTheme(false), 12, step)
+    expect(view.render(40).join('\n')).toContain('←→ choose')
+
+    view.handleInput('\x1b[C')
+    view.handleInput('\t')
+    expect(step.mock.calls).toEqual([[1], [1]])
+
+    view.handleInput('\x1b[D')
+    view.handleInput('\x1b[Z')
+    expect(step.mock.calls).toEqual([[1], [1], [-1], [-1]])
+  })
+
+  it('hands every key to the control while the detail fits', () => {
+    const body = control()
+    const view = new DetailBody('one short line', body, createTheme(false), 12, () => {})
+    view.render(40)
+
+    view.handleInput('\x1b[B')
+    expect(body.handleInput).toHaveBeenCalledWith('\x1b[B')
+    // The wheel is always the detail's: it consumes the event even at a bound.
+    expect(view.handleMouse(wheel(-3))).toEqual({ handled: true })
+    expect(view.render(40).join('\n')).toContain('one short line')
+  })
+
+  it('scrolls an overflowing detail with the wheel', () => {
+    const view = new DetailBody(detail(40), control(), createTheme(false), 12)
+    view.render(40)
+    expect(view.handleMouse(wheel(3))).toEqual({ handled: true })
+    expect(view.render(40).join('\n')).toContain('4–12/')
+    view.handleMouse(wheel(-1))
+    expect(view.render(40).join('\n')).toContain('3–11/')
+  })
+
+  it('forwards non-wheel mouse events to the control', () => {
+    const body = control()
+    const view = new DetailBody('short', body, createTheme(false), 12)
+    const click = { ...wheel(0), type: 'click' as const }
+    view.handleMouse(click)
+    expect(body.handleMouse).toHaveBeenCalledWith(click)
+  })
+
+  it('hands movement keys to a control with no selection to move', () => {
+    const body = control()
+    const view = new DetailBody(detail(40), body, createTheme(false), 12)
+    view.render(40)
+
+    view.handleInput('\x1b[C')
+    view.handleInput('\x1b[D')
+    expect(body.handleInput.mock.calls).toEqual([['\x1b[C'], ['\x1b[D']])
+  })
+
+  it('leaves a non-wheel event to a control with no mouse handler', () => {
+    const view = new DetailBody('short', { render: () => ['x'], invalidate: () => {} }, createTheme(false), 12)
+    expect(view.handleMouse(mouseEvent('click'))).toBeUndefined()
+  })
+
+  it('leaves the keys to a control that leaves the detail no rows', () => {
+    const body = control()
+    const view = new DetailBody(detail(40), body, createTheme(false), 1)
+    view.render(40)
+    view.handleInput('\x1b[B')
+    expect(body.handleInput).toHaveBeenCalledWith('\x1b[B')
+  })
+})
+
 describe('PromptPanel', () => {
   /**
    * Build one picker panel.
@@ -568,6 +697,19 @@ describe('PromptPanel', () => {
     const view = new PromptPanel('title', createTheme(false), { render: () => [], invalidate })
     view.invalidate()
     expect(invalidate).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes a mouse event past its chrome and drops one on the chrome', () => {
+    const handleMouse = vi.fn(() => ({ handled: true as const }))
+    const view = new PromptPanel('title', createTheme(false), { render: () => ['x'], invalidate: () => {}, handleMouse })
+    expect(view.handleMouse(mouseEvent('click', { y: 2, height: 10 }))).toEqual({ handled: true })
+    expect(handleMouse).toHaveBeenCalledWith(expect.objectContaining({ y: 0, height: 8 }))
+    expect(view.handleMouse(mouseEvent('click', { y: 1 }))).toBeUndefined()
+  })
+
+  it('leaves a body without a mouse handler to the renderer', () => {
+    const view = new PromptPanel('title', createTheme(false), { render: () => [], invalidate: () => {} })
+    expect(view.handleMouse(mouseEvent('click', { y: 4 }))).toBeUndefined()
   })
 
   it('keeps every row inside the viewport width when styles are emitted', () => {

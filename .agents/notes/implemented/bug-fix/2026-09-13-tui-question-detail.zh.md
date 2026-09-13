@@ -12,7 +12,7 @@ plan 模式通过 `exit_plan_mode` 提交完整计划，其 `userQuestions.ask` 
 
 `InteractionHost.choose` 与 `ask` 接受可选的 `detail`，`installQuestionAnswerer` 传入 `question.detail`；应答器仍只负责呈现，计划的批准标签与答案编码不变。
 
-`DetailBody`（[`src/views.ts`](../../../../packages/bundle/tui-app/src/views.ts)）在存在 detail 时包裹选择器或输入框。它把 markdown 渲染在一个视口中，视口大小取决于被包裹控件剩余的行数，因此两选项的 review 几乎把整个面板让给计划，而很长的选择器会让计划少一些。PageUp 与 PageDown 滚动详情，其他按键都交给控件，从而保留选择器的方向键、Enter 与 Escape 绑定；详情溢出时，一行滚动位置会标出可见范围。`showPrompt` 现在接受任意 `Component` 主体，面板的主体预算与 chrome 不变。
+`DetailBody`（[`src/views.ts`](../../../../packages/bundle/tui-app/src/views.ts)）在存在 detail 时包裹选择器或输入框。它把 markdown 渲染在一个视口中，视口大小取决于被包裹控件剩余的行数，因此两选项的 review 几乎把整个面板让给计划，而很长的选择器会让计划少一些。滚动溢出的详情与到达控件的选择项，其分工由 [plan-review wait 笔记](2026-09-13-tui-plan-review-wait.zh.md)负责；详情溢出时，一行滚动位置会标出可见范围。`showPrompt` 现在接受任意 `Component` 主体，面板的主体预算与 chrome 不变。
 
 ## 备选方案
 
@@ -24,7 +24,7 @@ plan 模式通过 `exit_plan_mode` 提交完整计划，其 `userQuestions.ask` 
 
 ## 后果
 
-任何携带 `detail` 的问题现在都能在终端中阅读，plan review 会显示模型提交的原始计划。若某个控件占满整个主体预算，详情就没有行、也没有滚动提示，因此很长的选项列表可能遮住详情；plan review 的两个选项几乎把整个面板留给计划，而这正是本次改动针对的场景。选择「继续规划」仍不会向模型带回自由文本反馈，这一点已记录为 bundle 限制。
+任何携带 `detail` 的问题现在都能在终端中阅读，plan review 会显示模型提交的原始计划。若某个控件占满整个主体预算，详情就没有行、也没有滚动提示，因此很长的选项列表可能遮住详情；plan review 的两个选项几乎把整个面板留给计划，而这正是本次改动针对的场景。plan review 的「继续规划」答案与滚动按键由 [plan-review wait 笔记](2026-09-13-tui-plan-review-wait.zh.md)负责。
 
 ## 测试
 

@@ -791,7 +791,8 @@ export class TuiApp implements InteractionHost {
    * @param title - the question shown above the list.
    * @param items - the selectable items.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
-   * @param detail - markdown shown above the list, scrollable with PageUp/PageDown.
+   * @param detail - markdown shown above the list; while it overflows, Up/Down
+   * and the wheel scroll it and Left/Right move the list selection.
    * @returns the chosen item, or undefined when dismissed.
    */
   choose(title: string, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined> {
@@ -803,7 +804,18 @@ export class TuiApp implements InteractionHost {
       const scrolling = items.length > capacity
       const visible = Math.max(1, Math.min(items.length, PROMPT_VISIBLE_ITEMS, capacity - (scrolling ? 1 : 0)))
       const list = new SelectList([...items], visible, selectListTheme(this.theme), PROMPT_LIST_LAYOUT)
-      const handle = this.showPrompt(title, detail === undefined ? list : new DetailBody(detail, list, this.theme, capacity))
+      // A long detail owns Up/Down, so the picker's selection needs a tracked
+      // index for the Left/Right and Tab keys DetailBody hands over.
+      let selected = 0
+      list.onSelectionChange = (item) => {
+        selected = items.findIndex(candidate => candidate.value === item.value)
+      }
+      const step = (delta: -1 | 1): void => {
+        selected = (selected + delta + items.length) % items.length
+        list.setSelectedIndex(selected)
+      }
+      const body: Component = detail === undefined ? list : new DetailBody(detail, list, this.theme, capacity, step)
+      const handle = this.showPrompt(title, body)
       const settle = (item: SelectItem | undefined): void => {
         this.dismissPrompt(handle)
         resolve(item)
@@ -818,7 +830,8 @@ export class TuiApp implements InteractionHost {
    * Ask the user for one line of text through a modal input.
    * @param title - the question shown above the input.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
-   * @param detail - markdown shown above the input, scrollable with PageUp/PageDown.
+   * @param detail - markdown shown above the input; Up/Down, PageUp/PageDown,
+   * and the wheel scroll it while it overflows.
    * @returns the entered text, or undefined when dismissed.
    */
   ask(title: string, signal?: AbortSignal, detail?: string): Promise<string | undefined> {

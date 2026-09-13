@@ -7,7 +7,7 @@
  */
 
 import { CURSOR_MARKER, Key, Markdown, isFocusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
-import type { Component, Editor, Focusable, MarkdownTheme } from '@earendil-works/pi-tui'
+import type { Component, Editor, Focusable, MarkdownTheme, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import { markdownTheme } from './ansi.ts'
 import type { TuiTheme } from './ansi.ts'
@@ -234,11 +234,17 @@ const DETAIL_SCROLL_HINT_ROWS = 1
  *
  * `detail` is markdown the caller supplied — a plan under review, or facts a
  * question rests on — and can be taller than the panel. The detail renders in a
- * viewport that yields every row its control does not use; PageUp and PageDown
- * scroll it, while every other key reaches the control, so a picker keeps its
- * own arrow, Enter, and Escape bindings. The control's rendered height, not a
- * fixed split, sizes the viewport, so a two-option review gives the plan nearly
- * the whole panel and a long picker leaves the plan less.
+ * viewport that yields every row its control does not use; the control's
+ * rendered height, not a fixed split, sizes the viewport, so a two-option
+ * review gives the plan nearly the whole panel and a long picker leaves the
+ * plan less.
+ *
+ * Scrolling keys depend on whether the detail overflows. While it does, Up and
+ * Down scroll it by one row, PageUp and PageDown by one viewport, and the wheel
+ * by its reported lines; a control that supplies `step` is then moved with Left
+ * and Right (or Tab and Shift+Tab), which keeps those keys off the scroller.
+ * While the detail fits, every key reaches the control unchanged, so a plain
+ * picker keeps its own Up, Down, Enter, and Escape bindings.
  */
 export class DetailBody implements Component {
   private readonly markdown: Markdown
@@ -253,18 +259,22 @@ export class DetailBody implements Component {
    * @param control - the focused control that answers the prompt.
    * @param theme - the surface theme.
    * @param rows - the panel body's row budget, chrome excluded.
+   * @param step - moves the control's selection by one item while the detail
+   * overflows; absent when the control has no selection to move.
    */
   constructor(
     detail: string,
     private readonly control: Component,
     private readonly theme: TuiTheme,
     private readonly rows: number,
+    private readonly step?: (delta: -1 | 1) => void,
   ) {
     this.markdown = new Markdown(detail, 0, 0, markdownTheme(theme))
   }
 
   /**
-   * Scroll the detail, or hand the key to the control.
+   * Scroll the overflowing detail, move the control's selection, or hand the
+   * key to the control.
    * @param data - raw key bytes.
    */
   handleInput(data: string): void {
@@ -276,8 +286,41 @@ export class DetailBody implements Component {
       this.scrollTo(this.scrollTop + this.viewport)
       return
     }
+    if (this.viewport > 0 && this.content > this.viewport) {
+      if (matchesKey(data, Key.up)) {
+        this.scrollTo(this.scrollTop - 1)
+        return
+      }
+      if (matchesKey(data, Key.down)) {
+        this.scrollTo(this.scrollTop + 1)
+        return
+      }
+      if (this.step !== undefined) {
+        if (matchesKey(data, Key.left) || matchesKey(data, Key.shift('tab'))) {
+          this.step(-1)
+          return
+        }
+        if (matchesKey(data, Key.right) || matchesKey(data, Key.tab)) {
+          this.step(1)
+          return
+        }
+      }
+    }
     if (isFocusable(this.control)) this.control.focused = true
     this.control.handleInput?.(data)
+  }
+
+  /**
+   * Scroll the detail with the wheel, or hand the mouse event to the control.
+   * @param event - the normalized mouse event.
+   * @returns the control's result, or `handled` for a consumed wheel event.
+   */
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type === 'wheel' && event.wheelDelta !== undefined) {
+      this.scrollTo(this.scrollTop + event.wheelDelta)
+      return { handled: true }
+    }
+    return this.control.handleMouse?.(event)
   }
 
   /** Drop both the detail's and the control's cached render state. */
@@ -304,7 +347,8 @@ export class DetailBody implements Component {
     const lines = detail.slice(this.scrollTop, this.scrollTop + this.viewport)
     if (hint) {
       const end = this.scrollTop + this.viewport
-      lines.push(this.theme.dim(`  ${String(this.scrollTop + 1)}–${String(end)}/${String(detail.length)} · PgUp/PgDn`))
+      const keys = this.step === undefined ? '↑↓/PgUp/PgDn scroll' : '↑↓/PgUp/PgDn scroll · ←→ choose'
+      lines.push(this.theme.dim(`  ${String(this.scrollTop + 1)}–${String(end)}/${String(detail.length)} · ${keys}`))
     }
     lines.push(...control)
     return lines
@@ -357,6 +401,22 @@ export class PromptPanel implements Component, Focusable {
   handleInput(data: string): void {
     if (isFocusable(this.body)) this.body.focused = true
     this.body.handleInput?.(data)
+  }
+
+  /**
+   * Forward a mouse event past the panel's chrome to the wrapped control, so a
+   * scrolling body reaches its own viewport and a picker receives clicks at the
+   * rows it rendered. Events on the title or blank row belong to no control.
+   * @param event - the normalized mouse event, in panel coordinates.
+   * @returns the body's result, when it handled the event.
+   */
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.y < PROMPT_PANEL_CHROME_ROWS) return undefined
+    return this.body.handleMouse?.({
+      ...event,
+      y: event.y - PROMPT_PANEL_CHROME_ROWS,
+      height: Math.max(0, event.height - PROMPT_PANEL_CHROME_ROWS),
+    })
   }
 
   /** Drop the wrapped control's cached render state. */

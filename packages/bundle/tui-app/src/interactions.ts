@@ -22,7 +22,7 @@ export interface InteractionHost {
    * @param title - the question shown above the list.
    * @param items - the selectable items.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
-   * @param detail - markdown shown above the list, scrollable with PageUp/PageDown.
+   * @param detail - markdown shown above the list, scrollable with Up/Down, PageUp/PageDown, and the wheel.
    * @returns the chosen item, or undefined when the user cancelled.
    */
   choose(title: string, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined>
@@ -30,7 +30,7 @@ export interface InteractionHost {
    * Ask the user for one line of text.
    * @param title - the question shown above the input.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
-   * @param detail - markdown shown above the input, scrollable with PageUp/PageDown.
+   * @param detail - markdown shown above the input, scrollable with Up/Down, PageUp/PageDown, and the wheel.
    * @returns the entered text, or undefined when the user cancelled.
    */
   ask(title: string, signal?: AbortSignal, detail?: string): Promise<string | undefined>
@@ -64,10 +64,17 @@ export function installApprovalAnswerer(ctx: Context, host: InteractionHost, own
 
 /**
  * Answer one structured question.
+ *
+ * A plan review is special: its non-approve choice is not an answer to send
+ * back. The terminal has no separate "talk it over" action, so choosing Keep
+ * planning means the user kept planning to speak instead — leaving the question
+ * unanswered hands the turn back so the agent stays in plan mode and waits for
+ * their adjustment rather than revising immediately.
  * @param host - the terminal prompt surface.
  * @param question - the question to present.
  * @param signal - cancellation lifetime of the whole request.
- * @returns the answer item, or undefined when the user dismissed the prompt.
+ * @returns the answer item, or undefined when the user dismissed the prompt or
+ * chose to keep planning instead of answering.
  */
 async function answerQuestion(
   host: InteractionHost,
@@ -89,13 +96,15 @@ async function answerQuestion(
   const title = question.multiSelect === true ? `${heading} (one choice per prompt)` : heading
   const chosen = await host.choose(title, items, signal, question.detail)
   if (chosen === undefined) return undefined
+  if (question.intent?.kind === 'plan-review' && chosen.value !== question.intent.approve) return undefined
   return { id: question.id, selected: [chosen.value] }
 }
 
 /**
  * Answer structured user questions for one owned Agent. A dismissed prompt
  * fails the asking Tool with the seam's aborted code instead of leaving the
- * request unanswered.
+ * request unanswered; a plan review the user keeps planning fails it with the
+ * cancelled code, the one plan mode reads as "the user took the turn back".
  * @param ctx - the plugin context whose waterfall carries question requests.
  * @param host - the terminal prompt surface.
  * @param owned - the Agent this app answers for.
@@ -108,7 +117,13 @@ export function installQuestionAnswerer(ctx: Context, host: InteractionHost, own
     for (const question of request.questions) {
       const answer = await answerQuestion(host, question, request.signal)
       if (answer === undefined) {
-        throw new UserQuestionError('the user dismissed the question prompt', 'ASK_ABORTED')
+        const planReview = question.intent?.kind === 'plan-review'
+        throw new UserQuestionError(
+          planReview
+            ? 'the user kept planning to speak instead'
+            : 'the user dismissed the question prompt',
+          planReview ? 'ASK_CANCELLED' : 'ASK_ABORTED',
+        )
       }
       answers.push(answer)
     }

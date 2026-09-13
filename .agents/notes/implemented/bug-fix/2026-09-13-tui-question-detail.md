@@ -12,7 +12,7 @@ Plan mode routes the complete plan through `exit_plan_mode`, whose `userQuestion
 
 `InteractionHost.choose` and `ask` take an optional `detail`, and `installQuestionAnswerer` passes `question.detail`; the answerer still owns only presentation, and the plan's approve label and answer encoding are unchanged.
 
-`DetailBody` ([`src/views.ts`](../../../../packages/bundle/tui-app/src/views.ts)) wraps the picker or input when a detail is present. It renders the markdown in a viewport sized to the rows the wrapped control leaves, so a two-option review gives the plan nearly the whole panel and a long picker leaves it less. PageUp and PageDown scroll the detail and every other key reaches the control, keeping the picker's arrow, Enter, and Escape bindings; a scroll-position line names the visible range once the detail overflows. `showPrompt` accepts any `Component` body, and the panel's body budget and chrome are unchanged.
+`DetailBody` ([`src/views.ts`](../../../../packages/bundle/tui-app/src/views.ts)) wraps the picker or input when a detail is present. It renders the markdown in a viewport sized to the rows the wrapped control leaves, so a two-option review gives the plan nearly the whole panel and a long picker leaves it less. Scrolling the overflowing detail and reaching the control's selection are the [plan-review wait note](2026-09-13-tui-plan-review-wait.md)'s split; a scroll-position line names the visible range once the detail overflows. `showPrompt` accepts any `Component` body, and the panel's body budget and chrome are unchanged.
 
 ## Alternatives considered
 
@@ -24,7 +24,7 @@ Plan mode routes the complete plan through `exit_plan_mode`, whose `userQuestion
 
 ## Consequences
 
-Any question that carries `detail` is now readable in the terminal, and the plan review shows the exact plan the model submitted. A control that spends the whole body budget leaves the detail no rows and no scroll hint, so a very long option list can hide the detail; the plan review's two options leave it nearly the full panel, which is the case this change exists for. Keep planning still returns to the model without free-text feedback, recorded as a bundle limitation.
+Any question that carries `detail` is now readable in the terminal, and the plan review shows the exact plan the model submitted. A control that spends the whole body budget leaves the detail no rows and no scroll hint, so a very long option list can hide the detail; the plan review's two options leave it nearly the full panel, which is the case this change exists for. The plan review's Keep planning answer and the scrolling keys are owned by the [plan-review wait note](2026-09-13-tui-plan-review-wait.md).
 
 ## Testing
 
