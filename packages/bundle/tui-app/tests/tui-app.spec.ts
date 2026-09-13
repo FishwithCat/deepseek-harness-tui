@@ -407,6 +407,16 @@ describe('TuiApp', () => {
     expect(test.exits).toEqual([0])
   })
 
+  it('keeps Ctrl+D quitting after /new replaces the session', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    test.terminal.feed('/new')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('started a new session') })
+
+    test.terminal.feed('\x04')
+    await vi.waitFor(() => { expect(test.exits).toEqual([0]) })
+  })
+
   it('interrupts a running turn on Escape without ending the session', async () => {
     const test = await bench({ afterPrompt: () => {} })
     test.setRunning(true)
@@ -690,6 +700,17 @@ describe('TuiApp plan mode', () => {
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('plan mode on') })
     expect(test.ctx.planMode.get(agent).active).toBe(true)
     expect(plain(test.terminal.output).match(/plan mode on/g)).toHaveLength(1)
+    await test.app.stop(0)
+  })
+
+  it('keeps Shift+Tab working after /new replaces the session', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true })
+    test.terminal.feed('/new')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('started a new session') })
+
+    test.terminal.feed(SHIFT_TAB)
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('plan mode on') })
     await test.app.stop(0)
   })
 })

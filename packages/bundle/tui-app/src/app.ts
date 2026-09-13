@@ -128,6 +128,8 @@ export class TuiApp implements InteractionHost {
   private readonly editor: Editor
   private readonly composer: PlaceholderEditor
   private readonly disposers: (() => void)[] = []
+  /** Subscriptions to the current session; `/new` and `/resume` replace them wholesale. */
+  private readonly sessionDisposers: (() => void)[] = []
   private session: TuiSession
   private leaving = false
   private stopped = false
@@ -245,22 +247,22 @@ export class TuiApp implements InteractionHost {
    */
   private attach(session: TuiSession): void {
     const owned = session.agent
-    this.disposers.push(this.options.ctx.on('session/event', (source: Session, event: SessionEvent) => {
+    this.sessionDisposers.push(this.options.ctx.on('session/event', (source: Session, event: SessionEvent) => {
       if (source !== session.session) return
       // Every appended event can move a footer fact, including the ones the
       // transcript does not show.
       this.transcript.applyEvent(event)
       this.refresh()
     }))
-    this.disposers.push(this.options.ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+    this.sessionDisposers.push(this.options.ctx.on('agent/assistant-stream', ({ agent, frame }) => {
       if (agent !== owned) return
       if (this.transcript.applyFrame(frame)) this.refresh()
     }))
-    this.disposers.push(this.options.ctx.on('agent/status', ({ agent }) => {
+    this.sessionDisposers.push(this.options.ctx.on('agent/status', ({ agent }) => {
       if (agent === owned) this.refresh()
     }))
-    this.disposers.push(installApprovalAnswerer(this.options.ctx, this, owned))
-    this.disposers.push(installQuestionAnswerer(this.options.ctx, this, owned))
+    this.sessionDisposers.push(installApprovalAnswerer(this.options.ctx, this, owned))
+    this.sessionDisposers.push(installQuestionAnswerer(this.options.ctx, this, owned))
   }
 
   /** Install the global key bindings; the viewport owns scrolling keys. */
@@ -684,7 +686,9 @@ export class TuiApp implements InteractionHost {
    */
   private async replaceSession(open: () => Promise<TuiSession>): Promise<void> {
     const previous = this.session
-    for (const dispose of this.disposers.splice(0)) dispose()
+    // Only the session subscriptions retire with the old session; the global
+    // key bindings stay installed for the replacement.
+    for (const dispose of this.sessionDisposers.splice(0)) dispose()
     try {
       await previous.flush()
     } catch (error) {
@@ -890,6 +894,7 @@ export class TuiApp implements InteractionHost {
     if (this.stopped) return
     this.stopped = true
     for (const dispose of this.disposers.splice(0)) dispose()
+    for (const dispose of this.sessionDisposers.splice(0)) dispose()
     this.tui.stop()
   }
 }
