@@ -10,6 +10,12 @@
       You are a coding agent powered by the {{model}} model.
 
 - insert:
+    # Whole-log decode wall time and output tokens for the footer's throughput
+    # figure (the sessionStats projection key); the projection registry itself
+    # is a base-layer row.
+    - id: session-stats
+      name: '@deepseek-ai/dsh-session-stats'
+
     # An ordinary provider for this app's parsed flags. Its plugin-level
     # injection waits for cmdlineArgs; `--help` provides nothing, so no TUI is
     # built for a help invocation.

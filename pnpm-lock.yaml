@@ -1763,6 +1763,9 @@ importers:
       '@deepseek-ai/dsh-cmdline':
         specifier: workspace:^
         version: link:../../boot/cmdline
+      '@deepseek-ai/dsh-session-stats':
+        specifier: workspace:^
+        version: link:../../session/session-stats
       '@deepseek-ai/dsh-util-values':
         specifier: workspace:^
         version: link:../../util/values

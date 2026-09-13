@@ -21,6 +21,7 @@ import type { FileDiff } from '@deepseek-ai/dsh-tools'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
@@ -149,6 +150,7 @@ async function bench(
   options: {
     screen?: Config['screen']
     tokenMeter?: boolean
+    sessionStats?: boolean
     compaction?: boolean
     projections?: boolean
     attachments?: boolean
@@ -185,6 +187,7 @@ async function bench(
     await ctx.plugin(LocalAttachmentStore, { dshHome: home })
   }
   if (options.tokenMeter === true || options.compaction === true) await ctx.plugin(TokenMeter)
+  if (options.sessionStats === true) await ctx.plugin(SessionStatsPlugin)
   if (options.compaction === true) await ctx.plugin(BasicCompactionEngine, { auto: true })
   await ctx.plugin(UserApprovalService, { policy: 'ask' })
   const exits: number[] = []
@@ -593,6 +596,33 @@ describe('TuiApp', () => {
     const test = await bench({ afterPrompt: () => {} }, { projections: false })
     expect(plain(test.terminal.output)).toContain('Enter send')
     expect(plain(test.terminal.output)).not.toContain('%')
+    await test.app.stop(0)
+  })
+
+  it('reports whole-log throughput, total tokens, and cache hits in the footer', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { tokenMeter: true, sessionStats: true })
+    expect(plain(test.terminal.output)).not.toContain('tok/s')
+    const session = test.ctx.agents.list()[0]!.session
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      stream: [{
+        type: 'chunk',
+        time: Date.now() - 3_000,
+        chunk: { type: 'text-delta', index: 0, text: 'done' },
+      }],
+      usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 900, cacheWriteTokens: 0 },
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: 'done' }],
+        source: { provider: 'test-provider', model: 'test-model' },
+      }),
+    }, { surfaceOp: 'append' })
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('90% cache') })
+    const rendered = plain(test.terminal.output)
+    expect(rendered).toContain('1.1k tok')
+    expect(rendered).toContain('tok/s')
     await test.app.stop(0)
   })
 

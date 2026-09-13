@@ -46,7 +46,7 @@ Mount the plugin beside the session store and the projection registry when clien
 | `ttftMs` / `ttftSteps` | Summed first-token latency and the steps carrying it |
 | `decodeMs` / `decodeTokens` | Summed decode wall time and provider output tokens over usage-reporting steps |
 
-Every field is 0 until its first contributing event; the composed registry always serves the key, so clients read the value rather than key presence. Clients render whole-log figures through the projection seam's snapshot and change feed; the reference consumer is the web chat stats strip, whose window fold mirrors these field names as its no-unit fallback.
+Every field is 0 until its first contributing event; the composed registry always serves the key, so clients read the value rather than key presence. Clients render whole-log figures through the projection seam's snapshot and change feed; the web chat stats strip is the reference consumer, and the terminal footer reads `decodeMs`/`decodeTokens` for its throughput figure. The strip's window fold mirrors these field names as its no-unit fallback.
 
 ### Failures and recovery
 

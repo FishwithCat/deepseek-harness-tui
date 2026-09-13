@@ -517,6 +517,18 @@ export interface TuiContextStatus {
   automatic: boolean
 }
 
+/** Whole-log token figures the footer's bottom-right group reports. */
+export interface TuiSessionStats {
+  /** Decode throughput averaged over decode-timed steps; absent until one is timed. */
+  tokensPerSecond?: number | undefined
+  /** Billed prompt tokens over the whole log: uncached input plus cache reads and writes. */
+  promptTokens: number
+  /** Provider-reported output tokens over the whole log. */
+  outputTokens: number
+  /** Prompt tokens the provider served from cache. */
+  cacheReadTokens: number
+}
+
 /** One frame of the status bar. */
 export interface TuiStatus {
   /** Workspace directory, abbreviated against the home directory. */
@@ -536,6 +548,8 @@ export interface TuiStatus {
   usage?: TokenUsage | undefined
   /** Context occupancy, absent until the meter reports both a pressure and a capacity. */
   context?: TuiContextStatus | undefined
+  /** Whole-log throughput and token totals; absent when the frame carries no measurement. */
+  stats?: TuiSessionStats | undefined
 }
 
 /** Fewest columns kept between the stats and the model when both are shown. */
@@ -580,8 +594,51 @@ function formatUsage(usage: TokenUsage): string {
 }
 
 /**
+ * Compact whole-token throughput, at the Web stats strip's precision.
+ * @param value - decode tokens per second.
+ * @returns whole tokens from ten per second, one decimal below.
+ */
+function formatTokensPerSecond(value: number): string {
+  const clamped = Math.max(0, value)
+  return clamped >= 10 ? String(Math.round(clamped)) : String(Math.round(clamped * 10) / 10)
+}
+
+/**
+ * Cache-read share of the billed prompt, without rounding a partial hit to 100%.
+ * @param cacheReadTokens - prompt tokens served from cache.
+ * @param promptTokens - billed prompt tokens.
+ * @returns percentage text, or empty string when no prompt tokens were billed.
+ */
+function cacheHitText(cacheReadTokens: number, promptTokens: number): string {
+  if (promptTokens <= 0) return ''
+  if (cacheReadTokens >= promptTokens) return '100'
+  const tenths = Math.min(999, Math.round((cacheReadTokens / promptTokens) * 1_000))
+  return tenths % 10 === 0 ? String(tenths / 10) : (tenths / 10).toFixed(1)
+}
+
+/**
+ * Display parts of the footer's bottom-right group, in display order: whole-log
+ * decode throughput, the billed token total, and the cache-hit share. A figure
+ * whose input has no data is omitted rather than shown as zero.
+ * @param stats - the whole-log token figures for one frame.
+ * @returns one text per available figure.
+ */
+export function sessionStatsParts(stats: TuiSessionStats): string[] {
+  const parts: string[] = []
+  if (stats.tokensPerSecond !== undefined) {
+    parts.push(`${formatTokensPerSecond(stats.tokensPerSecond)} tok/s`)
+  }
+  const total = stats.promptTokens + stats.outputTokens
+  if (total > 0) parts.push(`${formatTokens(total)} tok`)
+  const cache = cacheHitText(stats.cacheReadTokens, stats.promptTokens)
+  if (cache !== '') parts.push(`${cache}% cache`)
+  return parts
+}
+
+/**
  * The pinned footer under the composer: the workspace and Agent state against
- * the routed model, then the token accounting and context occupancy.
+ * the routed model, then the token accounting and context occupancy with the
+ * whole-log token figures at the bottom-right edge.
  */
 export class StatusBar implements Component {
   private status: TuiStatus = {
@@ -612,9 +669,10 @@ export class StatusBar implements Component {
    * @returns the footer lines, each within `width`.
    */
   render(width: number): string[] {
+    const right = this.statsRight()
     return [
       this.pairLine(this.headText(), this.modelText(), width),
-      truncateToWidth(this.statsLeft(), width),
+      right === '' ? truncateToWidth(this.statsLeft(), width) : this.pairLine(this.statsLeft(), right, width),
     ]
   }
 
@@ -659,6 +717,15 @@ export class StatusBar implements Component {
     const context = this.contextPart()
     if (context !== '') parts.push(context)
     return parts.join(this.theme.dim('  '))
+  }
+
+  /** The bottom-right group: whole-log throughput, token total, and cache-hit share. */
+  private statsRight(): string {
+    const stats = this.status.stats
+    if (stats === undefined) return ''
+    return sessionStatsParts(stats)
+      .map(part => this.theme.dim(part))
+      .join(this.theme.dim('  '))
   }
 
   private contextPart(): string {

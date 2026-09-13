@@ -17,8 +17,8 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import { Transcript } from '../src/transcript.ts'
 import type { ToolDiffCard, ToolPresentationResolver } from '../src/tool-view.ts'
-import { PROMPT_PANEL_CHROME_ROWS, DetailBody, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, summarizeToolArguments } from '../src/views.ts'
-import type { TuiStatus } from '../src/views.ts'
+import { PROMPT_PANEL_CHROME_ROWS, DetailBody, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
+import type { TuiSessionStats, TuiStatus } from '../src/views.ts'
 import { createTheme, editorTheme, selectListTheme } from '../src/ansi.ts'
 
 const contexts: Context[] = []
@@ -637,6 +637,79 @@ describe('StatusBar', () => {
     expect(narrowStats).toContain('↑1501 ↓3418')
     expect(visibleWidth(narrowHead ?? '')).toBeLessThanOrEqual(20)
     expect(visibleWidth(narrowStats ?? '')).toBeLessThanOrEqual(20)
+  })
+
+  it('right-aligns the whole-log figures at the bottom-right', () => {
+    const status: TuiStatus = {
+      ...populated(131_072, 262_144, true),
+      stats: { tokensPerSecond: 34.4, promptTokens: 1_000, outputTokens: 50, cacheReadTokens: 900 },
+    }
+    const [head, stats] = bar(status).render(80)
+    const left = '↑1501 ↓3418  50.0%/262k (auto)'
+    const right = '34 tok/s  1.1k tok  90% cache'
+    expect(head).toContain('deepseek-flash')
+    expect(stats).toBe(left + ' '.repeat(80 - left.length - right.length) + right)
+  })
+
+  it('leaves the accounting line unpadded while no whole-log figure has data', () => {
+    const withoutStats = bar(populated(131_072, 262_144)).render(80)[1]
+    expect(withoutStats).toBe('↑1501 ↓3418  50.0%/262k')
+    const emptyStats = bar({
+      ...populated(131_072, 262_144),
+      stats: { promptTokens: 0, outputTokens: 0, cacheReadTokens: 0 },
+    }).render(80)[1]
+    expect(emptyStats).toBe('↑1501 ↓3418  50.0%/262k')
+    const totalsOnly = bar({
+      ...populated(131_072, 262_144),
+      stats: { promptTokens: 0, outputTokens: 12, cacheReadTokens: 0 },
+    }).render(80)[1]
+    const left = '↑1501 ↓3418  50.0%/262k'
+    expect(totalsOnly).toBe(left + ' '.repeat(80 - left.length - '12 tok'.length) + '12 tok')
+  })
+
+  it('yields the whole-log figures before the accounting on a narrow terminal', () => {
+    const narrow = bar({
+      ...populated(131_072, 262_144),
+      stats: { tokensPerSecond: 34.4, promptTokens: 1_000, outputTokens: 50, cacheReadTokens: 900 },
+    }).render(30)[1] ?? ''
+    expect(narrow).toContain('↑1501 ↓3418')
+    expect(narrow).not.toContain('1.1k')
+    expect(visibleWidth(narrow)).toBeLessThanOrEqual(30)
+  })
+})
+
+describe('sessionStatsParts', () => {
+  /**
+   * Build whole-log figures.
+   * @param overrides - fields replacing the zero default.
+   * @returns the figures.
+   */
+  function stats(overrides: Partial<TuiSessionStats> = {}): TuiSessionStats {
+    return { promptTokens: 0, outputTokens: 0, cacheReadTokens: 0, ...overrides }
+  }
+
+  it('reports throughput, the billed total, and the cache-hit share in order', () => {
+    expect(sessionStatsParts(stats({
+      tokensPerSecond: 34.4, promptTokens: 1_000, outputTokens: 50, cacheReadTokens: 900,
+    }))).toEqual(['34 tok/s', '1.1k tok', '90% cache'])
+  })
+
+  it('keeps one decimal below ten per second and clamps a negative reading', () => {
+    expect(sessionStatsParts(stats({ tokensPerSecond: 3.14 }))).toEqual(['3.1 tok/s'])
+    expect(sessionStatsParts(stats({ tokensPerSecond: 9.96 }))).toEqual(['10 tok/s'])
+    expect(sessionStatsParts(stats({ tokensPerSecond: -1 }))).toEqual(['0 tok/s'])
+  })
+
+  it('omits a figure whose input carries no data', () => {
+    expect(sessionStatsParts(stats())).toEqual([])
+    expect(sessionStatsParts(stats({ outputTokens: 12 }))).toEqual(['12 tok'])
+    expect(sessionStatsParts(stats({ promptTokens: 40, cacheReadTokens: 40 }))).toEqual(['40 tok', '100% cache'])
+  })
+
+  it('shows a cache-hit share without rounding a partial hit to full', () => {
+    expect(sessionStatsParts(stats({ promptTokens: 100, cacheReadTokens: 100 }))).toEqual(['100 tok', '100% cache'])
+    expect(sessionStatsParts(stats({ promptTokens: 1_000, cacheReadTokens: 123 }))).toEqual(['1.0k tok', '12.3% cache'])
+    expect(sessionStatsParts(stats({ promptTokens: 10_000, cacheReadTokens: 9_996 }))).toEqual(['10k tok', '99.9% cache'])
   })
 })
 

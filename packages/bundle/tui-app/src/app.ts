@@ -36,7 +36,9 @@ import type {} from '@deepseek-ai/dsh-plan-mode'
 import type {} from '@deepseek-ai/dsh-session-projection'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { ContextPressureProjection } from '@deepseek-ai/dsh-token-meter/client'
+import type { ContextPressureProjection, TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
+// Type-only: activates the `sessionStats` projection key the footer's throughput reads.
+import type { SessionStatsProjection } from '@deepseek-ai/dsh-session-stats/client'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { createTheme, editorTheme, resolveColorScheme, selectListTheme, supportsColor } from './ansi.ts'
 import type { TuiTheme } from './ansi.ts'
@@ -52,7 +54,7 @@ import type { TuiSessionOptions } from './session.ts'
 import type { TuiStartupValues } from './startup.ts'
 import { createToolPresentationResolver } from './tool-view.ts'
 import { DetailBody, PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
-import type { TuiContextStatus, TuiStatus } from './views.ts'
+import type { TuiContextStatus, TuiSessionStats, TuiStatus } from './views.ts'
 import { Transcript } from './transcript.ts'
 
 /** Longest stored-session list rendered by `/sessions`. */
@@ -70,6 +72,22 @@ const PINNED_FOOTER_ROWS = 5
 const PROMPT_LIST_LAYOUT: SelectListLayoutOptions = {
   minPrimaryColumnWidth: 1,
   maxPrimaryColumnWidth: Number.MAX_SAFE_INTEGER,
+}
+
+/** Billing buckets a session without the `tokenUsage` unit is treated as having. */
+const ZERO_USAGE: TokenUsageProjection = {
+  uncachedInputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+}
+
+/** Footer facts derived from one projection snapshot, cached against the Session and its log position. */
+interface TuiMeasurement {
+  /** Context occupancy, absent until the meter reports both a pressure and a capacity. */
+  context: TuiContextStatus | undefined
+  /** Whole-log throughput and token totals; zero counts render nothing. */
+  stats: TuiSessionStats
 }
 
 /** Process-facing effects the app needs; tests substitute them. */
@@ -144,8 +162,8 @@ export class TuiApp implements InteractionHost {
   private readonly providerCount: number
   /** Whether the mounted compaction engine schedules its own work. */
   private readonly autoCompaction: boolean
-  /** Context occupancy cached against the session log position it was read at. */
-  private contextCache: { seq: number; value: TuiContextStatus | undefined } | undefined
+  /** Footer measurement cached against the session and log position it was read at. */
+  private measurementCache: { session: Session; seq: number; value: TuiMeasurement } | undefined
 
   private constructor(
     private readonly options: TuiAppOptions,
@@ -713,13 +731,15 @@ export class TuiApp implements InteractionHost {
     const session = this.session
     const route = session.route
     const plan = this.planStatus()
+    const measured = this.measurement(session.session)
     const status: TuiStatus = {
       workspace: this.options.cwd.replace(homedir(), '~'),
       state: session.running ? 'running' : 'idle',
       model: modelLabel(route.provider, route.model, this.providerCount),
       effort: route.reasoningEffort,
       usage: this.transcript.usage,
-      context: this.contextStatus(session.session),
+      context: measured.context,
+      stats: measured.stats,
       plan,
     }
     this.statusBar.set(status)
@@ -742,31 +762,41 @@ export class TuiApp implements InteractionHost {
   }
 
   /**
-   * Context occupancy for the footer, read from the measurement projection.
+   * Footer measurement for one session, read from the projection registry.
    *
    * The live Assistant stream repaints far more often than it appends session
-   * events, and a projection read folds every registered unit, so the value is
-   * cached against the log position it was read at.
-   * @param session - the session whose pressure is presented.
-   * @returns the occupancy, or undefined while no request has been measured or no capacity is known.
+   * events, and a projection read folds every registered unit, so the whole
+   * measurement is cached against the Session and log position it was read at —
+   * keying on the Session too keeps a replaced session's figures out of the
+   * next one.
+   * @param session - the session whose footer facts are presented.
+   * @returns context occupancy and whole-log token figures for the frame.
    */
-  private contextStatus(session: Session): TuiContextStatus | undefined {
-    const cached = this.contextCache
-    if (cached !== undefined && cached.seq === session.seq) return cached.value
-    const pressure = this.measurePressure(session)
+  private measurement(session: Session): TuiMeasurement {
+    const cached = this.measurementCache
+    if (cached !== undefined && cached.session === session && cached.seq === session.seq) return cached.value
+    const values = this.options.ctx.get('sessionProjections')
+      ?.snapshot(session, ['contextPressure', 'tokenUsage', 'sessionStats']).values
+    const pressure: ContextPressureProjection | undefined = values?.['contextPressure']
     const window = pressure?.contextWindow
     const tokens = pressure?.projectedTokens ?? pressure?.pressureTokens
-    const value = window === undefined || tokens === undefined
-      ? undefined
-      : { tokens, window, automatic: this.autoCompaction }
-    this.contextCache = { seq: session.seq, value }
+    const usage: TokenUsageProjection = values?.['tokenUsage'] ?? ZERO_USAGE
+    const whole: SessionStatsProjection | undefined = values?.['sessionStats']
+    const value: TuiMeasurement = {
+      context: window === undefined || tokens === undefined
+        ? undefined
+        : { tokens, window, automatic: this.autoCompaction },
+      stats: {
+        ...whole !== undefined && whole.decodeMs > 0
+          ? { tokensPerSecond: whole.decodeTokens / (whole.decodeMs / 1_000) }
+          : {},
+        promptTokens: usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadTokens: usage.cacheReadTokens,
+      },
+    }
+    this.measurementCache = { session, seq: session.seq, value }
     return value
-  }
-
-  private measurePressure(session: Session): ContextPressureProjection | undefined {
-    const projections = this.options.ctx.get('sessionProjections')
-    if (projections === undefined) return undefined
-    return projections.snapshot(session, ['contextPressure']).values['contextPressure']
   }
 
   /**
