@@ -281,12 +281,22 @@ export class TuiApp implements InteractionHost {
         // A focused prompt owns Ctrl+C as its own cancel gesture.
         if (this.promptActive) return undefined
         if (this.session.running) {
-          this.session.cancel()
-          this.notice('info', 'cancelling the current turn')
+          this.interrupt()
           return { consume: true }
         }
         void this.stop(0)
         return { consume: true }
+      }
+      if (matchesKey(data, Key.escape)) {
+        // A focused prompt owns Escape as its own cancel gesture, and the
+        // alternate-screen viewport consumes it first while a transcript
+        // search is open.
+        if (this.promptActive) return undefined
+        if (this.session.running) {
+          this.interrupt()
+          return { consume: true }
+        }
+        return undefined
       }
       if (matchesKey(data, Key.ctrl('d'))) {
         if (this.promptActive) return undefined
@@ -326,6 +336,17 @@ export class TuiApp implements InteractionHost {
     this.notice('info', outcome === 'queued'
       ? (target ? 'entering plan mode from the next step' : 'leaving plan mode from the next step')
       : (target ? 'plan mode on · Shift+Tab to leave' : 'plan mode off'))
+  }
+
+  /**
+   * Abort the running turn and report the interruption.
+   *
+   * The Agent's lifecycle status stays `running` until the turn settles, so the
+   * notice is the immediate acknowledgement that the interrupt landed.
+   */
+  private interrupt(): void {
+    this.session.cancel()
+    this.notice('info', 'cancelling the current turn')
   }
 
   /**
@@ -747,7 +768,7 @@ export class TuiApp implements InteractionHost {
     const parts: string[] = [this.session.running ? 'Enter steer' : 'Enter send']
     if (planAvailable) parts.push('Shift+Tab plan')
     parts.push(`${this.altPaste ? 'Alt+V' : 'Ctrl+V'} image`)
-    if (this.session.running) parts.push('Ctrl+C cancel')
+    if (this.session.running) parts.push('Esc/Ctrl+C cancel')
     if (this.viewport !== undefined) parts.push('PgUp/PgDn scroll')
     parts.push('/help commands', 'Ctrl+D quit')
     if (this.viewport !== undefined && !this.viewport.isFollowingOutput) parts.push('scrolled up')

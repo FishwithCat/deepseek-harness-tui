@@ -35,7 +35,7 @@ dsh
 
 ### Composing, prompting, and interrupting
 
-Type a prompt and press Enter. While the Agent works, the composer switches to steering: an Enter submits text the running turn consumes at its next step, and Ctrl+C cancels the turn. PageUp/PageDown, the mouse wheel, and terminal search scroll the transcript without leaving the app; the status bar reports when the view has scrolled away from the newest row.
+Type a prompt and press Enter. While the Agent works, the composer switches to steering: an Enter submits text the running turn consumes at its next step, and Esc interrupts the turn. PageUp/PageDown, the mouse wheel, and terminal search scroll the transcript without leaving the app; the status bar reports when the view has scrolled away from the newest row.
 
 Press Ctrl+V to attach the image on the system clipboard to the draft. The composer shows every held image as an `[Image #1]` marker, which behaves like typed text: moving or deleting a marker moves or drops its image. The paste reads the clipboard directly, so the terminal's own text paste keeps its usual key.
 
@@ -44,6 +44,7 @@ Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is 
 | Key | Action |
 |---|---|
 | `Enter` | Submit the prompt, or steer the running turn |
+| `Esc` | Interrupt the running turn |
 | `Shift+Tab` | Toggle plan mode |
 | `Ctrl+V` | Attach the image on the system clipboard to the draft (`Alt+V` on Windows and WSL, where the terminal owns Ctrl+V) |
 | `Ctrl+C` | Cancel the running turn; with nothing running, exit |

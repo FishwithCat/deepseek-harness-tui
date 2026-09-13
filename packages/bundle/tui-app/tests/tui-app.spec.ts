@@ -407,6 +407,56 @@ describe('TuiApp', () => {
     expect(test.exits).toEqual([0])
   })
 
+  it('interrupts a running turn on Escape without ending the session', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    test.setRunning(true)
+    test.terminal.feed('\x1b')
+    await vi.waitFor(() => { expect(test.cancelled()).toBe(1) })
+    await vi.waitFor(() => { expect(test.terminal.output).toContain('cancelling') })
+    expect(test.exits).toEqual([])
+    await test.app.stop(0)
+    expect(test.exits).toEqual([0])
+  })
+
+  it('ignores Escape while the Agent is idle', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    test.terminal.feed('\x1b')
+    expect(test.cancelled()).toBe(0)
+    expect(test.exits).toEqual([])
+    await test.app.stop(0)
+  })
+
+  it('lets a focused prompt own Escape instead of interrupting the running turn', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    test.setRunning(true)
+    const pending = test.app.choose('Select a model', [{ value: 'a', label: 'A' }])
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Select a model') })
+
+    test.terminal.feed('\x1b')
+    await expect(pending).resolves.toBeUndefined()
+    expect(test.cancelled()).toBe(0)
+    await test.app.stop(0)
+  })
+
+  it('closes transcript search on Escape instead of interrupting the running turn', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    test.setRunning(true)
+    // Ctrl+Shift+F as a kitty-protocol terminal reports it.
+    test.terminal.feed('\x1b[102;6u')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Find in transcript') })
+
+    test.terminal.feed('\x1b')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Find in transcript'))).toBe(false)
+    })
+    expect(test.cancelled()).toBe(0)
+
+    // With the search closed, Escape reaches the app and interrupts the turn.
+    test.terminal.feed('\x1b')
+    await vi.waitFor(() => { expect(test.cancelled()).toBe(1) })
+    await test.app.stop(0)
+  })
+
   it('answers an approval request through the modal list', async () => {
     const test = await bench({ afterPrompt: () => {} })
     const agent = test.ctx.agents.list()[0]!
