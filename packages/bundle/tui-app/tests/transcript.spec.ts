@@ -410,6 +410,13 @@ describe('StatusBar', () => {
     expect(stats).toBe('')
   })
 
+  it('marks plan mode beside the lifecycle state', () => {
+    const base: TuiStatus = { workspace: '~/Workspace/Nutkin', state: 'idle', model: 'deepseek-flash' }
+    expect(bar({ ...base, plan: true }).render(60)[0]).toContain('○ idle  plan')
+    expect(bar({ ...base, plan: false }).render(60)[0]).not.toContain('plan')
+    expect(bar(base).render(60)[0]).not.toContain('plan')
+  })
+
   it('pins the token accounting and occupancy under the identity line', () => {
     const status = populated(131_072, 262_144, true)
     const [head, stats] = bar(status).render(80)

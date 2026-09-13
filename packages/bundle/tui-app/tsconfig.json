@@ -36,6 +36,9 @@
       "path": "../../compaction/compaction"
     },
     {
+      "path": "../../plan/plan-mode"
+    },
+    {
       "path": "../../interaction/commands"
     },
     {

@@ -11,14 +11,18 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
+import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
 import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
 import type { LlmModelInfo, LlmModelReasoningInfo, LlmResolvedModelInfo, ModelModality, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
+import PlanModeController from '@deepseek-ai/dsh-plan-mode'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
+import ToolRuntime from '@deepseek-ai/dsh-tools'
 import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
 import UserApprovalService from '@deepseek-ai/dsh-user-approval'
 import { TuiApp, internals, reservesCtrlV } from '../src/app.ts'
@@ -135,7 +139,7 @@ function screen(app: TuiApp): string[] {
 /**
  * Boot the app over the real registries and a scripted Agent factory.
  * @param script - how the scripted Agent reacts to a prompt.
- * @param options - screen mode plus the optional measurement, compaction, attachment, and adapter rows.
+ * @param options - screen mode plus the optional measurement, compaction, attachment, plan-mode, and adapter rows.
  * @returns the running fixture.
  */
 async function bench(
@@ -146,6 +150,7 @@ async function bench(
     compaction?: boolean
     projections?: boolean
     attachments?: boolean
+    planMode?: boolean
     models?: readonly LlmModelInfo[]
     modalities?: readonly ModelModality[]
     reasoning?: LlmModelReasoningInfo
@@ -158,6 +163,14 @@ async function bench(
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await ctx.plugin(LlmRuntime)
+  if (options.planMode === true) {
+    // `set()` folds the turn boundary to decide commit-versus-queue; the loop
+    // itself is not mounted because the scripted Agent owns the lifecycle.
+    ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(PlanModeController, { section: 'Test plan mode instructions.' })
+  }
   if (options.models !== undefined || options.modalities !== undefined || options.reasoning !== undefined) {
     ctx.llm.registerAdapter(['test-provider'], new ScriptedAdapter(options.models ?? [], options.modalities, options.reasoning))
   }
@@ -531,6 +544,100 @@ describe('TuiApp', () => {
       invocation: {},
       exit: () => {},
     })).rejects.toThrow(/interactive terminal/)
+  })
+})
+
+describe('TuiApp plan mode', () => {
+  /** Shift+Tab as a legacy terminal reports it. */
+  const SHIFT_TAB = '\x1b[Z'
+
+  /** The one Agent the fixture created. */
+  function owned(test: Fixture): Agent {
+    const agent = test.ctx.agents.list()[0]
+    if (agent === undefined) throw new Error('the fixture created no Agent')
+    return agent
+  }
+
+  it('toggles plan mode with Shift+Tab and marks it in the footer', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true })
+    const agent = owned(test)
+    expect(plain(test.terminal.output)).toContain('Shift+Tab plan')
+    expect(plain(test.terminal.output)).not.toContain('○ idle  plan')
+
+    test.terminal.feed(SHIFT_TAB)
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('plan mode on') })
+    expect(test.ctx.planMode.get(agent).active).toBe(true)
+    expect(plain(test.terminal.output)).toContain('○ idle  plan')
+
+    test.terminal.feed(SHIFT_TAB)
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('plan mode off') })
+    expect(test.ctx.planMode.get(agent).active).toBe(false)
+    await test.app.stop(0)
+  })
+
+  it('reports a deployment that mounts no plan mode', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    expect(plain(test.terminal.output)).not.toContain('Shift+Tab plan')
+    test.terminal.feed(SHIFT_TAB)
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('this deployment mounts no plan mode')
+    })
+    await test.app.stop(0)
+  })
+
+  it('ignores Shift+Tab while a prompt owns the keyboard', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.app.choose('Select a model', [{ value: 'a', label: 'A' }])
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Select a model') })
+
+    test.terminal.feed(SHIFT_TAB)
+    expect(test.ctx.planMode.get(agent).active).toBe(false)
+    expect(plain(test.terminal.output)).not.toContain('plan mode on')
+
+    test.terminal.feed('\x1b')
+    await expect(pending).resolves.toBeUndefined()
+    await test.app.stop(0)
+  })
+
+  it('queues entering plan mode while a turn is open', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true })
+    const agent = owned(test)
+    agent.session.append('turn/start', { turn: 1 })
+
+    test.terminal.feed(SHIFT_TAB)
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('entering plan mode from the next step')
+    })
+    expect(test.ctx.planMode.get(agent)).toEqual({ active: false, pending: true })
+    await test.app.stop(0)
+  })
+
+  it('queues leaving plan mode while a turn is open', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true })
+    const agent = owned(test)
+    test.terminal.feed(SHIFT_TAB)
+    await vi.waitFor(() => { expect(test.ctx.planMode.get(agent).active).toBe(true) })
+
+    agent.session.append('turn/start', { turn: 1 })
+    test.terminal.feed(SHIFT_TAB)
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('leaving plan mode from the next step')
+    })
+    expect(test.ctx.planMode.get(agent)).toEqual({ active: true, pending: false })
+    await test.app.stop(0)
+  })
+
+  it('toggles once when the terminal reports the key press and its release', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true })
+    const agent = owned(test)
+    // One Shift+Tab as a kitty-protocol terminal reports it: press, then release.
+    test.terminal.feed('\x1b[9;2u')
+    test.terminal.feed('\x1b[9;2:3u')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('plan mode on') })
+    expect(test.ctx.planMode.get(agent).active).toBe(true)
+    expect(plain(test.terminal.output).match(/plan mode on/g)).toHaveLength(1)
+    await test.app.stop(0)
   })
 })
 

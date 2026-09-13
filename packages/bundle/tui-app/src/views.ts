@@ -302,6 +302,11 @@ export interface TuiStatus {
   model: string
   /** Reasoning effort in force, when the route declares one. */
   effort?: string | undefined
+  /**
+   * Whether plan mode is in force, or selected to apply from the next step;
+   * absent when the deployment mounts no plan mode.
+   */
+  plan?: boolean | undefined
   /** Token accounting for the last provider call. */
   usage?: TokenUsage | undefined
   /** Context occupancy, absent until the meter reports both a pressure and a capacity. */
@@ -413,7 +418,8 @@ export class StatusBar implements Component {
 
   private headText(): string {
     const state = this.status.state === 'running' ? this.theme.accent('● running') : this.theme.dim('○ idle')
-    return `${this.theme.dim(this.status.workspace)}  ${state}`
+    const plan = this.status.plan === true ? `  ${this.theme.accent('plan')}` : ''
+    return `${this.theme.dim(this.status.workspace)}  ${state}${plan}`
   }
 
   private modelText(): string {

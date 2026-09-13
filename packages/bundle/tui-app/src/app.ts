@@ -30,6 +30,8 @@ import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 // Empty type import carries the optional compaction policy read used by the footer.
 import type {} from '@deepseek-ai/dsh-compaction'
+// Empty type import carries the optional plan-mode service read by the mode toggle.
+import type {} from '@deepseek-ai/dsh-plan-mode'
 // Empty type import carries the optional measurement projection the footer reads.
 import type {} from '@deepseek-ai/dsh-session-projection'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
@@ -295,8 +297,35 @@ export class TuiApp implements InteractionHost {
         this.tui.requestRender(true)
         return { consume: true }
       }
+      if (matchesKey(data, Key.shift('tab'))) {
+        // A focused prompt owns Shift+Tab as it owns Ctrl+C.
+        if (this.promptActive) return undefined
+        this.togglePlanMode()
+        return { consume: true }
+      }
       return undefined
     }))
+  }
+
+  /**
+   * Flip plan mode for this session's Agent.
+   *
+   * The service commits the change immediately between turns and holds it until
+   * the next accepted in-turn pre-step while a turn is open, so the notice
+   * distinguishes the two.
+   */
+  private togglePlanMode(): void {
+    const planMode = this.options.ctx.get('planMode')
+    if (planMode === undefined) {
+      this.notice('error', 'this deployment mounts no plan mode')
+      return
+    }
+    const current = planMode.get(this.agent)
+    const target = !(current.pending ?? current.active)
+    const outcome = planMode.set(this.agent, target)
+    this.notice('info', outcome === 'queued'
+      ? (target ? 'entering plan mode from the next step' : 'leaving plan mode from the next step')
+      : (target ? 'plan mode on · Shift+Tab to leave' : 'plan mode off'))
   }
 
   /**
@@ -653,6 +682,7 @@ export class TuiApp implements InteractionHost {
     if (this.stopped) return
     const session = this.session
     const route = session.route
+    const plan = this.planStatus()
     const status: TuiStatus = {
       workspace: this.options.cwd.replace(homedir(), '~'),
       state: session.running ? 'running' : 'idle',
@@ -660,10 +690,25 @@ export class TuiApp implements InteractionHost {
       effort: route.reasoningEffort,
       usage: this.transcript.usage,
       context: this.contextStatus(session.session),
+      plan,
     }
     this.statusBar.set(status)
-    this.composer.setHint(this.hints())
+    this.composer.setHint(this.hints(plan !== undefined))
     this.tui.requestRender()
+  }
+
+  /**
+   * Whether plan mode is in force, or selected to apply from the next step.
+   *
+   * A queued selection changes without appending an event, so this reads the
+   * service on every refresh instead of caching against the log position.
+   * @returns the effective mode, or undefined when the deployment mounts no plan mode.
+   */
+  private planStatus(): boolean | undefined {
+    const planMode = this.options.ctx.get('planMode')
+    if (planMode === undefined) return undefined
+    const state = planMode.get(this.agent)
+    return state.pending ?? state.active
   }
 
   /**
@@ -694,9 +739,13 @@ export class TuiApp implements InteractionHost {
     return projections.snapshot(session, ['contextPressure']).values['contextPressure']
   }
 
-  /** The placeholder the empty composer shows: the keys valid in the current state. */
-  private hints(): string {
+  /**
+   * The placeholder the empty composer shows: the keys valid in the current state.
+   * @param planAvailable - whether the deployment mounts plan mode.
+   */
+  private hints(planAvailable: boolean): string {
     const parts: string[] = [this.session.running ? 'Enter steer' : 'Enter send']
+    if (planAvailable) parts.push('Shift+Tab plan')
     parts.push(`${this.altPaste ? 'Alt+V' : 'Ctrl+V'} image`)
     if (this.session.running) parts.push('Ctrl+C cancel')
     if (this.viewport !== undefined) parts.push('PgUp/PgDn scroll')
