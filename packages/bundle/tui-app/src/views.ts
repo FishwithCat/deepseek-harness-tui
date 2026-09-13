@@ -6,10 +6,9 @@
  * @module @deepseek-ai/dsh-tui-app/views
  */
 
-import { CURSOR_MARKER, Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
+import { CURSOR_MARKER, Key, Markdown, isFocusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
 import type { Component, Editor, Focusable, MarkdownTheme } from '@earendil-works/pi-tui'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
-import { isFocusable } from '@earendil-works/pi-tui'
 import { markdownTheme } from './ansi.ts'
 import type { TuiTheme } from './ansi.ts'
 import type { ToolEntry, TranscriptEntry, UserEntry } from './transcript.ts'
@@ -225,6 +224,106 @@ export const PROMPT_PANEL_CHROME_ROWS = 2
  */
 export function promptPanelRows(rows: number): number {
   return Math.max(PROMPT_PANEL_CHROME_ROWS + 1, Math.min(PROMPT_PANEL_MAX_ROWS, rows - 2))
+}
+
+/** Rows the scroll position line under a detailed prompt spends once its detail overflows. */
+const DETAIL_SCROLL_HINT_ROWS = 1
+
+/**
+ * A modal body that shows a prompt's supporting detail above its control.
+ *
+ * `detail` is markdown the caller supplied — a plan under review, or facts a
+ * question rests on — and can be taller than the panel. The detail renders in a
+ * viewport that yields every row its control does not use; PageUp and PageDown
+ * scroll it, while every other key reaches the control, so a picker keeps its
+ * own arrow, Enter, and Escape bindings. The control's rendered height, not a
+ * fixed split, sizes the viewport, so a two-option review gives the plan nearly
+ * the whole panel and a long picker leaves the plan less.
+ */
+export class DetailBody implements Component {
+  private readonly markdown: Markdown
+  private scrollTop = 0
+  /** Rows the last render gave the detail; also the PageUp/PageDown step. */
+  private viewport = 1
+  /** Detail rows the last render measured, for clamping a scroll. */
+  private content = 0
+
+  /**
+   * @param detail - the markdown shown above the control.
+   * @param control - the focused control that answers the prompt.
+   * @param theme - the surface theme.
+   * @param rows - the panel body's row budget, chrome excluded.
+   */
+  constructor(
+    detail: string,
+    private readonly control: Component,
+    private readonly theme: TuiTheme,
+    private readonly rows: number,
+  ) {
+    this.markdown = new Markdown(detail, 0, 0, markdownTheme(theme))
+  }
+
+  /**
+   * Scroll the detail, or hand the key to the control.
+   * @param data - raw key bytes.
+   */
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.pageUp)) {
+      this.scrollTo(this.scrollTop - this.viewport)
+      return
+    }
+    if (matchesKey(data, Key.pageDown)) {
+      this.scrollTo(this.scrollTop + this.viewport)
+      return
+    }
+    if (isFocusable(this.control)) this.control.focused = true
+    this.control.handleInput?.(data)
+  }
+
+  /** Drop both the detail's and the control's cached render state. */
+  invalidate(): void {
+    this.markdown.invalidate()
+    this.control.invalidate()
+  }
+
+  /**
+   * Render the detail viewport followed by the control.
+   * @param width - the viewport width in columns.
+   * @returns the body lines.
+   */
+  render(width: number): string[] {
+    const detail = this.markdown.render(width)
+    const control = this.control.render(width)
+    const budget = Math.max(0, this.rows - control.length)
+    // A control that already spends the whole budget leaves no room for the
+    // hint either; the detail is unreachable until the control shrinks.
+    const hint = detail.length > budget && budget > DETAIL_SCROLL_HINT_ROWS
+    this.viewport = Math.max(0, budget - (hint ? DETAIL_SCROLL_HINT_ROWS : 0))
+    this.content = detail.length
+    this.scrollTop = clampScroll(this.scrollTop, detail.length, this.viewport)
+    const lines = detail.slice(this.scrollTop, this.scrollTop + this.viewport)
+    if (hint) {
+      const end = this.scrollTop + this.viewport
+      lines.push(this.theme.dim(`  ${String(this.scrollTop + 1)}–${String(end)}/${String(detail.length)} · PgUp/PgDn`))
+    }
+    lines.push(...control)
+    return lines
+  }
+
+  private scrollTo(top: number): void {
+    this.scrollTop = clampScroll(top, this.content, this.viewport)
+  }
+}
+
+/**
+ * Clamp a scroll offset to the scrollable rows of a viewport.
+ * @param top - the requested first visible row.
+ * @param content - total content rows.
+ * @param viewport - visible rows.
+ * @returns the offset in `[0, max(0, content - viewport)]`.
+ */
+function clampScroll(top: number, content: number, viewport: number): number {
+  return Math.max(0, Math.min(top, Math.max(0, content - viewport)))
 }
 
 /**

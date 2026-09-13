@@ -15,7 +15,7 @@ import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
 import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { createAssistantMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { LlmModelInfo, LlmModelReasoningInfo, LlmResolvedModelInfo, ModelModality, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
 import SessionStore from '@deepseek-ai/dsh-session'
@@ -25,6 +25,7 @@ import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
 import UserApprovalService from '@deepseek-ai/dsh-user-approval'
+import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import { TuiApp, internals, reservesCtrlV } from '../src/app.ts'
 import type { ClipboardImage } from '../src/clipboard.ts'
 import { apply, inject, name, TUI_STARTUP_SERVICE } from '../src/index.ts'
@@ -151,6 +152,7 @@ async function bench(
     projections?: boolean
     attachments?: boolean
     planMode?: boolean
+    questions?: boolean
     models?: readonly LlmModelInfo[]
     modalities?: readonly ModelModality[]
     reasoning?: LlmModelReasoningInfo
@@ -171,6 +173,7 @@ async function bench(
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(PlanModeController, { section: 'Test plan mode instructions.' })
   }
+  if (options.questions === true) await ctx.plugin(UserQuestionService)
   if (options.models !== undefined || options.modalities !== undefined || options.reasoning !== undefined) {
     ctx.llm.registerAdapter(['test-provider'], new ScriptedAdapter(options.models ?? [], options.modalities, options.reasoning))
   }
@@ -237,6 +240,13 @@ async function bench(
     cancelled: () => observed.cancelled,
     setRunning: (value: boolean) => { observed.running = value },
   }
+}
+
+/** The one Agent the fixture created. */
+function owned(test: Fixture): Agent {
+  const agent = test.ctx.agents.list()[0]
+  if (agent === undefined) throw new Error('the fixture created no Agent')
+  return agent
 }
 
 /** Append one complete answered turn to a session. */
@@ -551,13 +561,6 @@ describe('TuiApp plan mode', () => {
   /** Shift+Tab as a legacy terminal reports it. */
   const SHIFT_TAB = '\x1b[Z'
 
-  /** The one Agent the fixture created. */
-  function owned(test: Fixture): Agent {
-    const agent = test.ctx.agents.list()[0]
-    if (agent === undefined) throw new Error('the fixture created no Agent')
-    return agent
-  }
-
   it('toggles plan mode with Shift+Tab and marks it in the footer', async () => {
     const test = await bench({ afterPrompt: () => {} }, { planMode: true })
     const agent = owned(test)
@@ -701,6 +704,86 @@ describe('TuiApp prompt routing', () => {
     await vi.waitFor(() => { expect(test.terminal.output).toContain('second?') })
     test.terminal.feed('\r')
     await expect(second).resolves.toMatchObject({ value: 'ok' })
+    await test.app.stop(0)
+  })
+})
+
+describe('TuiApp question detail', () => {
+  it('renders the plan a review carries and approves it', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    test.ctx.planMode.set(agent, true)
+    const plan = '# Widget migration\n\nMove the widget to its own module.\n\nThen update every caller.'
+    const execution = test.ctx.tools.execute({
+      callId: ToolCallId('call-exit-1'),
+      name: 'exit_plan_mode',
+      arguments: { plan },
+      signal: new AbortController().signal,
+      agent,
+    })
+    // The review shares the plan verbatim: the model is told not to repeat it
+    // as a plain reply, so an unrendered detail would leave nothing to review.
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Widget migration'))).toBe(true)
+    })
+    expect(screen(test.app).some(row => row.includes('Move the widget'))).toBe(true)
+    expect(screen(test.app).some(row => row.includes('→ Approve'))).toBe(true)
+
+    test.terminal.feed('\r')
+    await expect(execution).resolves.toMatchObject({ isError: false, value: { approved: true } })
+    await test.app.stop(0)
+  })
+
+  it('scrolls a question detail longer than the panel', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const detail = Array.from({ length: 40 }, (_, index) => `marker-${String(index + 1).padStart(2, '0')}`).join('\n\n')
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{
+        id: 'detail',
+        question: 'Pick one',
+        detail,
+        options: [{ label: 'Alpha' }, { label: 'Beta' }],
+      }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('marker-01'))).toBe(true)
+    })
+    expect(screen(test.app).some(row => row.includes('marker-40'))).toBe(false)
+
+    for (let press = 0; press < 8; press += 1) test.terminal.feed('\x1b[6~')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('marker-40'))).toBe(true)
+    })
+    expect(screen(test.app).some(row => row.includes('marker-01'))).toBe(false)
+
+    // A theme or cell-size change invalidates every component; the review must
+    // redraw its cached detail instead of losing it.
+    ;(test.app as unknown as { tui: { invalidate(): void } }).tui.invalidate()
+    for (let press = 0; press < 8; press += 1) test.terminal.feed('\x1b[5~')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('marker-01'))).toBe(true)
+    })
+
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'detail', selected: ['Alpha'] }] })
+    await test.app.stop(0)
+  })
+
+  it('shows a no-option question detail above the text input', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{ id: 'free', question: 'Why?', detail: 'Context: the widget moved.' }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('the widget moved'))).toBe(true)
+    })
+    test.terminal.feed('because')
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'free', selected: [], custom: 'because' }] })
     await test.app.stop(0)
   })
 })

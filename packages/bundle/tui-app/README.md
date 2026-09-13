@@ -39,7 +39,7 @@ Type a prompt and press Enter. While the Agent works, the composer switches to s
 
 Press Ctrl+V to attach the image on the system clipboard to the draft. The composer shows every held image as an `[Image #1]` marker, which behaves like typed text: moving or deleting a marker moves or drops its image. The paste reads the clipboard directly, so the terminal's own text paste keeps its usual key.
 
-Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is on, the footer marks it with `plan` beside the lifecycle state and the empty composer lists the key. A toggle made while a turn is running applies from the next step, exactly as `/plan` does; a deployment that mounts no plan mode reports it instead of changing the session.
+Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is on, the footer marks it with `plan` beside the lifecycle state and the empty composer lists the key. A toggle made while a turn is running applies from the next step, exactly as `/plan` does; a deployment that mounts no plan mode reports it instead of changing the session. When the agent finishes planning it presents the plan through `exit_plan_mode`, and the review shows that plan as scrollable markdown above the Approve / Keep planning choice, because the plan-mode policy routes the plan through the tool rather than a plain reply.
 
 | Key | Action |
 |---|---|
@@ -48,7 +48,7 @@ Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is 
 | `Ctrl+V` | Attach the image on the system clipboard to the draft (`Alt+V` on Windows and WSL, where the terminal owns Ctrl+V) |
 | `Ctrl+C` | Cancel the running turn; with nothing running, exit |
 | `Ctrl+D` | Exit |
-| `PageUp` / `PageDown` | Scroll the transcript |
+| `PageUp` / `PageDown` | Scroll the transcript, or the detail above a question's control |
 | `Ctrl+L` | Repaint from scratch |
 
 ### Commands
@@ -91,7 +91,7 @@ The app owns one `TuiSession` and one terminal UI. It waits for the complete com
 
 ### Interaction seams
 
-The app answers the two seams the Agent pauses on. `ctx.on('approval/request', …)` offers Allow once / Reject for this app's own Agent and delegates every other Agent's request, so a composition that also mounts subagents keeps its own answerers authoritative; a dismissed prompt resolves `cancelled`, which the approval service already treats as fail-closed. `ctx.on('user-questions/request', …)` renders the question's options as a picker, or a free-text input when the question declares none, and fails the asking Tool with `ASK_ABORTED` when the user dismisses it. One prompt owns the keyboard at a time.
+The app answers the two seams the Agent pauses on. `ctx.on('approval/request', …)` offers Allow once / Reject for this app's own Agent and delegates every other Agent's request, so a composition that also mounts subagents keeps its own answerers authoritative; a dismissed prompt resolves `cancelled`, which the approval service already treats as fail-closed. `ctx.on('user-questions/request', …)` renders the question's options as a picker, or a free-text input when the question declares none, and fails the asking Tool with `ASK_ABORTED` when the user dismisses it. A question's `detail` renders as markdown above that control, in a viewport sized to the rows the control leaves and scrolled with PageUp/PageDown, so a plan review shows the plan the model submitted rather than only its approval options. One prompt owns the keyboard at a time.
 
 ### Clipboard images
 
@@ -172,6 +172,7 @@ These limits define what the terminal surface does not do. They are current cons
 
 - **One Agent per invocation** — the app owns a single session; switching to another Agent means `/new` or `/resume`, which closes the current one first.
 - **Multi-select questions degrade** — a `multiSelect` question is presented one choice per prompt, so a multiple-choice answer needs several rounds.
+- **Plan review takes a fixed answer** — Keep planning returns to the model without free-text feedback, so a rejected plan comes back without the user's reason; typing the reason as the next prompt still reaches it.
 - **Images come only from the clipboard** — the composer attaches PNG, JPEG, WebP, and GIF bytes read from the system clipboard, through `osascript` on macOS, PowerShell on Windows and WSL, `wl-paste` on Wayland, or `xclip` on X11. A host with none of those readers reports the paste as an empty clipboard, and no file picker, drag-and-drop, or non-image attachment exists.
 - **Tool output is folded** — a Tool result shows its first lines plus a count of the remainder; the complete output stays in the session log, not on screen.
 - **Occupancy is an estimate** — the footer's percentage anchors on the last provider-reported prompt size and heuristically reprices what the surface gained or lost since; it is a reference for the user, not a billing or admission input.

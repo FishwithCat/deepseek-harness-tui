@@ -22,16 +22,18 @@ export interface InteractionHost {
    * @param title - the question shown above the list.
    * @param items - the selectable items.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param detail - markdown shown above the list, scrollable with PageUp/PageDown.
    * @returns the chosen item, or undefined when the user cancelled.
    */
-  choose(title: string, items: readonly SelectItem[], signal?: AbortSignal): Promise<SelectItem | undefined>
+  choose(title: string, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined>
   /**
    * Ask the user for one line of text.
    * @param title - the question shown above the input.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param detail - markdown shown above the input, scrollable with PageUp/PageDown.
    * @returns the entered text, or undefined when the user cancelled.
    */
-  ask(title: string, signal?: AbortSignal): Promise<string | undefined>
+  ask(title: string, signal?: AbortSignal, detail?: string): Promise<string | undefined>
 }
 
 /** Option value that allows one approved action. */
@@ -75,7 +77,7 @@ async function answerQuestion(
   const heading = question.header === undefined ? question.question : `${question.header}: ${question.question}`
   const options = question.options ?? []
   if (options.length === 0) {
-    const text = await host.ask(heading, signal)
+    const text = await host.ask(heading, signal, question.detail)
     if (text === undefined) return undefined
     return { id: question.id, selected: [], custom: text }
   }
@@ -85,7 +87,7 @@ async function answerQuestion(
     ...(option.description === undefined ? {} : { description: option.description }),
   }))
   const title = question.multiSelect === true ? `${heading} (one choice per prompt)` : heading
-  const chosen = await host.choose(title, items, signal)
+  const chosen = await host.choose(title, items, signal, question.detail)
   if (chosen === undefined) return undefined
   return { id: question.id, selected: [chosen.value] }
 }

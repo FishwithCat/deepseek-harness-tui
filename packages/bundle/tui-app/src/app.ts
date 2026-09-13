@@ -21,7 +21,7 @@ import {
   isKeyRelease,
   matchesKey,
 } from '@earendil-works/pi-tui'
-import type { OverlayHandle, SelectItem, SelectListLayoutOptions, TUI, Terminal } from '@earendil-works/pi-tui'
+import type { Component, OverlayHandle, SelectItem, SelectListLayoutOptions, TUI, Terminal } from '@earendil-works/pi-tui'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 // Empty type import carries the optional attachment service read by image paste.
@@ -50,7 +50,7 @@ import type { InteractionHost } from './interactions.ts'
 import { TuiSession } from './session.ts'
 import type { TuiSessionOptions } from './session.ts'
 import type { TuiStartupValues } from './startup.ts'
-import { PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
+import { DetailBody, PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
 import type { TuiContextStatus, TuiStatus } from './views.ts'
 import { Transcript } from './transcript.ts'
 
@@ -766,18 +766,19 @@ export class TuiApp implements InteractionHost {
    * @param title - the question shown above the list.
    * @param items - the selectable items.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param detail - markdown shown above the list, scrollable with PageUp/PageDown.
    * @returns the chosen item, or undefined when dismissed.
    */
-  choose(title: string, items: readonly SelectItem[], signal?: AbortSignal): Promise<SelectItem | undefined> {
+  choose(title: string, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined> {
     if (items.length === 0) return Promise.resolve(undefined)
     return this.enqueuePrompt(() => new Promise<SelectItem | undefined>((resolve) => {
-      const capacity = Math.max(1, this.promptRows() - PROMPT_PANEL_CHROME_ROWS)
+      const capacity = this.promptRows() - PROMPT_PANEL_CHROME_ROWS
       // A list longer than the panel budget scrolls, and the scroll indicator
       // spends one of the body rows the panel has.
       const scrolling = items.length > capacity
       const visible = Math.max(1, Math.min(items.length, PROMPT_VISIBLE_ITEMS, capacity - (scrolling ? 1 : 0)))
       const list = new SelectList([...items], visible, selectListTheme(this.theme), PROMPT_LIST_LAYOUT)
-      const handle = this.showPrompt(title, list)
+      const handle = this.showPrompt(title, detail === undefined ? list : new DetailBody(detail, list, this.theme, capacity))
       const settle = (item: SelectItem | undefined): void => {
         this.dismissPrompt(handle)
         resolve(item)
@@ -792,12 +793,14 @@ export class TuiApp implements InteractionHost {
    * Ask the user for one line of text through a modal input.
    * @param title - the question shown above the input.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param detail - markdown shown above the input, scrollable with PageUp/PageDown.
    * @returns the entered text, or undefined when dismissed.
    */
-  ask(title: string, signal?: AbortSignal): Promise<string | undefined> {
+  ask(title: string, signal?: AbortSignal, detail?: string): Promise<string | undefined> {
     return this.enqueuePrompt(() => new Promise<string | undefined>((resolve) => {
       const input = new Input()
-      const handle = this.showPrompt(title, input)
+      const capacity = this.promptRows() - PROMPT_PANEL_CHROME_ROWS
+      const handle = this.showPrompt(title, detail === undefined ? input : new DetailBody(detail, input, this.theme, capacity))
       const settle = (value: string | undefined): void => {
         this.dismissPrompt(handle)
         resolve(value)
@@ -829,7 +832,7 @@ export class TuiApp implements InteractionHost {
    * @param body - the component that owns input while the modal is up.
    * @returns the overlay handle.
    */
-  private showPrompt(title: string, body: SelectList | Input): OverlayHandle {
+  private showPrompt(title: string, body: Component): OverlayHandle {
     const place = this.viewport === undefined
       ? { anchor: 'center' as const }
       : { anchor: 'bottom-center' as const, margin: { bottom: PINNED_FOOTER_ROWS } }

@@ -22,7 +22,7 @@ fork 还必须保持 rebase 成本低廉。任何改变现有界面组合方式�
 
 **页脚位于输入框之下，并报告路由容量。** 本界面沿用参考 agent 的页脚顺序——对话记录、输入框，然后固定的页脚——使用户在输入时关注的事实以两行贴近屏幕底边：第一行是工作区与 Agent 状态，其右侧右对齐路由模型名及其推理档位；第二行是 token 计数与「下一次请求相对路由模型容量的占用」。快捷键提示是空输入框的 placeholder：用户在决定输入什么时仍然看得到它，同时页脚不必为它占一行。占用与容量取自 `ctx.tokenMeter` 投影，自动压缩策略取自 `ctx.compaction.autoCompactionEnabled`，因此界面呈现的是部署事实，而不必读取 provider 配置。
 
-**应用只为本自己的 Agent 应答两个交互接缝。** `approval/request` 提供「允许一次／拒绝」并委托其他所有 Agent 的请求；被取消的提示解析为 `cancelled`，审批服务本就把它视为 fail-closed。`user-questions/request` 渲染问题声明的选项，未声明选项时渲染自由文本输入，并在用户取消时以 `ASK_ABORTED` 让提问的工具失败。委托而非独占，使同时挂载子 Agent 的组合仍然正确。
+**应用只为本自己的 Agent 应答两个交互接缝。** `approval/request` 提供「允许一次／拒绝」并委托其他所有 Agent 的请求；被取消的提示解析为 `cancelled`，审批服务本就把它视为 fail-closed。`user-questions/request` 渲染问题声明的选项，未声明选项时渲染自由文本输入，并把问题的 `detail` 以可滚动 markdown 渲染在该控件之上，并在用户取消时以 `ASK_ABORTED` 让提问的工具失败。委托而非独占，使同时挂载子 Agent 的组合仍然正确。
 
 **裸 `dsh` 启动 fork 默认值，回退开关只有一个环境变量。** `dsh` 以 `options.profile ?? process.env.DSH_DEFAULT_PROFILE ?? 'tui'` 解析 profile。`DSH_DEFAULT_PROFILE=web` 选择浏览器默认值，空值则恢复上游「每次调用都必须指定 profile」的要求，因此偏向上游的部署无需打补丁即可恢复旧行为。
 

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-11-fork-terminal-surface.md
-2026-09-11-fork-terminal-surface.md: 32a5f4492f1017a25dc898ae9d63a3fcc060ca4a
-2026-09-11-fork-terminal-surface.zh.md: 13cf2cdc09cca6552151570887ff78e2cdfbcaf2
+2026-09-11-fork-terminal-surface.md: 8dc652eff5c6927dddc64d4ee213cf034123b922
+2026-09-11-fork-terminal-surface.zh.md: d2b7ce7fb40a58da7f431dce753c00f1d9c2b09c
