@@ -9,8 +9,11 @@
 import { CURSOR_MARKER, Key, Markdown, isFocusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
 import type { Component, Editor, Focusable, MarkdownTheme, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { markdownTheme } from './ansi.ts'
-import type { TuiTheme } from './ansi.ts'
+import type { Styler, TuiTheme } from './ansi.ts'
+import { buildDiffCard } from './diff.ts'
+import type { DiffCard, DiffRow } from './diff.ts'
 import type { ToolEntry, TranscriptEntry, UserEntry } from './transcript.ts'
 import { Transcript } from './transcript.ts'
 
@@ -18,6 +21,8 @@ import { Transcript } from './transcript.ts'
 const TOOL_BODY_INDENT = '    '
 /** Result lines shown before the row is folded. */
 const TOOL_RESULT_MAX_LINES = 12
+/** Diff body rows shown before the row is folded. */
+const DIFF_MAX_LINES = 24
 /** Longest Tool argument summary kept on the heading line. */
 const TOOL_SUMMARY_MAX_CHARS = 96
 /** Argument keys worth showing alone, in preference order. */
@@ -199,16 +204,70 @@ export class TranscriptView implements Component {
   }
 
   private toolLines(entry: ToolEntry, width: number): string[] {
-    const summary = truncateToWidth(summarizeToolArguments(entry.args), TOOL_SUMMARY_MAX_CHARS, '…')
     const marker = entry.status === 'running' ? '⏺' : entry.status === 'ok' ? '✔' : '✘'
     const style = entry.status === 'running'
       ? this.theme.tool
       : entry.status === 'ok' ? this.theme.toolOk : this.theme.toolError
-    const heading = `${style(marker)} ${this.theme.bold(singleLine(entry.name))}${summary === '' ? '' : this.theme.dim(`(${summary})`)}`
+    // A failed mutation reverted or never applied, so its card no longer
+    // describes the file and the raw error text is what the user needs.
+    const card = entry.status === 'error' || entry.diffs === undefined ? undefined : buildDiffCard(entry.diffs)
+    const heading = card === undefined
+      ? this.nameHeading(entry, marker, style)
+      : this.diffHeading(entry, card, marker, style)
     const lines = [truncateToWidth(heading, width)]
     if (entry.error !== undefined) lines.push(...prefixBody(entry.error, width, this.theme.error('  '), '  '))
-    if (entry.result !== '') lines.push(...toolBody(entry.result, width))
+    if (card !== undefined) lines.push(...this.diffBody(card, width))
+    else if (entry.result !== '') lines.push(...toolBody(entry.result, width))
     return lines
+  }
+
+  /** The ordinary heading: the Tool name and a one-line argument summary. */
+  private nameHeading(entry: ToolEntry, marker: string, style: Styler): string {
+    const summary = truncateToWidth(summarizeToolArguments(entry.args), TOOL_SUMMARY_MAX_CHARS, '…')
+    return `${style(marker)} ${this.theme.bold(singleLine(entry.name))}${summary === '' ? '' : this.theme.dim(`(${summary})`)}`
+  }
+
+  /** A mutation's heading: the Tool's own card title and the change's +/- totals. */
+  private diffHeading(entry: ToolEntry, card: DiffCard, marker: string, style: Styler): string {
+    const label = entry.title ?? singleLine(entry.name)
+    const stat = card.added === 0 && card.removed === 0
+      ? ''
+      : `${this.theme.dim('  ')}${this.theme.diffAdd(`+${String(card.added)}`)}${this.theme.dim(' ')}${this.theme.diffDel(`-${String(card.removed)}`)}`
+    return `${style(marker)} ${this.theme.bold(label)}${stat}`
+  }
+
+  /**
+   * A diff card's indented body, folded to a bounded number of rows.
+   * @param card - the built diff card.
+   * @param width - the viewport width.
+   * @returns the indented body lines.
+   */
+  private diffBody(card: DiffCard, width: number): string[] {
+    const bodyWidth = Math.max(1, width - TOOL_BODY_INDENT.length)
+    const lines = card.rows.slice(0, DIFF_MAX_LINES).map(row => TOOL_BODY_INDENT + this.diffRow(row, bodyWidth))
+    if (card.rows.length > DIFF_MAX_LINES) {
+      lines.push(TOOL_BODY_INDENT + this.theme.dim(`… ${String(card.rows.length - DIFF_MAX_LINES)} more lines`))
+    }
+    return lines
+  }
+
+  /** One diff row with its role's prefix and style, truncated to the body width. */
+  private diffRow(row: DiffRow, width: number): string {
+    switch (row.kind) {
+      case 'path':
+        return truncateToWidth(this.theme.diffMeta(row.text), width)
+      case 'gap':
+        return this.theme.dim(row.text)
+      case 'context':
+        return truncateToWidth(this.theme.diffContext(`  ${row.text}`), width)
+      case 'added':
+        return truncateToWidth(this.theme.diffAdd(`+ ${row.text}`), width)
+      case 'removed':
+        return truncateToWidth(this.theme.diffDel(`- ${row.text}`), width)
+      /* v8 ignore next -- closed-union exhaustiveness guard */
+      default:
+        return assertNever(row.kind, 'diff row kind')
+    }
   }
 }
 
@@ -674,7 +733,9 @@ export class PlaceholderEditor implements Component, Focusable {
   private placeholderLine(width: number): string {
     const available = Math.max(1, width - 2)
     const hint = truncateToWidth(this.hint, available, '')
-    const cursor = `\x1b[7m${this.theme.dim(hint.slice(0, 1))}\x1b[27m`
+    // The cursor character stays unstyled: every styler ends with an SGR reset,
+    // which would cancel the reverse video that draws the block.
+    const cursor = `\x1b[7m${hint.slice(0, 1)}\x1b[27m`
     const content = `${this.focused ? CURSOR_MARKER : ''}${cursor}${this.theme.dim(hint.slice(1))}`
     return ` ${content}${' '.repeat(Math.max(0, available - visibleWidth(content)))} `
   }

@@ -90,6 +90,10 @@ Hard rules (they bite if broken):
 
 The neutral vocabulary lives in `dsh-tools`; tools never import a UI or transport type. Consumers of this API map each `card` into their own view. The design and the why are in [the render-intent-union Agent Note](../../.agents/notes/implemented/architecture/2026-07-02-tool-render-intent-union.md); `dsh-tool-fs` (generic/diff) and `dsh-tool-bash` (terminal) are the reference implementations.
 
+## Terminal presentation
+
+The terminal surface is the Host consumer of these presenters. It resolves `ctx.tools.get(name, agent)` while folding each `tool/call` and `tool/result` event and narrows the declared view to `card: 'diff'`, so a mutation renders as a unified diff instead of its model-facing confirmation sentence. A Tool reaches the terminal by declaring `presentCall`/`presentResult`; the terminal holds no Tool-name knowledge, and every other card still renders as the tool's raw row. The [TUI Host tool presentation Agent Note](../../.agents/notes/implemented/architecture/2026-09-13-tui-host-tool-presentation.md) owns the narrowing and fallback rules.
+
 ## Web Client presentation
 
 The built-in Web Client does not consume `presentCall` or `presentResult`. Session `page` and `follow` transport raw `tool/call` and `tool/result` events, including persisted `result.meta`. A Client plugin registers its wire tool name in the `tool.call.toolview` keyed slot and derives component props from the `ToolCallBlock` arguments, content, error, metadata, existing Code Dispatch `parentCallId`, and Session path facts. It validates these wire values locally and returns the generic row for malformed or unsupported input.

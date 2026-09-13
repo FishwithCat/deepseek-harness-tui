@@ -3202,6 +3202,8 @@ Requires: `agents` · `agentDefaultModel` · `llm` · `sessions`
 export interface Config {
   /** Screen strategy; see {@link TuiScreen}. */
   screen: TuiScreen
+  /** Palette selection; see {@link TuiColorScheme}. */
+  colorScheme: TuiColorScheme
 }
 
 /**
@@ -3215,9 +3217,19 @@ export interface Config {
  *   composer stays at the bottom.
  */
 export type TuiScreen = 'alternate' | 'inline'
+
+/**
+ * Which palette the surface renders with:
+ *
+ * - `'auto'` — follow the terminal background signal when the host exports one,
+ *   otherwise the dark palette.
+ * - `'dark'` / `'light'` — pin the palette, for a host that gives no signal or
+ *   one the user disagrees with.
+ */
+export type TuiColorScheme = 'auto' | 'dark' | 'light'
 ```
 
-Source: [`packages/bundle/tui-app/src/config.ts:21`](../packages/bundle/tui-app/src/config.ts)
+Source: [`packages/bundle/tui-app/src/config.ts:31`](../packages/bundle/tui-app/src/config.ts)
 
 <a id="deepseek-aidsh-typert-loader"></a>
 

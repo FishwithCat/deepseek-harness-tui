@@ -10,8 +10,10 @@ import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { expandAssistantStream } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord, ContentBlock, MessageSource, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { FileDiff } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { imageMarker } from './images.ts'
+import type { ToolDiffCard, ToolPresentationResolver } from './tool-view.ts'
 
 /** A human prompt row. */
 export interface UserEntry {
@@ -61,6 +63,10 @@ export interface ToolEntry {
   result: string
   /** Failure identity when the Tool reported an error. */
   error?: string
+  /** Heading the Tool declared for its diff card, replacing the derived name and summary. */
+  title?: string | undefined
+  /** File hunks the Tool declared, rendered as a diff card instead of the result text. */
+  diffs?: readonly FileDiff[] | undefined
 }
 
 /** An app-level account that belongs to no message: injected context, turn outcomes, discarded attempts. */
@@ -152,6 +158,12 @@ export class Transcript {
   private attempt = false
   private liveUsage: TokenUsage | undefined
   private changeCount = 0
+
+  /**
+   * @param views - resolves the diff card a Tool declared for its call and result;
+   * absent keeps every Tool row in its raw name-and-summary form.
+   */
+  constructor(private readonly views?: ToolPresentationResolver) {}
 
   /** Monotone change counter; a view compares it to decide whether to rebuild. */
   get revision(): number {
@@ -317,6 +329,7 @@ export class Transcript {
       status: 'running',
       result: '',
     }
+    this.applyCard(row, this.views?.call(data.name, data.arguments))
     this.rows.push(row)
     this.toolByCallId.set(data.callId, row)
     return this.changed()
@@ -326,10 +339,39 @@ export class Transcript {
     const block = data.message.content[0]
     const row = this.toolByCallId.get(block.toolCallId)
     if (row === undefined) return false
-    row.status = block.isError === true ? 'error' : 'ok'
+    const isError = block.isError === true
+    row.status = isError ? 'error' : 'ok'
     row.result = textOfBlocks(block.content)
     if (data.error !== undefined) row.error = `${data.error.name}: ${data.error.code}`
+    // A failed mutation's card no longer describes the file, so it is dropped
+    // with the outcome. A successful result replaces the pending card when the
+    // Tool declares one; a Tool that declares only `presentCall` (for example
+    // `str_replace_editor`) keeps the card its call already produced.
+    if (isError) {
+      row.title = undefined
+      row.diffs = undefined
+    } else {
+      this.applyCard(row, this.views?.result(row.name, row.args, {
+        content: block.content,
+        isError: false,
+        ...data.meta === undefined ? {} : { meta: data.meta },
+      }))
+    }
     return this.changed()
+  }
+
+  /**
+   * Copy a resolved diff card onto one Tool row.
+   *
+   * An absent title keeps the call-time heading, and an empty hunk list clears
+   * the row back to raw rendering.
+   * @param row - the row the card belongs to.
+   * @param card - the resolved card, or undefined for another presentation.
+   */
+  private applyCard(row: ToolEntry, card: ToolDiffCard | undefined): void {
+    if (card === undefined) return
+    if (card.title !== undefined) row.title = card.title
+    row.diffs = card.diffs.length > 0 ? card.diffs : undefined
   }
 
   private applyTurnEnd(data: SessionEvent<'turn/end'>['data']): boolean {

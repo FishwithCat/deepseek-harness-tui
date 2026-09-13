@@ -17,13 +17,26 @@ import z from '@deepseek-ai/schemastery'
  */
 export type TuiScreen = 'alternate' | 'inline'
 
+/**
+ * Which palette the surface renders with:
+ *
+ * - `'auto'` — follow the terminal background signal when the host exports one,
+ *   otherwise the dark palette.
+ * - `'dark'` / `'light'` — pin the palette, for a host that gives no signal or
+ *   one the user disagrees with.
+ */
+export type TuiColorScheme = 'auto' | 'dark' | 'light'
+
 /** The terminal application's settings. */
 export interface Config {
   /** Screen strategy; see {@link TuiScreen}. */
   screen: TuiScreen
+  /** Palette selection; see {@link TuiColorScheme}. */
+  colorScheme: TuiColorScheme
 }
 
 /** Validated settings for the `tui-app` row. */
 export const Config: z<Config> = z.object({
   screen: z.union(['alternate', 'inline']).default('alternate'),
+  colorScheme: z.union(['auto', 'dark', 'light']).default('auto'),
 })

@@ -92,6 +92,10 @@ producer 提供同步的 `cancel`、在资源清理后 settle 且不 reject 的 
 
 中性词汇定义在 `dsh-tools` 中；工具绝不导入 UI 或传输类型。使用该 API 的消费方把每个 `card` 映射到自己的视图。设计与原因见[渲染意图联合体 Agent Note](../../.agents/notes/implemented/architecture/2026-07-02-tool-render-intent-union.zh.md)；`dsh-tool-fs`（generic/diff）和 `dsh-tool-bash`（terminal）是参考实现。
 
+## 终端展示
+
+终端界面是这些展示器的 Host 消费方。它在折叠每条 `tool/call` 与 `tool/result` 事件时解析 `ctx.tools.get(name, agent)`，并把声明的视图收窄为 `card: 'diff'`，因此文件变更会渲染为统一 diff，而不是其面向模型的确认句。工具只需声明 `presentCall`／`presentResult` 即可触达终端；终端不持有任何工具名称知识，其他所有卡片仍渲染为工具的原始行。[TUI 消费 Host 工具呈现 Agent Note](../../.agents/notes/implemented/architecture/2026-09-13-tui-host-tool-presentation.zh.md)规定收窄与回退规则。
+
 ## Web Client 展示
 
 内置 Web Client 不消费 `presentCall` 或 `presentResult`。Session `page` 与 `follow` 运输原始 `tool/call` 和 `tool/result` 事件，包括持久化的 `result.meta`。Client 插件在 keyed slot `tool.call.toolview` 中注册自己的 wire 工具名称，并从 `ToolCallBlock` 的参数、内容、错误、metadata、现有 Code Dispatch `parentCallId` 与 Session 路径事实派生组件 props。插件在本地校验这些 wire 值，并让格式错误或不受支持的输入回退到 generic 行。

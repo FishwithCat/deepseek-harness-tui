@@ -21,7 +21,7 @@ import { TUI_STARTUP_SERVICE } from './startup.ts'
 import type { TuiStartupValues } from './startup.ts'
 
 export { Config }
-export type { TuiScreen } from './config.ts'
+export type { TuiColorScheme, TuiScreen } from './config.ts'
 export { internals, TuiApp } from './app.ts'
 export type { TuiAppOptions } from './app.ts'
 export { TUI_STARTUP_SERVICE } from './startup.ts'

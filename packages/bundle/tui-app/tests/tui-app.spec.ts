@@ -15,14 +15,15 @@ import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
 import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { createAssistantMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { LlmModelInfo, LlmModelReasoningInfo, LlmResolvedModelInfo, ModelModality, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
+import type { FileDiff } from '@deepseek-ai/dsh-tools'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
+import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
 import UserApprovalService from '@deepseek-ai/dsh-user-approval'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -153,6 +154,7 @@ async function bench(
     attachments?: boolean
     planMode?: boolean
     questions?: boolean
+    tools?: boolean
     models?: readonly LlmModelInfo[]
     modalities?: readonly ModelModality[]
     reasoning?: LlmModelReasoningInfo
@@ -165,13 +167,13 @@ async function bench(
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await ctx.plugin(LlmRuntime)
-  if (options.planMode === true) {
+  if (options.planMode === true || options.tools === true) {
     // `set()` folds the turn boundary to decide commit-versus-queue; the loop
     // itself is not mounted because the scripted Agent owns the lifecycle.
-    ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
+    if (options.planMode === true) ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
-    await ctx.plugin(PlanModeController, { section: 'Test plan mode instructions.' })
+    if (options.planMode === true) await ctx.plugin(PlanModeController, { section: 'Test plan mode instructions.' })
   }
   if (options.questions === true) await ctx.plugin(UserQuestionService)
   if (options.models !== undefined || options.modalities !== undefined || options.reasoning !== undefined) {
@@ -225,7 +227,7 @@ async function bench(
   internals.createTerminal = () => terminal
   const app = await TuiApp.boot({
     ctx,
-    config: { screen: options.screen ?? 'inline' },
+    config: { screen: options.screen ?? 'inline', colorScheme: 'auto' },
     cwd: process.cwd(),
     invocation: {},
     exit: (code: number) => { exits.push(code) },
@@ -609,11 +611,87 @@ describe('TuiApp', () => {
     contexts.push(ctx)
     await expect(TuiApp.boot({
       ctx,
-      config: { screen: 'inline' },
+      config: { screen: 'inline', colorScheme: 'auto' },
       cwd: process.cwd(),
       invocation: {},
       exit: () => {},
     })).rejects.toThrow(/interactive terminal/)
+  })
+})
+
+describe('TuiApp tool diffs', () => {
+  it('renders a mutation through the Host diff presenter it resolves from the registry', async () => {
+    const test = await bench({
+      afterPrompt(session, message) {
+        const turn = session.seq + 1
+        const callId = 'call-edit' as ToolCallId
+        session.append('turn/start', { turn })
+        session.append('step/start', { turn, step: 1 })
+        session.append('user/message', message, { surfaceOp: 'append' })
+        session.append('assistant/message', {
+          turn,
+          step: 1,
+          stream: [],
+          message: createAssistantMessage({
+            content: [{ type: 'text', text: 'Editing now.' }],
+            source: { provider: 'test-provider', model: 'test-model' },
+          }),
+        }, { surfaceOp: 'append' })
+        session.append('tool/call', {
+          turn,
+          step: 1,
+          callId,
+          name: 'edit',
+          arguments: JSON.stringify({ file_path: 'a.ts', old_string: 'old', new_string: 'new' }),
+        })
+        session.append('tool/result', {
+          turn,
+          step: 1,
+          message: createToolResultMessage({
+            callId,
+            content: [{ type: 'text', text: 'The file a.ts has been updated successfully.' }],
+            isError: false,
+          }),
+          meta: { diffs: [{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }] },
+        }, { surfaceOp: 'append' })
+        session.append('step/end', { turn, step: 1 })
+        session.append('turn/end', { turn, reason: { kind: 'completed' } })
+      },
+    }, { tools: true })
+    test.ctx.tools.register(defineTool({
+      name: 'edit',
+      description: 'Stub edit over the real registry.',
+      parameters: {
+        file_path: { type: 'string', required: true },
+        old_string: { type: 'string', required: true },
+        new_string: { type: 'string', required: true },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      execute: () => Promise.resolve('updated'),
+      presentCall: args => ({
+        card: 'diff',
+        title: `Edit ${args.file_path}`,
+        diffs: [{ path: args.file_path, oldText: args.old_string, newText: args.new_string }],
+      }),
+      presentResult: (_args, result) => ({
+        card: 'diff',
+        title: 'Edit a.ts',
+        diffs: (result.meta as unknown as { diffs: FileDiff[] }).diffs,
+      }),
+    }))
+    test.terminal.feed('edit the file')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Edit a.ts') })
+    const rendered = plain(test.terminal.output)
+    expect(rendered).toContain('- old')
+    expect(rendered).toContain('+ new')
+    expect(rendered).toContain('+1')
+    expect(rendered).toContain('-1')
+    expect(rendered).not.toContain('has been updated successfully')
+    await test.app.stop(0)
   })
 })
 
@@ -753,7 +831,7 @@ describe('TuiApp as a Cordis plugin', () => {
     const terminal = new FakeTerminal()
     internals.isInteractive = () => true
     internals.createTerminal = () => terminal
-    await ctx.plugin({ name, inject, apply }, { screen: 'inline' })
+    await ctx.plugin({ name, inject, apply }, { screen: 'inline', colorScheme: 'auto' })
     await vi.waitFor(() => { expect(terminal.output).toContain('/help commands') })
     terminal.feed('/model')
     terminal.feed('\r')

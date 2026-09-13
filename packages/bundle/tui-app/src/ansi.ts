@@ -1,12 +1,15 @@
 /**
  * ANSI styling for the terminal surface and the pi-tui theme objects its
  * components require. Colour is opt-out through the conventional environment
- * switches, and a disabled theme returns text unchanged so rendering, width
- * calculation, and tests stay colour-independent.
+ * switches, the palette follows the terminal background (dark by default, or
+ * the light variant when the deployment selects one), and a disabled theme
+ * returns text unchanged so rendering, width calculation, and tests stay
+ * colour-independent.
  * @module @deepseek-ai/dsh-tui-app/ansi
  */
 
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from '@earendil-works/pi-tui'
+import type { TuiColorScheme } from './config.ts'
 
 /** One style: text in, styled text out, no state. */
 export type Styler = (text: string) => string
@@ -39,6 +42,88 @@ export interface TuiTheme {
   dim: Styler
   /** Bold text. */
   bold: Styler
+  /** Italic text, the markdown emphasis face. */
+  italic: Styler
+  /** Added line of a file diff. */
+  diffAdd: Styler
+  /** Removed line of a file diff. */
+  diffDel: Styler
+  /** Unchanged context line of a file diff. */
+  diffContext: Styler
+  /** Diff chrome: a file header or a hunk boundary. */
+  diffMeta: Styler
+}
+
+/** The palette a run resolves to. */
+export type TuiPalette = 'dark' | 'light'
+
+/** Construction facts for {@link createTheme}. */
+export interface ThemeOptions {
+  /** Whether ANSI styles are emitted. */
+  enabled: boolean
+  /** Palette the terminal background calls for. */
+  palette: TuiPalette
+}
+
+/**
+ * SGR parameters per role for one palette. `assistant` is absent because the
+ * body inherits the terminal's own foreground, and `bold`/`italic` are the
+ * scheme-independent attribute faces.
+ */
+interface PaletteSpec {
+  user: string
+  reasoning: string
+  tool: string
+  toolOk: string
+  toolError: string
+  notice: string
+  error: string
+  warning: string
+  accent: string
+  border: string
+  dim: string
+  diffAdd: string
+  diffDel: string
+  diffContext: string
+  diffMeta: string
+}
+
+/** Palette for a dark terminal background (the default). */
+const DARK: PaletteSpec = {
+  user: '1;38;5;81',
+  reasoning: '38;5;110',
+  tool: '1;38;5;214',
+  toolOk: '38;5;114',
+  toolError: '1;38;5;203',
+  notice: '38;5;245',
+  error: '38;5;203',
+  warning: '38;5;214',
+  accent: '38;5;45',
+  border: '38;5;240',
+  dim: '38;5;243',
+  diffAdd: '38;5;114',
+  diffDel: '38;5;203',
+  diffContext: '38;5;247',
+  diffMeta: '1;38;5;45',
+}
+
+/** Palette for a light terminal background. */
+const LIGHT: PaletteSpec = {
+  user: '1;38;5;25',
+  reasoning: '38;5;60',
+  tool: '1;38;5;130',
+  toolOk: '38;5;28',
+  toolError: '1;38;5;124',
+  notice: '38;5;240',
+  error: '38;5;124',
+  warning: '38;5;130',
+  accent: '38;5;25',
+  border: '38;5;250',
+  dim: '38;5;245',
+  diffAdd: '38;5;28',
+  diffDel: '38;5;124',
+  diffContext: '38;5;245',
+  diffMeta: '1;38;5;25',
 }
 
 /**
@@ -66,25 +151,49 @@ export function supportsColor(environment: NodeJS.ProcessEnv, isTty: boolean): b
 }
 
 /**
+ * Resolve the palette a run uses.
+ *
+ * `auto` reads `COLORFGBG`, the background signal xterm-family terminals
+ * export as `foreground;background`; a background index of 7 or 15 selects the
+ * light palette. An absent or unparseable value stays dark, because the dark
+ * palette is the one every terminal can render legibly.
+ * @param mode - the deployment's selection.
+ * @param environment - the process environment.
+ * @returns the palette to render with.
+ */
+export function resolveColorScheme(mode: TuiColorScheme, environment: NodeJS.ProcessEnv): TuiPalette {
+  if (mode !== 'auto') return mode
+  const background = /(\d+)\s*$/.exec(environment.COLORFGBG ?? '')?.[1]
+  return background === '7' || background === '15' ? 'light' : 'dark'
+}
+
+/**
  * Build the surface theme.
- * @param enabled - whether ANSI styles are emitted.
+ * @param options - whether styles are emitted and which palette to use.
  * @returns every semantic style the surface uses.
  */
-export function createTheme(enabled: boolean): TuiTheme {
+export function createTheme(options: ThemeOptions): TuiTheme {
+  const spec = options.palette === 'light' ? LIGHT : DARK
+  const style = (code: string): Styler => sgr(code, options.enabled)
   return {
-    user: sgr('1;38;5;81', enabled),
+    user: style(spec.user),
     assistant: text => text,
-    reasoning: sgr('2;3;38;5;245', enabled),
-    tool: sgr('1;38;5;214', enabled),
-    toolOk: sgr('38;5;78', enabled),
-    toolError: sgr('1;38;5;203', enabled),
-    notice: sgr('38;5;245', enabled),
-    error: sgr('38;5;203', enabled),
-    warning: sgr('38;5;214', enabled),
-    accent: sgr('38;5;45', enabled),
-    border: sgr('38;5;240', enabled),
-    dim: sgr('2', enabled),
-    bold: sgr('1', enabled),
+    reasoning: style(spec.reasoning),
+    tool: style(spec.tool),
+    toolOk: style(spec.toolOk),
+    toolError: style(spec.toolError),
+    notice: style(spec.notice),
+    error: style(spec.error),
+    warning: style(spec.warning),
+    accent: style(spec.accent),
+    border: style(spec.border),
+    dim: style(spec.dim),
+    bold: sgr('1', options.enabled),
+    italic: sgr('3', options.enabled),
+    diffAdd: style(spec.diffAdd),
+    diffDel: style(spec.diffDel),
+    diffContext: style(spec.diffContext),
+    diffMeta: style(spec.diffMeta),
   }
 }
 
@@ -133,7 +242,7 @@ export function markdownTheme(theme: TuiTheme): MarkdownTheme {
     hr: theme.border,
     listBullet: theme.accent,
     bold: theme.bold,
-    italic: theme.reasoning,
+    italic: theme.italic,
     strikethrough: theme.dim,
     underline: theme.accent,
   }

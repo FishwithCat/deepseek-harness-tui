@@ -38,7 +38,7 @@ import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ContextPressureProjection } from '@deepseek-ai/dsh-token-meter/client'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import { createTheme, editorTheme, selectListTheme, supportsColor } from './ansi.ts'
+import { createTheme, editorTheme, resolveColorScheme, selectListTheme, supportsColor } from './ansi.ts'
 import type { TuiTheme } from './ansi.ts'
 import { readClipboardImage } from './clipboard.ts'
 import type { ClipboardImage } from './clipboard.ts'
@@ -50,6 +50,7 @@ import type { InteractionHost } from './interactions.ts'
 import { TuiSession } from './session.ts'
 import type { TuiSessionOptions } from './session.ts'
 import type { TuiStartupValues } from './startup.ts'
+import { createToolPresentationResolver } from './tool-view.ts'
 import { DetailBody, PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
 import type { TuiContextStatus, TuiStatus } from './views.ts'
 import { Transcript } from './transcript.ts'
@@ -122,7 +123,7 @@ export class TuiApp implements InteractionHost {
   private readonly tui: TUI
   private readonly viewport: TuiAltScreen | undefined
   private readonly theme: TuiTheme
-  private readonly transcript = new Transcript()
+  private readonly transcript: Transcript
   private readonly transcriptView: TranscriptView
   private readonly statusBar: StatusBar
   private readonly editor: Editor
@@ -152,7 +153,11 @@ export class TuiApp implements InteractionHost {
     terminal: Terminal,
   ) {
     this.session = session
-    this.theme = createTheme(supportsColor(process.env, process.stdout.isTTY))
+    this.theme = createTheme({
+      enabled: supportsColor(process.env, process.stdout.isTTY),
+      palette: resolveColorScheme(options.config.colorScheme, process.env),
+    })
+    this.transcript = new Transcript(createToolPresentationResolver(options.ctx, () => this.session.agent))
     this.providerCount = options.ctx.llm.listProviders().length
     this.autoCompaction = options.ctx.get('compaction')?.autoCompactionEnabled ?? false
     this.viewport = options.config.screen === 'alternate' ? new TuiAltScreen(terminal, true, undefined, { mouse: true }) : undefined

@@ -16,7 +16,7 @@ The Client already owns a complete tool-presentation entry point. `ui-chat` asse
 
 Splitting presentation between Host presenters and Client keyed renderers creates two interpretations of the same event. The keyed renderer is the Web extension point, so an intermediate Host view provides no independent Web capability.
 
-`ToolDefinition.presentCall` and `presentResult` remain useful Host APIs even though ACP is automation-only and the repository has no production TUI consumer. Removing their definitions is a separate decision from keeping Session reads independent of presentation.
+`ToolDefinition.presentCall` and `presentResult` remain useful Host APIs even though ACP is automation-only; their production consumer is the terminal surface, which reads them through the Tool registry ([TUI Host tool presentation](2026-09-13-tui-host-tool-presentation.md)). Removing their definitions is a separate decision from keeping Session reads independent of presentation.
 
 The required result is one raw Session journal and one Client presentation owner without visual degradation or incidental enhancement. Specialized cards, interactions, and Code Dispatch topology remain stable while the transport stops carrying transient views.
 
@@ -32,7 +32,7 @@ Client `ui-tool` continues to own card models and concrete renderers. Each card 
 
 The Client has no second presenter registry. Tool-name dispatch uses only the existing `tool.call.toolview` keyed slot. Pure Client card-model helpers are renderer implementation details, not a Cordis service, public registry, or wire DTO.
 
-The Host `ToolDefinition.presentCall`, `ToolDefinition.presentResult`, `ToolCallView`, `ToolResultView`, and existing tool presenter implementations remain. The Session Controller does not invoke them, and the Client does not import or consume them. A future non-Client consumer is outside this decision.
+The Host `ToolDefinition.presentCall`, `ToolDefinition.presentResult`, `ToolCallView`, `ToolResultView`, and existing tool presenter implementations remain. The Session Controller does not invoke them, and the Client does not import or consume them; the terminal surface consumes them through the Tool registry ([TUI Host tool presentation](2026-09-13-tui-host-tool-presentation.md)), never through a Session read.
 
 `ToolOutputDefinition.presentationMeta` and durable `tool/result.data.meta` remain. They carry execution-result facts required by existing specialized cards that the model-visible result text cannot represent losslessly. The Client validates and consumes `meta` directly rather than requiring the Host to convert it into a view during history reads.
 
@@ -111,7 +111,7 @@ The Host `ToolDefinition.presentCall`, `ToolDefinition.presentResult`, `ToolCall
 | `presentationMeta` | Tools runtime | `tool/result`, Client card models, and Host presenters | retained durable input |
 | fixture presenter mirror | none | none | fixtures send raw metadata |
 
-ACP does not consume a Session tool view or map Host render intent. The repository has no production TUI consumer. Host presenters remain available without making Session Remote their transport.
+ACP does not consume a Session tool view or map Host render intent. The terminal surface is the production Host consumer; it reads the presenters through the Tool registry, not through Session Remote. Host presenters remain available without making Session Remote their transport.
 
 ## Data Flow
 

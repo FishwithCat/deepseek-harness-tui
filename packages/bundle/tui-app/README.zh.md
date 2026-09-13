@@ -70,13 +70,14 @@ dsh
 
 ### 设置
 
-本应用唯一的部署设置决定绘制位置：
+本应用仅有的部署设置决定绘制位置与调色板：
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `screen` | `'alternate'` | `'alternate'` 在备用屏幕中绘制对话记录并使用应用自己的滚动窗口；`'inline'` 绘制到普通屏幕，把历史留给终端自身的回滚缓冲。 |
+| `colorScheme` | `'auto'` | 调色板选择。`'auto'` 读取终端导出的背景信号，读不到时保持深色；`'dark'` 与 `'light'` 固定调色板。 |
 
-生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tui-app)是全部可接受字段及其 JSDoc 的完整来源。bundle 补丁中的 `DSH_TUI_SCREEN` 提供该默认值。
+生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-tui-app)是全部可接受字段及其 JSDoc 的完整来源。bundle 补丁中的 `DSH_TUI_SCREEN` 与 `DSH_TUI_COLOR_SCHEME` 提供这些默认值。
 
 -----
 
@@ -90,7 +91,7 @@ dsh
 
 ### 渲染
 
-[`src/transcript.ts`](src/transcript.ts) 把这些事件折叠为有序行——提示、assistant 消息、实时 reasoning、带最终结果的工具调用与应用通知——并通过修订计数器使其渲染行失效。提示会先渲染其图片标记、再渲染文本，每个标记按内容顺序对应一张已附图片，因为终端没有缩略图，而持久内容块才是所附内容的记录。注入的上下文是模型输入而非对话，因此只有生产者声明了一行式 `notice` 形式时才产生行：工作区指令、技能目录与运行时上下文消息只留在会话日志中，而模型切换、plan 模式变化与 goal 以应用通知呈现。两种屏幕策略下页脚都位于输入框之下，共两行：第一行是工作区与 Agent 状态，其右侧右对齐路由模型名及其推理档位；第二行是 token 计数与「下一次请求相对路由模型容量的占用」。plan 模式开启时会在 Agent 状态旁显示 `plan` 标记，由 `Shift+Tab` 通过 `ctx.planMode` 切换。快捷键提示是空输入框的 placeholder 而非页脚的一行：应用包装了输入框，使其内容行在用户键入第一个字符前显示这些提示，因为编辑器组件本身不渲染 placeholder。占用与容量取自已挂载 `ctx.tokenMeter` 的 `contextPressure` 投影；`(auto)` 标记取自 `ctx.compaction.autoCompactionEnabled`；只有当部署注册了多个 provider 时，模型标签才会带上 provider。[`src/views.ts`](src/views.ts) 使用 [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) 组件把行转为终端行，并把每一行截断到视口宽度，因为渲染器会把超宽行视为组件缺陷；工具标题还会被压成单行，因为一行只拥有一个终端行：多行参数否则会打印出自身的换行，使该行越出转录区压到固定页脚上。选择器或提示以普通输出而非对话框的形式呈现——一行普通标题、一行空行和主体——在备用屏幕布局中紧贴输入框上方，并把每一行填充到视口宽度，因此转录内容不会从旁边透出。滚动由备用屏幕渲染器负责：对话记录是它的主滚动视图，因此 PageUp/PageDown 与滚轮移动对话记录，而页脚与输入框保持固定。
+[`src/transcript.ts`](src/transcript.ts) 把这些事件折叠为有序行——提示、assistant 消息、实时 reasoning、带最终结果的工具调用与应用通知——并通过修订计数器使其渲染行失效。提示会先渲染其图片标记、再渲染文本，每个标记按内容顺序对应一张已附图片，因为终端没有缩略图，而持久内容块才是所附内容的记录。注入的上下文是模型输入而非对话，因此只有生产者声明了一行式 `notice` 形式时才产生行：工作区指令、技能目录与运行时上下文消息只留在会话日志中，而模型切换、plan 模式变化与 goal 以应用通知呈现。两种屏幕策略下页脚都位于输入框之下，共两行：第一行是工作区与 Agent 状态，其右侧右对齐路由模型名及其推理档位；第二行是 token 计数与「下一次请求相对路由模型容量的占用」。plan 模式开启时会在 Agent 状态旁显示 `plan` 标记，由 `Shift+Tab` 通过 `ctx.planMode` 切换。快捷键提示是空输入框的 placeholder 而非页脚的一行：应用包装了输入框，使其内容行在用户键入第一个字符前显示这些提示，因为编辑器组件本身不渲染 placeholder。占用与容量取自已挂载 `ctx.tokenMeter` 的 `contextPressure` 投影；`(auto)` 标记取自 `ctx.compaction.autoCompactionEnabled`；只有当部署注册了多个 provider 时，模型标签才会带上 provider。[`src/views.ts`](src/views.ts) 使用 [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) 组件把行转为终端行，并把每一行截断到视口宽度，因为渲染器会把超宽行视为组件缺陷；工具标题还会被压成单行，因为一行只拥有一个终端行：多行参数否则会打印出自身的换行，使该行越出转录区压到固定页脚上。选择器或提示以普通输出而非对话框的形式呈现——一行普通标题、一行空行和主体——在备用屏幕布局中紧贴输入框上方，并把每一行填充到视口宽度，因此转录内容不会从旁边透出。滚动由备用屏幕渲染器负责：对话记录是它的主滚动视图，因此 PageUp/PageDown 与滚轮移动对话记录，而页脚与输入框保持固定。声明了 Host diff 呈现的工具——`edit`、`write`，以及任何返回 `card: 'diff'` 视图的工具——会渲染为统一 diff 卡片，而不是其面向模型的结果句子：工具自己的标题、`+新增 -删除` 计数，以及上下文／新增／删除行，并在超过限定行数后折叠。本界面在折叠事件时通过 `ctx.tools` 解析该视图；其他所有卡片以及失败的变更都回退为普通的名称加摘要行。调色板跟随终端背景：`colorScheme` 固定深色或浅色，`auto` 读取终端的 `COLORFGBG` 背景信号，读不到时默认深色。
 
 ### 交互接缝
 
@@ -113,6 +114,8 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 | [`src/app.ts`](src/app.ts) | 界面构建、事件接线、输入路由与收尾 |
 | [`src/session.ts`](src/session.ts) | Agent 创建／恢复、提示提交、路由切换 |
 | [`src/transcript.ts`](src/transcript.ts) | 把事件折叠为可渲染行 |
+| [`src/diff.ts`](src/diff.ts) | 纯文件 diff 行模型 |
+| [`src/tool-view.ts`](src/tool-view.ts) | Host 工具呈现桥接层 |
 | [`src/images.ts`](src/images.ts) | 输入框图片标记与提交时的折叠 |
 | [`src/clipboard.ts`](src/clipboard.ts) | 各平台剪贴板图片读取器与其暂存文件 |
 | [`src/views.ts`](src/views.ts) | 对话记录、状态栏与模态面板组件 |
@@ -178,6 +181,7 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 - **「继续规划」会等待消息**——终端 review 没有自由文本反馈字段，因此选择「继续规划」会关闭 review 并把 turn 交还给用户，同时保持 plan 模式开启；调整内容就是用户的下一条提示，而不是随 review 带回的答案。
 - **图片只来自剪贴板**——输入框只附加从系统剪贴板读到的 PNG、JPEG、WebP 与 GIF 字节：macOS 用 `osascript`，Windows 与 WSL 用 PowerShell，Wayland 用 `wl-paste`，X11 用 `xclip`。缺少这些读取器的主机会把粘贴报告为空剪贴板；没有文件选择器、拖放或非图片附件。
 - **工具输出会被折叠**——工具结果只显示前若干行加剩余行数；完整输出留在会话日志中，而不在屏幕上。
+- **diff 卡片只覆盖文件变更**——Host 的 `presentCall`/`presentResult` 词汇还声明了读取、搜索、终端与网页卡片；本界面只采用 `card: 'diff'`，其他卡片都渲染为普通的原始行，因此将来新增的卡片需要在这里补渲染器。
 - **占用是估算值**——页脚百分比锚定最近一次 provider 报告的提示规模，并对表层此后的增减做启发式重新计价；它是给用户看的参考，不是计费或准入依据。
 - **退出由启动器拥有**——与所有界面一样，应用只能通过 `dsh` profile 启动，因为只有启动器提供有界退出请求。
 - **没有录制会话快照**——无密钥快照框架通过 stdio 驱动随附 profile，而本界面拥有一个终端；它的验收是包测试加一次伪终端运行，而不是快照夹具，因此终端布局的回归需要扩展界面测试，而不是重新录制快照。

@@ -23,3 +23,4 @@
       inject: [tuiStartup]
       config:
         screen: !!js process.env.DSH_TUI_SCREEN ?? 'alternate'
+        colorScheme: !!js process.env.DSH_TUI_COLOR_SCHEME ?? 'auto'

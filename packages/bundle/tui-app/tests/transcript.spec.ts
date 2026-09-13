@@ -13,8 +13,10 @@ import type { Component, TUI, TuiMouseEvent, TuiMouseEventResult } from '@earend
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord, StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import { Transcript } from '../src/transcript.ts'
+import type { ToolDiffCard, ToolPresentationResolver } from '../src/tool-view.ts'
 import { PROMPT_PANEL_CHROME_ROWS, DetailBody, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, summarizeToolArguments } from '../src/views.ts'
 import type { TuiStatus } from '../src/views.ts'
 import { createTheme, editorTheme, selectListTheme } from '../src/ansi.ts'
@@ -58,6 +60,24 @@ function imageRef(): ImageAttachmentRef {
  */
 function chunkFrame(revision: number, index: number, chunk: StreamChunk): AssistantStreamFrame {
   return { type: 'chunk', attemptId: LlmAttemptId('attempt'), revision, index, time: index, chunk }
+}
+
+/**
+ * Build an appender that appends one event and folds exactly that event.
+ * @param transcript - the transcript to fold into.
+ * @param session - the session log to append to.
+ * @returns the append-and-fold operation.
+ */
+function folder(
+  transcript: Transcript,
+  session: Awaited<ReturnType<typeof makeSession>>,
+): (append: () => void) => boolean {
+  return (append) => {
+    append()
+    const event = session.ownEvents().at(-1)
+    if (event === undefined) throw new Error('expected an appended event')
+    return transcript.applyEvent(event)
+  }
 }
 
 describe('Transcript', () => {
@@ -278,6 +298,110 @@ describe('Transcript', () => {
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     expect(transcript.entries().at(-1)).toMatchObject({ kind: 'user', text: '', images: ['[Image #1]'] })
   })
+
+  it('renders no live row while a started attempt has produced nothing', () => {
+    const transcript = new Transcript()
+    transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('attempt'), revision: 1, turn: 1, step: 1 })
+    expect(transcript.streaming).toBe(true)
+    expect(transcript.entries()).toEqual([])
+  })
+
+  it('ignores the stream chunks the transcript does not render', () => {
+    const transcript = new Transcript()
+    transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('attempt'), revision: 1, turn: 1, step: 1 })
+    expect(transcript.applyFrame(chunkFrame(2, 0, { type: 'text-delta', index: 0, text: '' }))).toBe(false)
+    expect(transcript.applyFrame(chunkFrame(3, 1, { type: 'reasoning-delta', index: 0, text: '' }))).toBe(false)
+    expect(transcript.applyFrame(chunkFrame(4, 2, { type: 'block-start', index: 0, blockType: 'text' }))).toBe(false)
+    expect(transcript.applyFrame(chunkFrame(5, 3, { type: 'block-end', index: 0, block: { type: 'text', text: 'x' } }))).toBe(false)
+    expect(transcript.applyFrame(chunkFrame(6, 4, {
+      type: 'tool-call-delta',
+      index: 1,
+      id: 'call-1' as ToolCallId,
+      argumentsDelta: '{}',
+    }))).toBe(false)
+    expect(transcript.applyFrame(chunkFrame(7, 5, { type: 'finish', reason: { kind: 'stop' } }))).toBe(false)
+  })
+
+  it('reports an abandoned stream and drops the live attempt', () => {
+    const transcript = new Transcript()
+    transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('attempt'), revision: 1, turn: 1, step: 1 })
+    transcript.applyFrame(chunkFrame(2, 0, { type: 'text-delta', index: 0, text: 'partial' }))
+    transcript.applyFrame({ type: 'end', attemptId: LlmAttemptId('attempt'), revision: 3, index: 1, outcome: { kind: 'abandoned' } })
+    expect(transcript.streaming).toBe(false)
+    expect(transcript.entries().at(-1)).toMatchObject({
+      kind: 'notice',
+      level: 'info',
+      text: 'the model stream ended without a settlement',
+    })
+  })
+
+  it('ignores a durable message that carries no visible text', async () => {
+    const session = await makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      stream: [],
+      message: createAssistantMessage({ content: [], source: { provider: 'p', model: 'm' } }),
+    }, { surfaceOp: 'append' })
+    session.append('assistant/attempt', { turn: 1, step: 1, stream: [] })
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: 'never-called' as ToolCallId,
+        content: [{ type: 'text', text: 'orphan' }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    const transcript = new Transcript()
+    for (const event of session.ownEvents()) expect(transcript.applyEvent(event)).toBe(false)
+    expect(transcript.entries()).toEqual([])
+  })
+
+  it('reports an aborted attempt and ignores a stream that ended cleanly', async () => {
+    const session = await makeSession()
+    const aborted: AssistantStreamRecord[] = [
+      { type: 'chunk', time: 0, chunk: { type: 'text-delta', index: 0, text: 'partial' } },
+      { type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'aborted', failure: { message: 'cancelled mid-stream', code: 'ABORTED' } } } },
+    ]
+    const transcript = new Transcript()
+    const appendAndFold = folder(transcript, session)
+    appendAndFold(() => { session.append('turn/start', { turn: 1 }) })
+    appendAndFold(() => { session.append('step/start', { turn: 1, step: 1 }) })
+    expect(appendAndFold(() => {
+      session.append('assistant/attempt', { turn: 1, step: 1, stream: aborted })
+    })).toBe(true)
+    expect(transcript.entries().at(-1)).toMatchObject({ kind: 'notice', level: 'error', text: 'cancelled mid-stream' })
+
+    const folded = transcript.entries().length
+    expect(appendAndFold(() => {
+      session.append('assistant/attempt', {
+        turn: 1,
+        step: 1,
+        stream: [{ type: 'chunk', time: 2, chunk: { type: 'finish', reason: { kind: 'stop' } } }],
+      })
+    })).toBe(false)
+    expect(transcript.entries()).toHaveLength(folded)
+  })
+
+  it('maps an errored and a max-token turn end to notices', async () => {
+    const session = await makeSession()
+    const transcript = new Transcript()
+    const appendAndFold = folder(transcript, session)
+    appendAndFold(() => { session.append('turn/start', { turn: 1 }) })
+    expect(appendAndFold(() => {
+      session.append('turn/end', { turn: 1, reason: { kind: 'error', error: { message: 'provider exploded', code: 'E' } } })
+    })).toBe(true)
+    expect(transcript.entries().at(-1)).toMatchObject({ kind: 'notice', level: 'error', text: 'provider exploded' })
+
+    appendAndFold(() => { session.append('turn/start', { turn: 2 }) })
+    expect(appendAndFold(() => {
+      session.append('turn/end', { turn: 2, reason: { kind: 'max-tokens' } })
+    })).toBe(true)
+    expect(transcript.entries().at(-1)).toMatchObject({ kind: 'notice', level: 'info', text: 'the model reached its output limit' })
+  })
 })
 
 describe('TranscriptView', () => {
@@ -290,7 +414,7 @@ describe('TranscriptView', () => {
     }), { surfaceOp: 'append' })
     const transcript = new Transcript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
-    const view = new TranscriptView(transcript, createTheme(false))
+    const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
     for (const line of view.render(40)) {
       expect(line.length).toBeLessThanOrEqual(40)
     }
@@ -308,7 +432,7 @@ describe('TranscriptView', () => {
     }), { surfaceOp: 'append' })
     const transcript = new Transcript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
-    const view = new TranscriptView(transcript, createTheme(false))
+    const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
     expect(view.render(60).join('\n')).toContain('› [Image #1] what is this?')
   })
 
@@ -329,7 +453,7 @@ describe('TranscriptView', () => {
     }, { surfaceOp: 'append' })
     const transcript = new Transcript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
-    const view = new TranscriptView(transcript, createTheme(false))
+    const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
     const rendered = view.render(60).join('\n')
     expect(rendered).toContain('command=printf x')
     expect(rendered).toContain('more lines')
@@ -349,11 +473,48 @@ describe('TranscriptView', () => {
     })
     const transcript = new Transcript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
-    const view = new TranscriptView(transcript, createTheme(false))
+    const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
     const lines = view.render(60)
     expect(lines.some(line => line.includes('\n'))).toBe(false)
     expect(lines).toHaveLength(1)
     expect(lines[0]).toContain('command=python3')
+  })
+
+  it('reuses its rendered lines and refreshes a grown live body', () => {
+    const transcript = new Transcript()
+    transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('attempt'), revision: 1, turn: 1, step: 1 })
+    transcript.applyFrame(chunkFrame(2, 0, { type: 'reasoning-delta', index: 0, text: 'weighing it' }))
+    transcript.applyFrame(chunkFrame(3, 1, { type: 'text-delta', index: 0, text: 'Hel' }))
+    const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
+    const first = view.render(40)
+    expect(first.join('\n')).toContain('✻ weighing it')
+    // Same width and revision: the cached lines come back untouched.
+    expect(view.render(40)).toBe(first)
+    // A different width and a moved revision both rebuild.
+    expect(view.render(50)).not.toBe(first)
+    expect(view.render(40)).not.toBe(first)
+    transcript.applyFrame(chunkFrame(4, 2, { type: 'text-delta', index: 0, text: 'lo' }))
+    expect(view.render(40).join('\n')).toContain('Hello')
+  })
+
+  it('marks an interrupted assistant message beside its body', async () => {
+    const session = await makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      stream: [],
+      interrupted: true,
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: 'half a sentence' }],
+        source: { provider: 'p', model: 'm' },
+      }),
+    }, { surfaceOp: 'append' })
+    const transcript = new Transcript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    const rendered = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60).join('\n')
+    expect(rendered).toContain('half a sentence')
+    expect(rendered).toContain('[cancelled]')
   })
 })
 
@@ -362,6 +523,8 @@ describe('summarizeToolArguments', () => {
     expect(summarizeToolArguments('{"command":"ls -la"}')).toBe('command=ls -la')
     expect(summarizeToolArguments('{"alpha":1,"beta":"two"}')).toBe('alpha=1 beta=two')
     expect(summarizeToolArguments('not json')).toBe('not json')
+    expect(summarizeToolArguments('[1]')).toBe('[1]')
+    expect(summarizeToolArguments('42')).toBe('42')
     expect(summarizeToolArguments('')).toBe('')
   })
 
@@ -380,7 +543,7 @@ describe('StatusBar', () => {
    * @returns the renderable footer.
    */
   function bar(status: TuiStatus, color = false): StatusBar {
-    const view = new StatusBar(createTheme(color))
+    const view = new StatusBar(createTheme({ enabled: color, palette: 'dark' }))
     view.set(status)
     return view
   }
@@ -431,7 +594,7 @@ describe('StatusBar', () => {
   })
 
   it('escalates the occupancy colour as the window fills', () => {
-    expect(bar(populated(50_000, 100_000), true).render(60)[1]).toContain('\x1b[2m50.0%/100k\x1b[0m')
+    expect(bar(populated(50_000, 100_000), true).render(60)[1]).toContain('\x1b[38;5;243m50.0%/100k\x1b[0m')
     expect(bar(populated(80_000, 100_000), true).render(60)[1]).toContain('\x1b[38;5;214m80.0%/100k\x1b[0m')
     expect(bar(populated(95_000, 100_000), true).render(60)[1]).toContain('\x1b[38;5;203m95.0%/100k\x1b[0m')
   })
@@ -463,7 +626,7 @@ describe('PlaceholderEditor', () => {
    */
   function composer(): { editor: Editor; view: PlaceholderEditor } {
     const tui = { terminal: { rows: 30, columns: 80 }, requestRender: () => {} } as unknown as TUI
-    const theme = createTheme(false)
+    const theme = createTheme({ enabled: false, palette: 'dark' })
     const editor = new Editor(tui, editorTheme(theme), { paddingX: 1 })
     return { editor, view: new PlaceholderEditor(editor, theme) }
   }
@@ -480,6 +643,17 @@ describe('PlaceholderEditor', () => {
     editor.setText('hello')
     expect(view.render(40)[1]).toContain('hello')
     expect(view.render(40)[1]).not.toContain('/help')
+  })
+
+  it('keeps the reverse-video cursor when styles are emitted', () => {
+    const tui = { terminal: { rows: 30, columns: 80 }, requestRender: () => {} } as unknown as TUI
+    const theme = createTheme({ enabled: true, palette: 'dark' })
+    const editor = new Editor(tui, editorTheme(theme), { paddingX: 1 })
+    const view = new PlaceholderEditor(editor, theme)
+    view.setHint('Enter send')
+    // The cursor character must not be wrapped in a styler: every styler ends
+    // with an SGR reset that would cancel the reverse video around it.
+    expect(view.render(40)[1]).toContain('\x1b[7mE\x1b[27m')
   })
 
   it('leaves the composer untouched when no hint is set or the line is narrow', () => {
@@ -540,7 +714,7 @@ describe('DetailBody', () => {
 
   it('scrolls an overflowing detail line by line and viewport by viewport', () => {
     const body = control()
-    const view = new DetailBody(detail(40), body, createTheme(false), 12)
+    const view = new DetailBody(detail(40), body, createTheme({ enabled: false, palette: 'dark' }), 12)
     const first = view.render(40).join('\n')
     expect(first).toContain('marker-01')
     expect(first).toContain('↑↓/PgUp/PgDn scroll')
@@ -563,7 +737,7 @@ describe('DetailBody', () => {
 
   it('moves the control selection with Left/Right and Tab while the detail overflows', () => {
     const step = vi.fn()
-    const view = new DetailBody(detail(40), control(), createTheme(false), 12, step)
+    const view = new DetailBody(detail(40), control(), createTheme({ enabled: false, palette: 'dark' }), 12, step)
     expect(view.render(40).join('\n')).toContain('←→ choose')
 
     view.handleInput('\x1b[C')
@@ -577,7 +751,7 @@ describe('DetailBody', () => {
 
   it('hands every key to the control while the detail fits', () => {
     const body = control()
-    const view = new DetailBody('one short line', body, createTheme(false), 12, () => {})
+    const view = new DetailBody('one short line', body, createTheme({ enabled: false, palette: 'dark' }), 12, () => {})
     view.render(40)
 
     view.handleInput('\x1b[B')
@@ -588,7 +762,7 @@ describe('DetailBody', () => {
   })
 
   it('scrolls an overflowing detail with the wheel', () => {
-    const view = new DetailBody(detail(40), control(), createTheme(false), 12)
+    const view = new DetailBody(detail(40), control(), createTheme({ enabled: false, palette: 'dark' }), 12)
     view.render(40)
     expect(view.handleMouse(wheel(3))).toEqual({ handled: true })
     expect(view.render(40).join('\n')).toContain('4–12/')
@@ -598,7 +772,7 @@ describe('DetailBody', () => {
 
   it('forwards non-wheel mouse events to the control', () => {
     const body = control()
-    const view = new DetailBody('short', body, createTheme(false), 12)
+    const view = new DetailBody('short', body, createTheme({ enabled: false, palette: 'dark' }), 12)
     const click = { ...wheel(0), type: 'click' as const }
     view.handleMouse(click)
     expect(body.handleMouse).toHaveBeenCalledWith(click)
@@ -606,7 +780,7 @@ describe('DetailBody', () => {
 
   it('hands movement keys to a control with no selection to move', () => {
     const body = control()
-    const view = new DetailBody(detail(40), body, createTheme(false), 12)
+    const view = new DetailBody(detail(40), body, createTheme({ enabled: false, palette: 'dark' }), 12)
     view.render(40)
 
     view.handleInput('\x1b[C')
@@ -615,13 +789,13 @@ describe('DetailBody', () => {
   })
 
   it('leaves a non-wheel event to a control with no mouse handler', () => {
-    const view = new DetailBody('short', { render: () => ['x'], invalidate: () => {} }, createTheme(false), 12)
+    const view = new DetailBody('short', { render: () => ['x'], invalidate: () => {} }, createTheme({ enabled: false, palette: 'dark' }), 12)
     expect(view.handleMouse(mouseEvent('click'))).toBeUndefined()
   })
 
   it('leaves the keys to a control that leaves the detail no rows', () => {
     const body = control()
-    const view = new DetailBody(detail(40), body, createTheme(false), 1)
+    const view = new DetailBody(detail(40), body, createTheme({ enabled: false, palette: 'dark' }), 1)
     view.render(40)
     view.handleInput('\x1b[B')
     expect(body.handleInput).toHaveBeenCalledWith('\x1b[B')
@@ -634,7 +808,7 @@ describe('PromptPanel', () => {
    * @returns the panel and its title.
    */
   function panel(): { view: PromptPanel; title: string } {
-    const theme = createTheme(false)
+    const theme = createTheme({ enabled: false, palette: 'dark' })
     const list = new SelectList(
       [{ value: 'deepseek-official/deepseek-flash', label: 'deepseek-official/deepseek-flash', description: 'DeepSeek-V4-Flash' }],
       1,
@@ -663,7 +837,7 @@ describe('PromptPanel', () => {
   })
 
   it('keeps a long title and every body line inside a narrow panel', () => {
-    const theme = createTheme(false)
+    const theme = createTheme({ enabled: false, palette: 'dark' })
     const list = new SelectList(
       [{ value: 'x', label: 'a value wider than the panel', description: 'description' }],
       1,
@@ -682,7 +856,7 @@ describe('PromptPanel', () => {
   })
 
   it('clips a body line wider than the panel', () => {
-    const theme = createTheme(false)
+    const theme = createTheme({ enabled: false, palette: 'dark' })
     const body: Component = { render: () => ['x'.repeat(200)], invalidate: () => {} }
     const view = new PromptPanel('wide', theme, body)
     const lines = view.render(20)
@@ -694,26 +868,26 @@ describe('PromptPanel', () => {
 
   it('forwards invalidation to the body it shows', () => {
     const invalidate = vi.fn()
-    const view = new PromptPanel('title', createTheme(false), { render: () => [], invalidate })
+    const view = new PromptPanel('title', createTheme({ enabled: false, palette: 'dark' }), { render: () => [], invalidate })
     view.invalidate()
     expect(invalidate).toHaveBeenCalledTimes(1)
   })
 
   it('routes a mouse event past its chrome and drops one on the chrome', () => {
     const handleMouse = vi.fn(() => ({ handled: true as const }))
-    const view = new PromptPanel('title', createTheme(false), { render: () => ['x'], invalidate: () => {}, handleMouse })
+    const view = new PromptPanel('title', createTheme({ enabled: false, palette: 'dark' }), { render: () => ['x'], invalidate: () => {}, handleMouse })
     expect(view.handleMouse(mouseEvent('click', { y: 2, height: 10 }))).toEqual({ handled: true })
     expect(handleMouse).toHaveBeenCalledWith(expect.objectContaining({ y: 0, height: 8 }))
     expect(view.handleMouse(mouseEvent('click', { y: 1 }))).toBeUndefined()
   })
 
   it('leaves a body without a mouse handler to the renderer', () => {
-    const view = new PromptPanel('title', createTheme(false), { render: () => [], invalidate: () => {} })
+    const view = new PromptPanel('title', createTheme({ enabled: false, palette: 'dark' }), { render: () => [], invalidate: () => {} })
     expect(view.handleMouse(mouseEvent('click', { y: 4 }))).toBeUndefined()
   })
 
   it('keeps every row inside the viewport width when styles are emitted', () => {
-    const theme = createTheme(true)
+    const theme = createTheme({ enabled: true, palette: 'dark' })
     const list = new SelectList(
       [{ value: 'value', label: 'value', description: 'detail' }],
       1,
@@ -722,6 +896,278 @@ describe('PromptPanel', () => {
     const lines = new PromptPanel('Select a model', theme, list).render(40)
     for (const line of lines) expect(visibleWidth(line)).toBe(40)
     expect(lines[0]).toContain('Select a model')
+  })
+})
+
+describe('Transcript diff cards', () => {
+  /** The literal replacement the helper's `edit` call carries. */
+  const EDIT_ARGS = '{"file_path":"a.ts","old_string":"old","new_string":"new"}'
+
+  /**
+   * Append one `edit` call, plus its settled result when the test supplies one.
+   * @param session - the session log.
+   * @param result - the result fields to append, or undefined for a running call.
+   */
+  function appendEdit(
+    session: Awaited<ReturnType<typeof makeSession>>,
+    result?: { text: string; isError: boolean; meta?: JsonValue; error?: { name: string; code: string } },
+  ): void {
+    const callId = 'call-edit' as ToolCallId
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('tool/call', { turn: 1, step: 1, callId, name: 'edit', arguments: EDIT_ARGS })
+    if (result === undefined) return
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId,
+        content: [{ type: 'text', text: result.text }],
+        isError: result.isError,
+      }),
+      ...result.meta === undefined ? {} : { meta: result.meta },
+      ...result.error === undefined ? {} : { error: result.error },
+    }, { surfaceOp: 'append' })
+  }
+
+  /** Fold every event a session already holds. */
+  function fold(session: Awaited<ReturnType<typeof makeSession>>, transcript: Transcript): void {
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+  }
+
+  /** A resolver returning the same fixed cards for every call. */
+  function fixed(call: ToolDiffCard | undefined, result: ToolDiffCard | undefined): ToolPresentationResolver {
+    return { call: () => call, result: () => result }
+  }
+
+  it('attaches the pending diff card its resolver declares', async () => {
+    const session = await makeSession()
+    appendEdit(session)
+    const transcript = new Transcript(fixed(
+      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      undefined,
+    ))
+    fold(session, transcript)
+    expect(transcript.entries()[0]).toMatchObject({
+      kind: 'tool',
+      status: 'running',
+      title: 'Edit a.ts',
+      diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }],
+    })
+  })
+
+  it('replaces the pending card with the settled one', async () => {
+    const session = await makeSession()
+    appendEdit(session, { text: 'The file a.ts has been updated successfully.', isError: false })
+    const transcript = new Transcript(fixed(
+      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }] },
+    ))
+    fold(session, transcript)
+    expect(transcript.entries()[0]).toMatchObject({
+      status: 'ok',
+      diffs: [{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }],
+    })
+  })
+
+  it('keeps the pending card when the Tool declares no result view', async () => {
+    const session = await makeSession()
+    appendEdit(session, { text: 'Replaced.', isError: false })
+    const transcript = new Transcript(fixed(
+      { title: 'str_replace_editor a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      undefined,
+    ))
+    fold(session, transcript)
+    expect(transcript.entries()[0]).toMatchObject({
+      status: 'ok',
+      title: 'str_replace_editor a.ts',
+      diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }],
+    })
+  })
+
+  it('clears the card when the mutation failed', async () => {
+    const session = await makeSession()
+    appendEdit(session, { text: 'the file changed since it was read', isError: true })
+    const transcript = new Transcript(fixed(
+      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+    ))
+    fold(session, transcript)
+    const entry = transcript.entries()[0]
+    expect(entry).toMatchObject({ status: 'error', result: 'the file changed since it was read' })
+    const row = entry as { title?: string; diffs?: readonly unknown[] }
+    expect(row.title).toBeUndefined()
+    expect(row.diffs).toBeUndefined()
+  })
+
+  it('keeps raw rows without a resolver, and ignores another card', async () => {
+    const session = await makeSession()
+    appendEdit(session, { text: 'Replaced.', isError: false })
+    const raw = new Transcript()
+    fold(session, raw)
+    const rawEntry = raw.entries()[0]
+    expect(rawEntry).toMatchObject({ kind: 'tool' })
+    expect(Object.hasOwn(rawEntry ?? {}, 'title')).toBe(false)
+    expect(Object.hasOwn(rawEntry ?? {}, 'diffs')).toBe(false)
+
+    const other = new Transcript({ call: () => undefined, result: () => undefined })
+    fold(session, other)
+    const otherEntry = other.entries()[0]
+    expect(Object.hasOwn(otherEntry ?? {}, 'title')).toBe(false)
+    expect(Object.hasOwn(otherEntry ?? {}, 'diffs')).toBe(false)
+  })
+
+  it('drops a card whose hunk list is empty', async () => {
+    const session = await makeSession()
+    appendEdit(session)
+    const transcript = new Transcript(fixed({ title: 'Edit a.ts', diffs: [] }, undefined))
+    fold(session, transcript)
+    const entry = transcript.entries()[0]
+    expect(entry).toMatchObject({ title: 'Edit a.ts' })
+    expect((entry as { diffs?: readonly unknown[] }).diffs).toBeUndefined()
+  })
+
+  it('keeps the call-time heading when a settled card declares no title', async () => {
+    const session = await makeSession()
+    appendEdit(session, { text: 'Replaced.', isError: false })
+    const transcript = new Transcript({
+      call: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
+      result: () => ({ diffs: [{ path: 'a.ts', oldText: 'ctx', newText: 'ctx2' }] }),
+    })
+    fold(session, transcript)
+    expect(transcript.entries()[0]).toMatchObject({
+      title: 'Edit a.ts',
+      diffs: [{ path: 'a.ts', oldText: 'ctx', newText: 'ctx2' }],
+    })
+  })
+
+  it('keeps the failure identity on a failed mutation', async () => {
+    const session = await makeSession()
+    appendEdit(session, {
+      text: 'the file was not observed',
+      isError: true,
+      error: { name: 'FsError', code: 'FS_NOT_OBSERVED' },
+    })
+    const transcript = new Transcript(fixed(
+      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      undefined,
+    ))
+    fold(session, transcript)
+    expect(transcript.entries()[0]).toMatchObject({ error: 'FsError: FS_NOT_OBSERVED' })
+    const rendered = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60).join('\n')
+    expect(rendered).toContain('FsError: FS_NOT_OBSERVED')
+  })
+
+  it('hands the resolver the call identity and the settled result projection', async () => {
+    const session = await makeSession()
+    appendEdit(session, { text: 'Replaced.', isError: false, meta: { diffs: [] } })
+    const resultSpy = vi.fn((): ToolDiffCard | undefined => undefined)
+    const callSpy = vi.fn((): ToolDiffCard | undefined => undefined)
+    const transcript = new Transcript({ call: callSpy, result: resultSpy })
+    fold(session, transcript)
+    expect(callSpy).toHaveBeenCalledWith('edit', EDIT_ARGS)
+    expect(resultSpy).toHaveBeenCalledWith('edit', EDIT_ARGS, {
+      content: [{ type: 'text', text: 'Replaced.' }],
+      isError: false,
+      meta: { diffs: [] },
+    })
+  })
+})
+
+describe('TranscriptView diff cards', () => {
+  /**
+   * Fold an `edit` call and settled result with one fixed applied card.
+   * @param diffs - the applied hunks the result card declares.
+   * @param result - the model-facing result text the tool returned.
+   * @returns the rendered transcript lines.
+   */
+  async function render(diffs: ToolDiffCard['diffs'], result = 'The file a.ts has been updated successfully.'): Promise<string[]> {
+    const session = await makeSession()
+    const callId = 'call-edit' as ToolCallId
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('tool/call', { turn: 1, step: 1, callId, name: 'edit', arguments: '{"file_path":"a.ts"}' })
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({ callId, content: [{ type: 'text', text: result }], isError: false }),
+    }, { surfaceOp: 'append' })
+    const transcript = new Transcript({
+      call: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
+      result: () => ({ title: 'Edit a.ts', diffs }),
+    })
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    return new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60)
+  }
+
+  it('renders an applied mutation as a diff body with its change totals', async () => {
+    const rendered = (await render([{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }])).join('\n')
+    expect(rendered).toContain('✔ Edit a.ts')
+    expect(rendered).toContain('+1')
+    expect(rendered).toContain('-1')
+    expect(rendered).toContain('- old')
+    expect(rendered).toContain('+ new')
+    expect(rendered).toContain('  ctx')
+    expect(rendered).not.toContain('updated successfully')
+  })
+
+  it('marks a later hunk of one file with a gap and omits zero totals', async () => {
+    const gap = (await render([
+      { path: 'a.ts', oldText: 'one', newText: 'ONE' },
+      { path: 'a.ts', oldText: 'two', newText: 'TWO' },
+    ])).join('\n')
+    expect(gap).toContain('⋯')
+
+    const unchanged = (await render([{ path: 'a.ts', oldText: 'same', newText: 'same' }])).join('\n')
+    expect(unchanged).toContain('  same')
+    expect(unchanged).not.toContain('+0')
+    expect(unchanged).not.toContain('-0')
+
+    const deletion = (await render([{ path: 'a.ts', oldText: 'gone', newText: '' }])).join('\n')
+    expect(deletion).toContain('+0')
+    expect(deletion).toContain('-1')
+  })
+
+  it('opens every file of a multi-file card and folds a long body', async () => {
+    const many = Array.from({ length: 30 }, (_, index) => `line ${String(index)}`).join('\n')
+    const rendered = (await render([
+      { path: 'a.ts', oldText: null, newText: 'one' },
+      { path: 'b.ts', oldText: null, newText: many },
+    ])).join('\n')
+    expect(rendered).toContain('a.ts')
+    expect(rendered).toContain('b.ts')
+    expect(rendered).toContain('more lines')
+  })
+
+  it('keeps a long diff line inside the viewport width', async () => {
+    const lines = await render([{ path: 'a.ts', oldText: null, newText: 'x'.repeat(200) }])
+    for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(60)
+  })
+
+  it('shows the error text instead of a card when a mutation failed', async () => {
+    const session = await makeSession()
+    const callId = 'call-edit' as ToolCallId
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('tool/call', { turn: 1, step: 1, callId, name: 'edit', arguments: '{}' })
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId,
+        content: [{ type: 'text', text: 'old_string not found' }],
+        isError: true,
+      }),
+    }, { surfaceOp: 'append' })
+    const transcript = new Transcript({
+      call: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
+      result: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
+    })
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    const rendered = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60).join('\n')
+    expect(rendered).toContain('✘ edit')
+    expect(rendered).toContain('old_string not found')
+    expect(rendered).not.toContain('+ new')
   })
 })
 
