@@ -12,7 +12,7 @@ plan 模式通过 `exit_plan_mode` 提交完整计划，其 `userQuestions.ask` 
 
 `InteractionHost.choose` 与 `ask` 接受可选的 `detail`，`installQuestionAnswerer` 传入 `question.detail`；应答器仍只负责呈现，计划的批准标签与答案编码不变。
 
-`DetailBody`（[`src/views.ts`](../../../../packages/bundle/tui-app/src/views.ts)）在存在 detail 时包裹选择器或输入框。它把 markdown 渲染在一个视口中，视口大小取决于被包裹控件剩余的行数，因此两选项的 review 几乎把整个面板让给计划，而很长的选择器会让计划少一些。滚动溢出的详情与到达控件的选择项，其分工由 [plan-review wait 笔记](2026-09-13-tui-plan-review-wait.zh.md)负责；详情溢出时，一行滚动位置会标出可见范围。`showPrompt` 现在接受任意 `Component` 主体，面板的主体预算与 chrome 不变。
+`DetailBody`（[`src/views.ts`](../../../../packages/bundle/tui-app/src/views.ts)）在存在 detail 时包裹选择器或输入框。它把 markdown 渲染在一个视口中，视口大小取决于被包裹控件剩余的行数，因此两选项的 review 几乎把整个面板让给计划，而很长的选择器会让计划少一些。滚动溢出的详情与到达控件的选择项，其分工由 [plan-review wait 笔记](2026-09-13-tui-plan-review-wait.zh.md)负责；详情溢出时，一行滚动位置会标出可见范围。`showPrompt` 现在接受任意 `Component` 主体，面板的 chrome 不变；详情所占的主体预算见[带详情的提示行笔记](2026-09-13-tui-detailed-prompt-rows.zh.md)。
 
 ## 备选方案
 

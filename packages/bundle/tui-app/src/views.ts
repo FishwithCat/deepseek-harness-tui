@@ -271,18 +271,24 @@ export class TranscriptView implements Component {
   }
 }
 
-/** Tallest prompt panel, so a long picker does not fill a tall terminal. */
-const PROMPT_PANEL_MAX_ROWS = 18
+/** Tallest detail-less prompt panel, so a long picker does not fill a tall terminal. */
+const PICKER_PANEL_MAX_ROWS = 18
 /** Rows a prompt spends outside its body: the title and the blank row under it. */
 export const PROMPT_PANEL_CHROME_ROWS = 2
 
 /**
  * Row budget for one prompt panel on a terminal with `rows` rows left to it.
  * @param rows - rows available to the panel, excluding any pinned footer.
+ * @param detailed - whether the body carries scrollable detail under a control.
+ * Such a panel may take every available row, because the detail is what the user
+ * must read; a detail-less picker stays capped so a long list does not fill a
+ * tall terminal.
  * @returns the largest panel height, keeping at least one body row.
  */
-export function promptPanelRows(rows: number): number {
-  return Math.max(PROMPT_PANEL_CHROME_ROWS + 1, Math.min(PROMPT_PANEL_MAX_ROWS, rows - 2))
+export function promptPanelRows(rows: number, detailed = false): number {
+  const available = Math.max(1, rows - 2)
+  const cap = detailed ? available : Math.min(PICKER_PANEL_MAX_ROWS, available)
+  return Math.max(PROMPT_PANEL_CHROME_ROWS + 1, cap)
 }
 
 /** Rows the scroll position line under a detailed prompt spends once its detail overflows. */

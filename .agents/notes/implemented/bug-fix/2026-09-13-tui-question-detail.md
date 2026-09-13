@@ -12,7 +12,7 @@ Plan mode routes the complete plan through `exit_plan_mode`, whose `userQuestion
 
 `InteractionHost.choose` and `ask` take an optional `detail`, and `installQuestionAnswerer` passes `question.detail`; the answerer still owns only presentation, and the plan's approve label and answer encoding are unchanged.
 
-`DetailBody` ([`src/views.ts`](../../../../packages/bundle/tui-app/src/views.ts)) wraps the picker or input when a detail is present. It renders the markdown in a viewport sized to the rows the wrapped control leaves, so a two-option review gives the plan nearly the whole panel and a long picker leaves it less. Scrolling the overflowing detail and reaching the control's selection are the [plan-review wait note](2026-09-13-tui-plan-review-wait.md)'s split; a scroll-position line names the visible range once the detail overflows. `showPrompt` accepts any `Component` body, and the panel's body budget and chrome are unchanged.
+`DetailBody` ([`src/views.ts`](../../../../packages/bundle/tui-app/src/views.ts)) wraps the picker or input when a detail is present. It renders the markdown in a viewport sized to the rows the wrapped control leaves, so a two-option review gives the plan nearly the whole panel and a long picker leaves it less. Scrolling the overflowing detail and reaching the control's selection are the [plan-review wait note](2026-09-13-tui-plan-review-wait.md)'s split; a scroll-position line names the visible range once the detail overflows. `showPrompt` accepts any `Component` body, and the panel's chrome is unchanged; the body budget a detail claims is the [detailed prompt rows note](2026-09-13-tui-detailed-prompt-rows.md)'s.
 
 ## Alternatives considered
 

@@ -849,10 +849,14 @@ describe('PromptPanel', () => {
     }
   })
 
-  it('budgets panel rows around its chrome', () => {
+  it('budgets panel rows around its chrome, capping only a detail-less picker', () => {
     expect(promptPanelRows(4)).toBe(PROMPT_PANEL_CHROME_ROWS + 1)
     expect(promptPanelRows(40)).toBe(18)
     expect(promptPanelRows(13)).toBe(11)
+    // A detailed panel takes the whole budget; the cap governs pickers only.
+    expect(promptPanelRows(4, true)).toBe(PROMPT_PANEL_CHROME_ROWS + 1)
+    expect(promptPanelRows(40, true)).toBe(38)
+    expect(promptPanelRows(13, true)).toBe(11)
   })
 
   it('clips a body line wider than the panel', () => {

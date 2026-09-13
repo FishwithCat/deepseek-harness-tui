@@ -901,7 +901,16 @@ describe('TuiApp question detail', () => {
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('Step 01'))).toBe(true)
     })
-    const before = screen(test.app).findIndex(row => row.includes('scroll'))
+    // A detail takes the rows above the pinned footer rather than the 18-row
+    // picker cap, so a tall terminal shows a tall plan.
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('1–18/'))).toBe(true)
+    })
+    const frame = screen(test.app)
+    const title = frame.findIndex(row => row.includes('Approve this plan'))
+    const composer = frame.findIndex(row => row.includes('Enter send'))
+    expect(composer - 1 - title).toBeGreaterThan(18)
+    const before = frame.findIndex(row => row.includes('scroll'))
     expect(before).toBeGreaterThanOrEqual(0)
 
     // A long plan owns Up/Down; the first press scrolls the detail instead of

@@ -797,13 +797,15 @@ export class TuiApp implements InteractionHost {
    * @param items - the selectable items.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
    * @param detail - markdown shown above the list; while it overflows, Up/Down
-   * and the wheel scroll it and Left/Right move the list selection.
+   * and the wheel scroll it and Left/Right move the list selection. A detail
+   * gives the panel every row above the pinned footer instead of the picker's cap.
    * @returns the chosen item, or undefined when dismissed.
    */
   choose(title: string, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined> {
     if (items.length === 0) return Promise.resolve(undefined)
     return this.enqueuePrompt(() => new Promise<SelectItem | undefined>((resolve) => {
-      const capacity = this.promptRows() - PROMPT_PANEL_CHROME_ROWS
+      const detailed = detail !== undefined
+      const capacity = this.promptRows(detailed) - PROMPT_PANEL_CHROME_ROWS
       // A list longer than the panel budget scrolls, and the scroll indicator
       // spends one of the body rows the panel has.
       const scrolling = items.length > capacity
@@ -820,7 +822,7 @@ export class TuiApp implements InteractionHost {
         list.setSelectedIndex(selected)
       }
       const body: Component = detail === undefined ? list : new DetailBody(detail, list, this.theme, capacity, step)
-      const handle = this.showPrompt(title, body)
+      const handle = this.showPrompt(title, body, detailed)
       const settle = (item: SelectItem | undefined): void => {
         this.dismissPrompt(handle)
         resolve(item)
@@ -836,14 +838,16 @@ export class TuiApp implements InteractionHost {
    * @param title - the question shown above the input.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
    * @param detail - markdown shown above the input; Up/Down, PageUp/PageDown,
-   * and the wheel scroll it while it overflows.
+   * and the wheel scroll it while it overflows. A detail gives the panel every
+   * row above the pinned footer instead of the picker's cap.
    * @returns the entered text, or undefined when dismissed.
    */
   ask(title: string, signal?: AbortSignal, detail?: string): Promise<string | undefined> {
     return this.enqueuePrompt(() => new Promise<string | undefined>((resolve) => {
       const input = new Input()
-      const capacity = this.promptRows() - PROMPT_PANEL_CHROME_ROWS
-      const handle = this.showPrompt(title, detail === undefined ? input : new DetailBody(detail, input, this.theme, capacity))
+      const detailed = detail !== undefined
+      const capacity = this.promptRows(detailed) - PROMPT_PANEL_CHROME_ROWS
+      const handle = this.showPrompt(title, detail === undefined ? input : new DetailBody(detail, input, this.theme, capacity), detailed)
       const settle = (value: string | undefined): void => {
         this.dismissPrompt(handle)
         resolve(value)
@@ -873,15 +877,17 @@ export class TuiApp implements InteractionHost {
    * the inline layout has no fixed footer position, so the panel is centered.
    * @param title - the heading line.
    * @param body - the component that owns input while the modal is up.
+   * @param detailed - whether the body carries scrollable detail, which lets the
+   * panel take every row above the pinned footer instead of the picker's cap.
    * @returns the overlay handle.
    */
-  private showPrompt(title: string, body: Component): OverlayHandle {
+  private showPrompt(title: string, body: Component, detailed: boolean): OverlayHandle {
     const place = this.viewport === undefined
       ? { anchor: 'center' as const }
       : { anchor: 'bottom-center' as const, margin: { bottom: PINNED_FOOTER_ROWS } }
     const handle = this.tui.showOverlay(new PromptPanel(title, this.theme, body), {
       width: '100%',
-      maxHeight: this.promptRows(),
+      maxHeight: this.promptRows(detailed),
       ...place,
     })
     this.promptActive = true
@@ -889,10 +895,15 @@ export class TuiApp implements InteractionHost {
     return handle
   }
 
-  /** Rows one prompt panel may occupy above the pinned footer. */
-  private promptRows(): number {
+  /**
+   * Rows one prompt panel may occupy above the pinned footer.
+   * @param detailed - whether the panel carries scrollable detail, which may
+   * take every row above the footer rather than the picker's cap.
+   * @returns the panel's row budget.
+   */
+  private promptRows(detailed: boolean): number {
     const reserved = this.viewport === undefined ? 0 : PINNED_FOOTER_ROWS
-    return promptPanelRows(this.tui.terminal.rows - reserved)
+    return promptPanelRows(this.tui.terminal.rows - reserved, detailed)
   }
 
   /**

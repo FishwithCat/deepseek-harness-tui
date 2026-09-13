@@ -16,7 +16,7 @@ A picker's `SelectList` is built with `minPrimaryColumnWidth: 1` and `maxPrimary
 
 `showPrompt` gives the overlay the full terminal width and places it with `anchor: 'bottom-center'` plus a bottom margin of the layout's pinned rows (the composer's three and the footer's two). In the alternate-screen layout the panel therefore sits directly above the composer, where the transcript ends, and reads as its next lines. The inline layout has no pinned footer position, so it keeps the centered anchor.
 
-`promptPanelRows(rows)` owns the height budget — at most 18 rows, never more than the rows available minus two, always leaving one body row — and `choose` sizes the visible list from that budget (reserving one body row when the list scrolls for `SelectList`'s indicator), so a picker on a short terminal scrolls inside the panel instead of running into the composer.
+`promptPanelRows(rows, detailed)` owns the height budget — at most 18 rows for a detail-less body and every available row for one that carries scrollable detail ([detailed prompt rows](2026-09-13-tui-detailed-prompt-rows.md)), never more than the rows available minus two, always leaving one body row — and `choose` sizes the visible list from that budget (reserving one body row when the list scrolls for `SelectList`'s indicator), so a picker on a short terminal scrolls inside the panel instead of running into the composer.
 
 ## Alternatives considered
 
