@@ -104,14 +104,15 @@ function promptText(entry: UserEntry): string {
  * Fold a Tool result body to a bounded number of lines.
  * @param text - the result text.
  * @param width - the viewport width.
+ * @param style - the Tool-result body style.
  * @returns the indented body lines.
  */
-function toolBody(text: string, width: number): string[] {
+function toolBody(text: string, width: number, style: Styler): string[] {
   const bodyWidth = Math.max(1, width - TOOL_BODY_INDENT.length)
   const lines = wrap(text, bodyWidth)
-  if (lines.length <= TOOL_RESULT_MAX_LINES) return lines.map(line => TOOL_BODY_INDENT + line)
-  const shown = lines.slice(0, TOOL_RESULT_MAX_LINES).map(line => TOOL_BODY_INDENT + line)
-  shown.push(TOOL_BODY_INDENT + `… ${String(lines.length - TOOL_RESULT_MAX_LINES)} more lines`)
+  if (lines.length <= TOOL_RESULT_MAX_LINES) return lines.map(line => TOOL_BODY_INDENT + style(line))
+  const shown = lines.slice(0, TOOL_RESULT_MAX_LINES).map(line => TOOL_BODY_INDENT + style(line))
+  shown.push(TOOL_BODY_INDENT + style(`… ${String(lines.length - TOOL_RESULT_MAX_LINES)} more lines`))
   return shown
 }
 
@@ -217,7 +218,7 @@ export class TranscriptView implements Component {
     const lines = [truncateToWidth(heading, width)]
     if (entry.error !== undefined) lines.push(...prefixBody(entry.error, width, this.theme.error('  '), '  '))
     if (card !== undefined) lines.push(...this.diffBody(card, width))
-    else if (entry.result !== '') lines.push(...toolBody(entry.result, width))
+    else if (entry.result !== '') lines.push(...toolBody(entry.result, width, this.theme.toolResult))
     return lines
   }
 

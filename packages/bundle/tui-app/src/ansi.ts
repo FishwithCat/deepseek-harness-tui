@@ -28,6 +28,8 @@ export interface TuiTheme {
   toolOk: Styler
   /** Failed tool outcome. */
   toolError: Styler
+  /** Tool result body: the output a Tool returned. */
+  toolResult: Styler
   /** Neutral app notice. */
   notice: Styler
   /** Failure notice. */
@@ -76,6 +78,7 @@ interface PaletteSpec {
   tool: string
   toolOk: string
   toolError: string
+  toolResult: string
   notice: string
   error: string
   warning: string
@@ -95,6 +98,7 @@ const DARK: PaletteSpec = {
   tool: '1;38;5;214',
   toolOk: '38;5;114',
   toolError: '1;38;5;203',
+  toolResult: '38;5;250',
   notice: '38;5;245',
   error: '38;5;203',
   warning: '38;5;214',
@@ -114,6 +118,7 @@ const LIGHT: PaletteSpec = {
   tool: '1;38;5;130',
   toolOk: '38;5;28',
   toolError: '1;38;5;124',
+  toolResult: '38;5;240',
   notice: '38;5;240',
   error: '38;5;124',
   warning: '38;5;130',
@@ -182,6 +187,7 @@ export function createTheme(options: ThemeOptions): TuiTheme {
     tool: style(spec.tool),
     toolOk: style(spec.toolOk),
     toolError: style(spec.toolError),
+    toolResult: style(spec.toolResult),
     notice: style(spec.notice),
     error: style(spec.error),
     warning: style(spec.warning),

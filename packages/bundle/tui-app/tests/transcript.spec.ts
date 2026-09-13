@@ -459,6 +459,27 @@ describe('TranscriptView', () => {
     expect(rendered).toContain('more lines')
   })
 
+  it('styles a Tool result body with the tool-result grey', async () => {
+    const session = await makeSession()
+    const callId = 'call-1' as ToolCallId
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('tool/call', { turn: 1, step: 1, callId, name: 'bash', arguments: '{"command":"echo hi"}' })
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId,
+        content: [{ type: 'text', text: 'hi' }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    const transcript = new Transcript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    const view = new TranscriptView(transcript, createTheme({ enabled: true, palette: 'dark' }))
+    expect(view.render(60).join('\n')).toContain('\x1b[38;5;250mhi\x1b[0m')
+  })
+
   it('keeps a multi-line tool argument on one row so the footer keeps its own lines', async () => {
     const session = await makeSession()
     const command = "python3 - <<'EOF'\np=\"src/ReviewPanel.tsx\"\nfor i,l in enumerate(open(p)):\n    print(i)\nEOF"
