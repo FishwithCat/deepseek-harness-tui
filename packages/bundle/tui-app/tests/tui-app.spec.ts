@@ -490,6 +490,25 @@ describe('TuiApp', () => {
     expect(test.exits).toEqual([0])
   })
 
+  it('restores the transcript to the main screen when an alternate-screen run exits', async () => {
+    const test = await bench({
+      afterPrompt(session, message) {
+        appendAnsweredTurn(session, message, 'RESTORED-TRANSCRIPT-MARKER')
+      },
+    }, { screen: 'alternate' })
+    test.terminal.feed('say the marker')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(test.terminal.output).toContain('RESTORED-TRANSCRIPT-MARKER') })
+    // Only the bytes the exit restore writes are under test.
+    test.terminal.output = ''
+    await test.app.stop(0)
+    expect(test.terminal.output).toContain('\x1b[?1049l')
+    const restored = plain(test.terminal.output)
+    expect(restored).toContain('say the marker')
+    expect(restored).toContain('RESTORED-TRANSCRIPT-MARKER')
+    expect(test.exits).toEqual([0])
+  })
+
   it('shows a modal picker as plain rows above the composer, without the transcript showing through', async () => {
     const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
     for (let index = 0; index < 3; index += 1) {

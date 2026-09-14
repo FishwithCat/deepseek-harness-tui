@@ -226,12 +226,15 @@ export class TuiApp implements InteractionHost {
     } else {
       // The transcript is the primary scroll view: the alternate-screen
       // renderer routes PageUp/PageDown and the wheel to it while the composer
-      // and the footer stay pinned below.
+      // and the footer stay pinned below. The transcript carries no explicit
+      // basis because the exit restore re-renders this layout without a height
+      // bound, where a zero basis would drop every transcript row; `shrink: 0`
+      // on the composer and footer keeps the transcript the entry that yields.
       const scroll = new ScrollView(this.transcriptView, { follow: 'end', primary: true, scrollbar: 'auto' })
       this.viewport.setLayoutRoot(new VStack([
-        { component: scroll, grow: 1, basis: 0 },
-        this.composer,
-        this.statusBar,
+        { component: scroll, grow: 1 },
+        { component: this.composer, shrink: 0 },
+        { component: this.statusBar, shrink: 0 },
       ]))
     }
     this.registerKeys()
