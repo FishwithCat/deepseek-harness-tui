@@ -602,6 +602,13 @@ describe('StatusBar', () => {
     expect(bar(base).render(60)[0]).not.toContain('plan')
   })
 
+  it('reports a clipboard read in flight beside the lifecycle state', () => {
+    const base: TuiStatus = { workspace: '~/Workspace/Nutkin', state: 'idle', model: 'deepseek-flash' }
+    expect(bar({ ...base, pasting: true }).render(60)[0]).toContain('○ idle  pasting image…')
+    expect(bar({ ...base, pasting: false }).render(60)[0]).not.toContain('pasting')
+    expect(bar(base).render(60)[0]).not.toContain('pasting')
+  })
+
   it('pins the token accounting and occupancy under the identity line', () => {
     const status = populated(131_072, 262_144, true)
     const [head, stats] = bar(status).render(80)

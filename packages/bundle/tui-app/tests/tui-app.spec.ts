@@ -1114,6 +1114,23 @@ describe('TuiApp image paste', () => {
     await test.app.stop(0)
   })
 
+  it('reports the clipboard wait in the footer until the image arrives', async () => {
+    const test = await bench(
+      { afterPrompt: () => {} },
+      { screen: 'alternate', attachments: true, modalities: ['text', 'image'] },
+    )
+    const pending = Promise.withResolvers<ClipboardImage | undefined>()
+    internals.readClipboardImage = () => pending.promise
+    test.terminal.feed('\x16')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('pasting image…'))).toBe(true)
+    })
+    pending.resolve(clipboardImage())
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+    expect(screen(test.app).some(row => row.includes('pasting image…'))).toBe(false)
+    await test.app.stop(0)
+  })
+
   it('submits an image-only prompt', async () => {
     const test = await bench({
       afterPrompt(session, message) { appendAnsweredTurn(session, message, 'a red square') },

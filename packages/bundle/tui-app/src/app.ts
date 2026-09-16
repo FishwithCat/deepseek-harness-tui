@@ -156,6 +156,8 @@ export class TuiApp implements InteractionHost {
   private promptChain: Promise<unknown> = Promise.resolve()
   /** Clipboard images the composer holds, by the marker number the draft shows. */
   private readonly pendingImages = new Map<number, PendingImage>()
+  /** Clipboard reads in flight; the footer reports their wait until the last one settles. */
+  private pasteReads = 0
   /** Whether this host's terminal claims Ctrl+V, so image paste belongs on Alt+V. */
   private readonly altPaste = reservesCtrlV(process.platform, process.env)
   /** Providers the deployment registered; more than one qualifies the footer's model label. */
@@ -431,19 +433,26 @@ export class TuiApp implements InteractionHost {
    *
    * The bytes stay in memory until the submission citing the marker admits them
    * to the durable attachment store, so a draft that never submits writes
-   * nothing.
+   * nothing. The read runs a platform program, so the footer reports the wait
+   * from the key press until the bytes arrive.
    */
   private async pasteClipboardImage(): Promise<void> {
-    const image = await internals.readClipboardImage()
-    if (this.stopped) return
-    if (image === undefined) {
-      this.notice('error', 'no image on the clipboard')
-      return
-    }
-    const index = Math.max(0, ...this.pendingImages.keys()) + 1
-    this.pendingImages.set(index, { ...image, index })
-    this.editor.insertTextAtCursor(`${imageMarker(index)} `)
+    this.pasteReads += 1
     this.refresh()
+    try {
+      const image = await internals.readClipboardImage()
+      if (this.stopped) return
+      if (image === undefined) {
+        this.notice('error', 'no image on the clipboard')
+        return
+      }
+      const index = Math.max(0, ...this.pendingImages.keys()) + 1
+      this.pendingImages.set(index, { ...image, index })
+      this.editor.insertTextAtCursor(`${imageMarker(index)} `)
+    } finally {
+      this.pasteReads -= 1
+      this.refresh()
+    }
   }
 
   /**
@@ -744,6 +753,7 @@ export class TuiApp implements InteractionHost {
       context: measured.context,
       stats: measured.stats,
       plan,
+      pasting: this.pasteReads > 0,
     }
     this.statusBar.set(status)
     this.composer.setHint(this.hints(plan !== undefined))

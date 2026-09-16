@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-11-tui-clipboard-image-paste.md
-2026-09-11-tui-clipboard-image-paste.md: 820908f59478da21cf174366cb32a458ac59d943
-2026-09-11-tui-clipboard-image-paste.zh.md: ee250f3899849179887ddf13bd45761103a827a0
+2026-09-11-tui-clipboard-image-paste.md: 86b50e1922f7d9258fe56691ddc77cf614ae564f
+2026-09-11-tui-clipboard-image-paste.zh.md: 4d2f53935c28f6b9f5088e2b34c90627b1aba611

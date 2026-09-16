@@ -65,14 +65,23 @@ describe('readClipboardImage', () => {
     const { run, calls } = fakeRunner(() => Buffer.from('ok\n'))
     const { options, readStaged } = stagedOptions({ platform: 'darwin', run }, path, IMAGE_BYTES)
     await expect(readClipboardImage(options)).resolves.toEqual({ data: IMAGE_BYTES, mediaType: 'image/png' })
-    const script = calls[0]!.args[1]!
-    expect(script).toContain('POSIX file "/tmp/dsh \\"clip\\"\\\\stage.png"')
-    expect(script).toContain('the clipboard as «class PNGf»')
+    expect(calls[0]!.command).toBe('osascript')
+    expect(calls[0]!.args.slice(0, 3)).toEqual(['-l', 'JavaScript', '-e'])
+    const script = calls[0]!.args[3]!
+    expect(script).toContain("NSPasteboard.generalPasteboard.dataForType('public.png')")
+    expect(script).toContain('writeToFileAtomically("/tmp/dsh \\"clip\\"\\\\stage.png", true)')
     expect(readStaged).toHaveBeenCalledWith(path)
   })
 
   it('reports no image when the macOS pasteboard holds none', async () => {
     const { run } = fakeRunner(() => Buffer.from('empty\n'))
+    const { options, readStaged } = stagedOptions({ platform: 'darwin', run }, '/tmp/staged.png', IMAGE_BYTES)
+    await expect(readClipboardImage(options)).resolves.toBeUndefined()
+    expect(readStaged).not.toHaveBeenCalled()
+  })
+
+  it('reports no image when the macOS script cannot write the staged file', async () => {
+    const { run } = fakeRunner(() => Buffer.from('failed\n'))
     const { options, readStaged } = stagedOptions({ platform: 'darwin', run }, '/tmp/staged.png', IMAGE_BYTES)
     await expect(readClipboardImage(options)).resolves.toBeUndefined()
     expect(readStaged).not.toHaveBeenCalled()

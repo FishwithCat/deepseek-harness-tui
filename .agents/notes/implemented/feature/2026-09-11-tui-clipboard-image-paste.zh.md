@@ -10,7 +10,7 @@ Status: implemented
 
 ## 决策
 
-**Ctrl+V 把系统剪贴板中的图片附到草稿上。** 应用调用平台自带的剪贴板读取器（`src/clipboard.ts`）：macOS 用 `osascript`，Windows 与 WSL 用经 PowerShell 调用的 `System.Windows.Forms.Clipboard`，Wayland 用 `wl-paste`，X11 用 `xclip`。读取器把字节暂存到系统临时目录下的一个临时文件，无论其中是否有图片，读取都会删除它。Windows 终端与 WSL 会把 Ctrl+V 分发给自身的粘贴，因此该界面在那里把同一动作绑定到 Alt+V——即参照 Agent 的 `app.clipboard.pasteImage` 默认值。读取器声明的媒体类型只是声明而非权威：准入会对照解码后的字节校验，因此标注错误的读取结果会以无效图片失败，而不会被持久化。
+**Ctrl+V 把系统剪贴板中的图片附到草稿上。** 应用调用平台自带的剪贴板读取器（`src/clipboard.ts`）：macOS 经 `osascript` 的 JavaScript 运行时读取 `NSPasteboard`（[延迟决策](../bug-fix/2026-09-16-tui-clipboard-paste-latency.zh.md)），Windows 与 WSL 用经 PowerShell 调用的 `System.Windows.Forms.Clipboard`，Wayland 用 `wl-paste`，X11 用 `xclip`。读取器把字节暂存到系统临时目录下的一个临时文件，无论其中是否有图片，读取都会删除它。Windows 终端与 WSL 会把 Ctrl+V 分发给自身的粘贴，因此该界面在那里把同一动作绑定到 Alt+V——即参照 Agent 的 `app.clipboard.pasteImage` 默认值。读取器声明的媒体类型只是声明而非权威：准入会对照解码后的字节校验，因此标注错误的读取结果会以无效图片失败，而不会被持久化。
 
 **输入框用文本标记引用每个已持有的图片。** Ctrl+V 通过编辑器的 `insertTextAtCursor` 在光标处插入 `[Image #1]`，这正是 pi-tui 为剪贴板图片标记记录的 API。标记就是可编辑的普通文本，因此移动或删除标记即移动或删除对应图片，而从未提交的草稿只在内存中持有字节。提交时会移除草稿仍持有的图片所对应的标记，并在草稿并未持有该图片时把标记原样保留为字面文本；输入框的标记永远不会作为提示文本到达模型。
 

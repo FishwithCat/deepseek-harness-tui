@@ -4,7 +4,8 @@
  * A terminal delivers pasted text through bracketed paste, but no terminal
  * protocol carries image bytes to a full-screen application, so the app asks
  * the platform's own clipboard reader and stages the result in a temporary
- * file. Each reader is a documented external program: `osascript` on macOS,
+ * file. Each reader is a documented external program: `osascript` running the
+ * JavaScript automation runtime reads `NSPasteboard` directly on macOS,
  * `System.Windows.Forms.Clipboard` through PowerShell on Windows and WSL,
  * `wl-paste` on Wayland, and `xclip` on X11. The declared media type is the
  * reader's, verified against the decoded bytes by the attachment service, so a
@@ -126,12 +127,12 @@ export const systemClipboard: Required<ClipboardReadOptions> = {
 }
 
 /**
- * Quote one path for an AppleScript string literal.
+ * Quote one path for a JavaScript string literal.
  * @param value - the path to embed.
  * @returns the quoted literal.
  */
-function appleScriptString(value: string): string {
-  return `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`
+function javaScriptString(value: string): string {
+  return JSON.stringify(value)
 }
 
 /**
@@ -179,7 +180,8 @@ async function offeredMediaTypes(
 }
 
 /**
- * Read the macOS pasteboard by asking AppleScript for its PNG representation.
+ * Read the macOS pasteboard PNG representation through `osascript`'s JavaScript
+ * runtime, which reaches `NSPasteboard` without AppleScript's data coercion.
  * @param run - command runner.
  * @param stagePath - creates the staging path the script writes.
  * @param readStaged - reads and deletes the staged file.
@@ -192,18 +194,11 @@ async function readDarwin(
 ): Promise<ClipboardImage | undefined> {
   const path = stagePath()
   const script = [
-    `set outFile to POSIX file ${appleScriptString(path)}`,
-    'try',
-    '  set pngData to the clipboard as «class PNGf»',
-    'on error',
-    '  return "empty"',
-    'end try',
-    'set outRef to open for access outFile with write permission',
-    'write pngData to outRef',
-    'close access outRef',
-    'return "ok"',
+    "ObjC.import('AppKit')",
+    "const data = $.NSPasteboard.generalPasteboard.dataForType('public.png')",
+    `if (data.isNil()) { 'empty' } else { data.writeToFileAtomically(${javaScriptString(path)}, true) ? 'ok' : 'failed' }`,
   ].join('\n')
-  const status = await run('osascript', ['-e', script], READ_TIMEOUT_MS)
+  const status = await run('osascript', ['-l', 'JavaScript', '-e', script], READ_TIMEOUT_MS)
   if (status?.toString('utf8').trim() !== 'ok') return undefined
   const data = await readStaged(path)
   return data === undefined ? undefined : { data, mediaType: 'image/png' }

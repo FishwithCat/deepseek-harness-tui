@@ -544,6 +544,8 @@ export interface TuiStatus {
    * absent when the deployment mounts no plan mode.
    */
   plan?: boolean | undefined
+  /** Whether a clipboard image read is in flight; the identity line reports the wait. */
+  pasting?: boolean | undefined
   /** Token accounting for the last provider call. */
   usage?: TokenUsage | undefined
   /** Context occupancy, absent until the meter reports both a pressure and a capacity. */
@@ -702,7 +704,8 @@ export class StatusBar implements Component {
   private headText(): string {
     const state = this.status.state === 'running' ? this.theme.accent('● running') : this.theme.dim('○ idle')
     const plan = this.status.plan === true ? `  ${this.theme.accent('plan')}` : ''
-    return `${this.theme.dim(this.status.workspace)}  ${state}${plan}`
+    const pasting = this.status.pasting === true ? `  ${this.theme.dim('pasting image…')}` : ''
+    return `${this.theme.dim(this.status.workspace)}  ${state}${plan}${pasting}`
   }
 
   private modelText(): string {
