@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write docs/subsystems/compaction.md
-compaction.md: fcf7b3aadf8bba54e4b908cb8af8fa5ba7aba34e
-compaction.zh.md: 6f43eba7472a422fb1f119397c4772bfa2bd85f9
+compaction.md: 612cd2e3546fb5a255b98438725cd2d1fb26d6cc
+compaction.zh.md: 93c90585e44740deee9a78acfc1013e12c1a8b4c

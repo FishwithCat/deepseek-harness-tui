@@ -305,6 +305,8 @@ const archive = async (): Promise<Uint8Array> =>
     inventory.apply({
       baseUrl,
       loader: tree,
+      // The plugin probes the optional `pluginPackages` service through `Context.get`.
+      get: () => undefined,
       deepseekLlmApiExtensions: {
         register: (field: string, contribution: { readonly prepare: Prepare }): void => {
           expect(field).toBe('dsh_plugin_packages')

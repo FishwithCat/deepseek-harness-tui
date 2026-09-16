@@ -28,6 +28,9 @@ describe('dsh SOURCE launcher (node --import tsx/esm)', () => {
     const result = await execa(process.execPath, ['--import', 'tsx/esm', dshSourceBin], {
       cwd: repoRoot,
       input: '',
+      // This fork defaults a bare `dsh` to its terminal profile; the empty value
+      // restores the upstream requirement this compatibility check covers.
+      env: { DSH_DEFAULT_PROFILE: '' },
       timeout: 25_000,
       killSignal: 'SIGKILL',
       reject: false,
