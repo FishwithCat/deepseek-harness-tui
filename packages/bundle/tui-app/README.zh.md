@@ -103,7 +103,7 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 
 ### 基于 base 的补丁面
 
-补丁叠加在 `dsh-base` 之上，不添加任何 host、HTTP 或浏览器行。它重述其他界面设置的编码 persona，插入启动 provider 与应用本身，并把 base 的面向模型的行保留在 host 平面：本界面是单会话的，其 Agent 进程级组合这些行，而非按会话组合。启动 provider（[`src/startup.ts`](src/startup.ts)）注入 `ctx.cmdlineArgs`（[`dsh-cmdline`](../../boot/cmdline/README.zh.md)），解析 `--resume`、`--provider` 与 `--model`，并提供 `tuiStartup`；应用行注入该服务，因此 `--help` 与被拒绝的调用完全不会挂载终端界面。
+补丁叠加在 `dsh-base` 之上，不添加任何 host、HTTP 或浏览器行。它重述其他界面设置的编码 persona，插入启动 provider 与应用本身，并把 base 的面向模型的行保留在 host 平面：本界面是单会话的，其 Agent 进程级组合这些行，而非按会话组合。启动 provider（[`src/startup.ts`](src/startup.ts)）注入 `ctx.cmdlineArgs`（[`dsh-cmdline`](../../boot/cmdline/README.zh.md)），解析 `--resume`、`--provider` 与 `--model`，并提供 `tuiStartup`；应用行注入该服务，因此 `--help` 与被拒绝的调用完全不会挂载终端界面。补丁还把 `session-log-deepseek` 设为 `enabled: false`，因此本 fork 让 Session 日志留在本机，而不会向官方 DeepSeek 请求附带上游的 `dsh_session_log` 后缀；需要该后缀的部署可通过 `--patch` 覆盖层或 profile 自带的 `cordis.patch.yml` 重新启用该行。
 
 ### 源码索引
 

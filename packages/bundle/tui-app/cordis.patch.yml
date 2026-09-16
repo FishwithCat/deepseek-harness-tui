@@ -9,6 +9,14 @@
     personaPrefix: >-
       You are a coding agent powered by the {{model}} model.
 
+# This fork keeps Session logs on the machine. The base row now contributes the
+# `dsh_session_log` request field by default, which sends a Session-log suffix
+# with official DeepSeek requests; patch it off here and re-enable per
+# deployment with a `--patch` overlay or the profile's own `cordis.patch.yml`.
+- id: session-log-deepseek
+  config:
+    enabled: false
+
 - insert:
     # Whole-log decode wall time and output tokens for the footer's throughput
     # figure (the sessionStats projection key); the projection registry itself

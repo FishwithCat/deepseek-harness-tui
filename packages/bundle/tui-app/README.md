@@ -103,7 +103,7 @@ Ctrl+V reads the system clipboard through the platform's own reader ([`src/clipb
 
 ### Patch surface over base
 
-The patch rides over `dsh-base` and adds no host, HTTP, or browser row. It restates the coding persona the other surfaces set, inserts the startup provider and the app, and leaves the base's model-facing rows in the host plane: this surface is single-session, so its Agent composes them process-wide instead of per session. The startup provider ([`src/startup.ts`](src/startup.ts)) injects `ctx.cmdlineArgs` ([`dsh-cmdline`](../../boot/cmdline/README.md)), parses `--resume`, `--provider`, and `--model`, and provides `tuiStartup`; the app row injects that service, so `--help` and a rejected invocation mount no terminal UI at all.
+The patch rides over `dsh-base` and adds no host, HTTP, or browser row. It restates the coding persona the other surfaces set, inserts the startup provider and the app, and leaves the base's model-facing rows in the host plane: this surface is single-session, so its Agent composes them process-wide instead of per session. The startup provider ([`src/startup.ts`](src/startup.ts)) injects `ctx.cmdlineArgs` ([`dsh-cmdline`](../../boot/cmdline/README.md)), parses `--resume`, `--provider`, and `--model`, and provides `tuiStartup`; the app row injects that service, so `--help` and a rejected invocation mount no terminal UI at all. The patch also sets `session-log-deepseek` to `enabled: false`, so this fork keeps Session logs on the machine instead of contributing the upstream `dsh_session_log` suffix to official DeepSeek requests; a deployment that wants that suffix re-enables the row through a `--patch` overlay or the profile's own `cordis.patch.yml`.
 
 ### Source map
 
