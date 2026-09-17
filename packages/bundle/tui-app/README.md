@@ -56,7 +56,7 @@ Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is 
 
 ### Commands
 
-A line beginning with `/` runs a command instead of reaching the model. The app owns the session commands below; every other registered command — `/compact`, `/goal`, `/plan`, and deployment-provided commands — is discovered from the command registry and dispatched against the live Agent.
+A line beginning with a known `/command` runs that command instead of reaching the model. Other slash text reaches the Agent unchanged: `/ponytail full` invokes an installed user-invocable skill through the shared skill loader, while unknown skill names remain ordinary text. App commands and registered commands take precedence over skills with the same name. The app owns the session commands below; every other registered command — `/compact`, `/goal`, `/plan`, and deployment-provided commands — is discovered from the command registry and dispatched against the live Agent.
 
 | Command | Effect |
 |---|---|

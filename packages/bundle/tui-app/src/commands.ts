@@ -6,11 +6,13 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { SelectItem } from '@earendil-works/pi-tui'
+import { CombinedAutocompleteProvider } from '@earendil-works/pi-tui'
+import type { AutocompleteProvider, SelectItem } from '@earendil-works/pi-tui'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandExecution } from '@deepseek-ai/dsh-commands'
 import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-commands'
+import type {} from '@deepseek-ai/dsh-skill'
 
 /** One local command the composer handles without the registry. */
 export interface LocalCommand {
@@ -22,7 +24,7 @@ export interface LocalCommand {
   takesInput: boolean
 }
 
-/** The commands this app owns; every other slash line goes to the registry. */
+/** App-owned commands take precedence over registry commands and skill gestures. */
 export const LOCAL_COMMANDS: readonly LocalCommand[] = [
   { name: 'help', description: 'List available commands', takesInput: false },
   { name: 'new', description: 'Start a new session', takesInput: false },
@@ -69,6 +71,37 @@ export function commandCatalog(ctx: Context, agent: Agent): SelectItem[] {
     })
   }
   return items
+}
+
+/**
+ * Complete leading slash names with commands taking precedence over user-invocable skills.
+ * @param ctx - context carrying the optional command and skill registries.
+ * @param agent - the Agent whose scoped catalogs apply.
+ * @param cwd - workspace used for skill discovery.
+ * @returns the editor provider; each request reads the current catalogs and honors cancellation.
+ */
+export function slashAutocomplete(ctx: Context, agent: Agent, cwd: string): AutocompleteProvider {
+  const completion = new CombinedAutocompleteProvider([], cwd)
+  return {
+    triggerCharacters: ['/'],
+    async getSuggestions(lines, cursorLine, cursorCol, options) {
+      const before = (lines[0] ?? '').slice(0, cursorCol)
+      if (cursorLine !== 0 || !/^\/[a-z0-9_-]*$/i.test(before)) return null
+      const prefix = before.slice(1).toLowerCase()
+      const commands = commandCatalog(ctx, agent).map(item => ({ ...item, name: item.value.slice(1) }))
+      const skills = await ctx.get('skills')?.list({ cwd, scope: agent, signal: options.signal }) ?? []
+      const seen = new Set<string>()
+      const candidates = [...commands, ...skills.filter(skill => skill.invocation.userInvocable)]
+        .filter((item) => {
+          if (seen.has(item.name) || !item.name.toLowerCase().startsWith(prefix)) return false
+          seen.add(item.name)
+          return true
+        })
+      return new CombinedAutocompleteProvider(candidates, cwd)
+        .getSuggestions(lines, cursorLine, cursorCol, { signal: options.signal })
+    },
+    applyCompletion: completion.applyCompletion.bind(completion),
+  }
 }
 
 /**

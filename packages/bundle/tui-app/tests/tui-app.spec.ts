@@ -20,12 +20,14 @@ import type { LlmModelInfo, LlmModelReasoningInfo, LlmResolvedModelInfo, ModelMo
 import type { FileDiff } from '@deepseek-ai/dsh-tools'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
 import SessionStore from '@deepseek-ai/dsh-session'
+import SkillRegistry from '@deepseek-ai/dsh-skill'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
+import CommandRuntime from '@deepseek-ai/dsh-commands'
 import UserApprovalService from '@deepseek-ai/dsh-user-approval'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import { TuiApp, internals, reservesCtrlV } from '../src/app.ts'
@@ -33,6 +35,7 @@ import type { ClipboardImage } from '../src/clipboard.ts'
 import { apply, inject, name, TUI_STARTUP_SERVICE } from '../src/index.ts'
 import type { Config } from '../src/config.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
+import { slashAutocomplete } from '../src/commands.ts'
 
 /** A two-by-two PNG; the mounted attachment store decodes and admits real bytes. */
 const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVQImWP4z8DwH4QZYAwAR8oH+Xm0fdIAAAAASUVORK5CYII='
@@ -274,6 +277,58 @@ function appendAnsweredTurn(session: Agent['session'], message: UserMessage, rep
 }
 
 describe('TuiApp', () => {
+  it.each(['inline', 'alternate'] as const)('suggests and completes a skill in the %s composer', async (screenMode) => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: screenMode })
+    await test.ctx.plugin(SkillRegistry)
+    test.ctx.skills.register({ name: 'ponytail', description: 'Keep code minimal', source: 'runtime', content: 'Use minimal code.' })
+    test.terminal.feed('/pon')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Keep code minimal') })
+    test.terminal.feed('\t')
+    expect(test.submitted).toHaveLength(0)
+    test.terminal.feed('full')
+    test.terminal.feed('\r')
+    expect(test.submitted[0]?.content).toEqual([{ type: 'text', text: '/ponytail full' }])
+    await test.app.stop(0)
+  })
+
+  it('dismisses slash suggestions without interrupting a running Agent', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    test.setRunning(true)
+    test.terminal.feed('/')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('List available commands') })
+    test.terminal.feed('\x1b')
+    expect(test.cancelled()).toBe(0)
+    test.terminal.feed('\x1b')
+    expect(test.cancelled()).toBe(1)
+    await test.app.stop(0)
+  })
+
+  it('refreshes slash candidates and gives commands precedence over user-invocable skills', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    await test.ctx.plugin(SkillRegistry)
+    for (const [name, userInvocable] of [['help', true], ['hidden', false], ['manual', true]] as const) {
+      test.ctx.skills.register({
+        name, description: `Skill ${name}`, content: name, source: 'runtime',
+        invocation: { userInvocable, modelInvocable: false },
+      })
+    }
+    const provider = slashAutocomplete(test.ctx, owned(test), process.cwd())
+    const options = { signal: new AbortController().signal }
+    const suggestions = await provider.getSuggestions(['/'], 0, 1, options)
+    expect(suggestions?.items.filter(item => item.value === 'help')).toEqual([
+      { value: 'help', label: 'help', description: 'List available commands' },
+    ])
+    expect(suggestions?.items.some(item => item.value === 'hidden')).toBe(false)
+    expect(suggestions?.items.some(item => item.value === 'manual')).toBe(true)
+    const dispose = test.ctx.skills.register({ name: 'fresh', description: 'New skill', content: '', source: 'runtime' })
+    expect((await provider.getSuggestions(['/fr'], 0, 3, options))?.items[0]?.value).toBe('fresh')
+    dispose()
+    expect(await provider.getSuggestions(['/fr'], 0, 3, options)).toBeNull()
+    expect(await provider.getSuggestions(['/tmp/file'], 0, 9, options)).toBeNull()
+    expect(await provider.getSuggestions(['/manual text'], 0, 12, options)).toBeNull()
+    await test.app.stop(0)
+  })
+
   it('submits a composer line to the Agent and renders the durable reply', async () => {
     const test = await bench({
       afterPrompt(session, message) {
@@ -287,15 +342,40 @@ describe('TuiApp', () => {
     await test.app.stop(0)
   })
 
-  it('lists commands for /help and reports an unknown command', async () => {
+  it('lists commands for /help without submitting a model prompt', async () => {
     const test = await bench({ afterPrompt: () => {} })
     test.terminal.feed('/help')
     test.terminal.feed('\r')
     await vi.waitFor(() => { expect(test.terminal.output).toContain('/quit') })
     expect(plain(test.terminal.output)).toContain('/effort')
-    test.terminal.feed('/definitely-not-a-command')
+    expect(test.submitted).toHaveLength(0)
+    await test.app.stop(0)
+  })
+
+  it.each([false, true])('passes unclaimed slash text to the Agent (running: %s)', async (running) => {
+    const test = await bench({ afterPrompt: () => {} })
+    test.setRunning(running)
+    for (const text of ['/ponytail full', '/definitely-not-a-command']) {
+      test.terminal.feed(text)
+      test.terminal.feed('\r')
+    }
+    expect((running ? test.steered : test.submitted).map(message => message.content)).toEqual([
+      [{ type: 'text', text: '/ponytail full' }],
+      [{ type: 'text', text: '/definitely-not-a-command' }],
+    ])
+    await test.app.stop(0)
+  })
+
+  it('dispatches a registered command before treating its name as a skill gesture', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    await test.ctx.plugin(CommandRuntime)
+    const handler = vi.fn(() => ({ kind: 'success' as const, text: 'command handled' }))
+    test.ctx.commands.register({ name: 'ponytail', description: 'A deployment command', handler })
+    test.terminal.feed('/ponytail full')
     test.terminal.feed('\r')
-    await vi.waitFor(() => { expect(test.terminal.output).toContain('unknown command') })
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('command handled') })
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(test.submitted).toHaveLength(0)
     await test.app.stop(0)
   })
 

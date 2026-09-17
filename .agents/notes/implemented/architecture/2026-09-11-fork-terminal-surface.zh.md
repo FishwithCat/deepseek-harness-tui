@@ -12,6 +12,8 @@ fork 还必须保持 rebase 成本低廉。任何改变现有界面组合方式�
 
 ## Decision
 
+**只有已知命令会接管斜杠输入。** 应用在派发前查询现有命令目录，因此本地命令和已注册命令优先于同名技能。其他斜杠行通过普通提示提交或 steering 发送。技能发现与指令注入仍由共享技能插件负责，终端不维护第二套技能解析器。输入框测试覆盖空闲时提交、运行中 steering 与命令优先级。
+
 **该界面是基于 `dsh-base` 的普通组合包。** `@deepseek-ai/dsh-tui-app` 不添加任何 host、HTTP 服务器、Web 运行时或浏览器行；它插入一个命令行 provider 与一个应用插件。`tui` profile 模板是 `['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app']`，patch 重载策略为 startup，与其他一旦启动就拥有工作的应用一致。`dsh-base` 本就因为「TUI 是单会话、进程级组合其 agent」而把面向模型的行保留在 host 平面，因此没有任何 base 行需要移动。profile 与组合包本身就是[profile 插件组合包决策](2026-08-05-profile-plugin-bundles.zh.md)给出的机制。
 
 **应用在同一进程内驱动一个 Agent。** 它先等待组合完成，再通过 `ctx.agents` 创建或恢复 Agent，并订阅持久的 `session/event` 日志、实时的 `agent/assistant-stream` 流与 `agent/status`。没有第二个进程、没有线协议，也没有需要保持同步的客户端会话副本。

@@ -12,6 +12,8 @@ The fork also has to stay cheap to rebase. Anything that changes how existing su
 
 ## Decision
 
+**Only known commands claim slash input.** The app checks its existing command catalog before dispatch, so local and registered commands take precedence over same-named skills. Every other slash line uses ordinary prompt submission or steering. Skill discovery and instruction injection remain owned by the shared skill plugins; the terminal does not maintain a second skill resolver. Composer tests cover idle submission, running-turn steering, and command precedence.
+
 **The surface is an ordinary bundle over `dsh-base`.** `@deepseek-ai/dsh-tui-app` adds no host, HTTP server, Web runtime, or browser row; it inserts a command-line provider and one app plugin. The `tui` profile template is `['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tui-app']` with startup patch reload, like the other applications that own work once they start. `dsh-base` already keeps its model-facing rows in the host plane precisely because "the TUI is single-session and composes its agent process-wide", so no base row had to move. Profiles and bundles themselves are the mechanism from [the profile-plugin-bundles decision](2026-08-05-profile-plugin-bundles.md).
 
 **The app drives one Agent in the same process.** It awaits the complete composition, creates or resumes the Agent through `ctx.agents`, and subscribes to the durable `session/event` log, the live `agent/assistant-stream` feed, and `agent/status`. There is no second process, no wire protocol, and no client-side session replica to keep in step.

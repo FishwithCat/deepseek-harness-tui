@@ -45,7 +45,7 @@ import type { TuiTheme } from './ansi.ts'
 import { readClipboardImage } from './clipboard.ts'
 import type { ClipboardImage } from './clipboard.ts'
 import type { Config } from './config.ts'
-import { commandCatalog, executeCommand, listEffortChoices, listModelChoices, parseCommand } from './commands.ts'
+import { commandCatalog, executeCommand, listEffortChoices, listModelChoices, parseCommand, slashAutocomplete } from './commands.ts'
 import { imageMarker, parseImageMarkers } from './images.ts'
 import { installApprovalAnswerer, installQuestionAnswerer } from './interactions.ts'
 import type { InteractionHost } from './interactions.ts'
@@ -275,6 +275,7 @@ export class TuiApp implements InteractionHost {
    */
   private attach(session: TuiSession): void {
     const owned = session.agent
+    this.editor.setAutocompleteProvider(slashAutocomplete(this.options.ctx, owned, this.options.cwd))
     this.sessionDisposers.push(this.options.ctx.on('session/event', (source: Session, event: SessionEvent) => {
       if (source !== session.session) return
       // Every appended event can move a footer fact, including the ones the
@@ -321,7 +322,7 @@ export class TuiApp implements InteractionHost {
         // A focused prompt owns Escape as its own cancel gesture, and the
         // alternate-screen viewport consumes it first while a transcript
         // search is open.
-        if (this.promptActive) return undefined
+        if (this.promptActive || this.editor.isShowingAutocomplete()) return undefined
         if (this.session.running) {
           this.interrupt()
           return { consume: true }
@@ -416,7 +417,7 @@ export class TuiApp implements InteractionHost {
    */
   private runLine(value: string): void {
     const parsed = parseCommand(value)
-    if (parsed !== undefined) {
+    if (parsed !== undefined && commandCatalog(this.options.ctx, this.agent).some(command => command.value === `/${parsed.name}`)) {
       void this.runCommand(parsed.name, parsed.input, value).catch((error: unknown) => {
         this.notice('error', error instanceof Error ? error.message : String(error))
       })
@@ -965,6 +966,7 @@ export class TuiApp implements InteractionHost {
   private teardown(): void {
     if (this.stopped) return
     this.stopped = true
+    this.editor.setText('')
     for (const dispose of this.disposers.splice(0)) dispose()
     for (const dispose of this.sessionDisposers.splice(0)) dispose()
     this.tui.stop()
