@@ -10,11 +10,14 @@ if (process.platform !== 'linux' && process.platform !== 'darwin') {
 }
 const variants = process.platform === 'linux' ? ['glibc', 'musl'] : [''];
 for (const variant of variants) {
-  const compiler = variant === 'musl' ? 'musl-gcc' : 'cc';
+  const compiler = process.platform === 'darwin' ? 'xcrun' : variant === 'musl' ? 'musl-gcc' : 'cc';
   const output = path.join(root, 'test/bin', variant, 'flock-oracle');
   fs.mkdirSync(path.dirname(output), { recursive: true });
   const args = ['-std=c11', '-O2', '-Wall', '-Wextra', '-Werror'];
-  if (process.platform === 'darwin') args.push('-mmacosx-version-min=11.0');
+  if (process.platform === 'darwin') {
+    args.unshift('--sdk', 'macosx', 'cc');
+    args.push('-mmacosx-version-min=11.0');
+  }
   if (variant === 'musl') args.push('-static');
   const result = spawnSync(compiler, [...args, path.join(root, 'test/fixtures/flock-oracle.c'), '-o', output], { stdio: 'inherit' });
   if (result.error) throw result.error;

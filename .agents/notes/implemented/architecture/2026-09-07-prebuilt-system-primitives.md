@@ -18,6 +18,8 @@ The [Session write-lease decision](../feature/2026-08-31-cross-process-session-w
 
 Source builds explicitly compile the host addon before repository tests and builds that need it. Native CI builds the complete platform payload and tests the same addon bytes across Node releases; Linux also exercises the musl payload in Alpine. Platform prepack rejects malformed or incomplete binaries, and an offline npm install rehearsal checks installed bytes and real lock behavior. Native [tests](../../../../native/system/test/flock.test.js) cover descriptor/process contention, close and crash release, independent errno values, and worker teardown.
 
+macOS addon and test-oracle builds invoke `xcrun --sdk macosx cc` so the selected developer toolchain and SDK agree. Bare `cc` can combine an Xcode linker with a newer Command Line Tools SDK whose text stubs it cannot read. SDK selection belongs to each build invocation rather than a global `xcode-select` change.
+
 ## Alternatives considered
 
 **Keep NAN and publish one build per Node ABI.** This retains a Node-major build matrix for a binding that needs only stable Node-API operations. The evaluated `fs-ext-extra-prebuilt@2.2.14` selected a Node 25 ABI 141 binary under Node 26 ABI 147; its default-install fallback also exited without building when NAN was hoisted.

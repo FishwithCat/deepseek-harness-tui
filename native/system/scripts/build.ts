@@ -62,6 +62,8 @@ for (const name of readdirSync(join(root, 'packages')).sort()) {
       flags = ['-std=c11', '-O2', '-Wall', '-Wextra', '-Werror', '-fPIC', '-fvisibility=hidden', '-DNAPI_VERSION=8', '-I', headers]
       if (process.platform === 'darwin') {
         if (binary.libc !== undefined) throw new Error('build: macOS flock does not select a Linux libc')
+        compiler = 'xcrun'
+        flags.unshift('--sdk', 'macosx', 'cc')
         flags.push('-bundle', '-undefined', 'dynamic_lookup', '-mmacosx-version-min=11.0')
       } else {
         if (binary.libc !== 'glibc' && binary.libc !== 'musl') {

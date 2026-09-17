@@ -18,6 +18,8 @@ JSONL 写入方依赖的 `fs-ext` 在用户安装时编译 NAN addon。因此，
 
 源码构建在需要 addon 的仓库测试与构建之前显式编译当前宿主 addon。Native CI 构建完整平台产物，并让相同 addon 字节跨 Node 版本测试；Linux 还在 Alpine 中执行 musl 产物。平台 prepack 拒绝格式错误或不完整的二进制，离线 npm 安装演练检查安装字节与真实锁行为。Native [测试](../../../../native/system/test/flock.test.js) 覆盖描述符与进程竞争、关闭和崩溃释放、独立 errno 值及 worker 清理。
 
+macOS addon 与独立测试程序通过 `xcrun --sdk macosx cc` 构建，以使所选开发工具链与 SDK 配套。直接调用 `cc` 可能将 Xcode 链接器与更新的 Command Line Tools SDK 混用，导致链接器无法读取 SDK 的文本桩文件。SDK 由每次构建调用选择，无需全局修改 `xcode-select`。
+
 ## Alternatives considered
 
 **保留 NAN，为每个 Node ABI 发布构建。** 这会为仅需稳定 Node-API 操作的绑定保留 Node 主版本构建矩阵。已评估的 `fs-ext-extra-prebuilt@2.2.14` 在 Node 26 ABI147 下选中 Node 25 ABI141 二进制；默认安装回退还会在 NAN 被提升安装时提前退出而不编译。
