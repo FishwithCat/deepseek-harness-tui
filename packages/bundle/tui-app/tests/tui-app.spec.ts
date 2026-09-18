@@ -18,6 +18,7 @@ import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createAssistantMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { LlmModelInfo, LlmModelReasoningInfo, LlmResolvedModelInfo, ModelModality, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { FileDiff } from '@deepseek-ai/dsh-tools'
+import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
@@ -160,6 +161,8 @@ async function bench(
     planMode?: boolean
     questions?: boolean
     tools?: boolean
+    /** Mount a session-persistence service so exit names a resumable session. */
+    persistence?: boolean
     models?: readonly LlmModelInfo[]
     modalities?: readonly ModelModality[]
     reasoning?: LlmModelReasoningInfo
@@ -228,6 +231,9 @@ async function bench(
     resume: () => Promise.reject(new Error('not used')),
   })
   ctx.provide('appExit', (code: number) => { exits.push(code) })
+  // Only the service's presence is under test here; the exit hint never calls
+  // the backend, and the scripted Agent stores no events through it.
+  if (options.persistence === true) ctx.provide('sessionPersistence', {} as SessionPersistence)
   const terminal = new FakeTerminal()
   internals.isInteractive = () => true
   internals.createTerminal = () => terminal
@@ -587,6 +593,53 @@ describe('TuiApp', () => {
     expect(restored).toContain('say the marker')
     expect(restored).toContain('RESTORED-TRANSCRIPT-MARKER')
     expect(test.exits).toEqual([0])
+  })
+
+  it('prints the resume command for the session it leaves', async () => {
+    const writes: string[] = []
+    internals.stderr = { write: (chunk: string) => { writes.push(chunk); return true } }
+    const test = await bench({
+      afterPrompt(session, message) { appendAnsweredTurn(session, message, 'ok') },
+    }, { persistence: true })
+    const id = owned(test).session.id
+    test.terminal.feed('hello')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('ok') })
+
+    await test.app.stop(0)
+    expect(writes.join('')).toBe(`To resume this session:\n  dsh --resume ${id}\n`)
+    expect(test.exits).toEqual([0])
+  })
+
+  it('names the replacement session after /new replaces the exiting one', async () => {
+    const writes: string[] = []
+    internals.stderr = { write: (chunk: string) => { writes.push(chunk); return true } }
+    const test = await bench({ afterPrompt: () => {} }, { persistence: true })
+    const first = owned(test).session.id
+    test.terminal.feed('/new')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('started a new session') })
+    // The scripted factory's dispose does not unregister the old Agent, so read
+    // the live session from the app rather than the registry.
+    const replacement = (test.app as unknown as { session: { session: { id: string } } }).session.session.id
+    expect(replacement).not.toBe(first)
+
+    await test.app.stop(0)
+    expect(writes.join('')).toBe(`To resume this session:\n  dsh --resume ${replacement}\n`)
+  })
+
+  it('omits the resume command when the deployment stores no sessions', async () => {
+    const writes: string[] = []
+    internals.stderr = { write: (chunk: string) => { writes.push(chunk); return true } }
+    const test = await bench({
+      afterPrompt(session, message) { appendAnsweredTurn(session, message, 'ok') },
+    })
+    test.terminal.feed('hello')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('ok') })
+
+    await test.app.stop(0)
+    expect(writes).toEqual([])
   })
 
   it('shows a modal picker as plain rows above the composer, without the transcript showing through', async () => {

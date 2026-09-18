@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-18-tui-exit-resume-hint.md
+2026-09-18-tui-exit-resume-hint.md: 3139294bbdbfd8af2a338ef430218e2a596956f1
+2026-09-18-tui-exit-resume-hint.zh.md: 8195f2a91b1b41ace552de5e93c7b15f7699420a

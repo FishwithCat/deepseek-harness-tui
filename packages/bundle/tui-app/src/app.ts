@@ -98,7 +98,7 @@ export const internals: {
   isInteractive: () => boolean
   /** Read one image from the system clipboard, or undefined when it holds none. */
   readClipboardImage: () => Promise<ClipboardImage | undefined>
-  /** Sink for boot failures the app cannot report through the UI. */
+  /** Sink for boot failures and the exit resume hint, neither of which the terminal surface can show. */
   stderr: { write(chunk: string): unknown }
 } = {
   createTerminal: () => new ProcessTerminal(),
@@ -134,6 +134,16 @@ export interface TuiAppOptions {
  */
 function isTeardown(error: unknown): boolean {
   return error instanceof Error && (error.name === 'AbortError' || error.message.includes('disposed'))
+}
+
+/**
+ * The instruction the surface prints once it has restored the terminal, so the
+ * user can return to the session they just left.
+ * @param sessionId - the durable session id.
+ * @returns the heading and the resume command, each on its own line.
+ */
+function resumeHint(sessionId: string): string {
+  return `To resume this session:\n  dsh --resume ${sessionId}\n`
 }
 
 /** The interactive application. */
@@ -255,12 +265,19 @@ export class TuiApp implements InteractionHost {
     if (this.leaving) return
     this.leaving = true
     this.teardown()
+    // The hint is honest only where a backend will store the session the
+    // command names; without one there is nothing for `--resume` to open.
+    const resumable = this.options.ctx.get('sessionPersistence') !== undefined
+    const sessionId = String(this.session.session.id)
     try {
       await this.session.flush()
     } catch (error) {
       if (!isTeardown(error)) throw error
     }
     await this.session.dispose()
+    // The flush materializes the session even when it holds no event yet, so
+    // the hint follows it and precedes the bounded process exit.
+    if (resumable) internals.stderr.write(resumeHint(sessionId))
     this.options.exit(code)
   }
 
