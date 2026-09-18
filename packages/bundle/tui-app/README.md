@@ -54,7 +54,7 @@ Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is 
 | `Left` / `Right` | Move a picker's selection while a question's detail owns the arrows |
 | `Ctrl+L` | Repaint from scratch |
 
-Exiting — Ctrl+C with nothing running, Ctrl+D, or `/quit` — restores the terminal and prints the session id as a `dsh --resume <session-id>` command, so a later invocation continues the same conversation. The hint is printed only where the deployment mounts a session-persistence backend; without one there is nothing for `--resume` to open.
+Exiting — Ctrl+C with nothing running, Ctrl+D, or `/quit` — restores the terminal and prints the session id as a `dsh --resume <session-id>` command, so a later invocation continues the same conversation. Resuming — that command at startup, or `/resume` in the composer — restores the stored conversation into the transcript before the composer accepts the next prompt, so the earlier prompts, replies, and Tool rows are back on screen instead of only their effects on the model. The hint is printed only where the deployment mounts a session-persistence backend; without one there is nothing for `--resume` to open.
 
 ### Commands
 
@@ -89,7 +89,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The app owns one `TuiSession` and one terminal UI. It waits for the complete composition (`ctx.get('loader')?.await()`) so the Agent's scoped tools and adapters are mounted, creates or resumes the Agent through the core registry, and then subscribes to the durable `session/event` log, the live `agent/assistant-stream` feed, and `agent/status`.
+The app owns one `TuiSession` and one terminal UI. It waits for the complete composition (`ctx.get('loader')?.await()`) so the Agent's scoped tools and adapters are mounted, creates or resumes the Agent through the core registry, and then subscribes to the durable `session/event` log, the live `agent/assistant-stream` feed, and `agent/status`. A resumed session's earlier events predate those subscriptions, so the app reads them back from the persistence backend through [`TuiSession.history()`](src/session.ts) — stopping at the Session's first live sequence so an event appended after resume is not folded twice — and folds them into the transcript before accepting input; an event that lands while that read is in flight is buffered and applied after the stored rows, keeping log order.
 
 ### Rendering
 
@@ -114,7 +114,7 @@ The patch rides over `dsh-base` and adds no host, HTTP, or browser row. It resta
 | [`src/index.ts`](src/index.ts) | The `tui-app` plugin: launcher facts, boot, and failure exit |
 | [`src/startup.ts`](src/startup.ts) | The `tui-startup` provider: flag family and `--help` |
 | [`src/app.ts`](src/app.ts) | Surface construction, event wiring, input routing, teardown |
-| [`src/session.ts`](src/session.ts) | Agent create/resume, prompt submission, route switching |
+| [`src/session.ts`](src/session.ts) | Agent create/resume, stored-history read, prompt submission, route switching |
 | [`src/transcript.ts`](src/transcript.ts) | The event fold into renderable rows |
 | [`src/diff.ts`](src/diff.ts) | The pure file-diff row model |
 | [`src/tool-view.ts`](src/tool-view.ts) | The Host tool-presentation bridge |

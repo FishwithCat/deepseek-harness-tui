@@ -54,7 +54,7 @@ dsh
 | `←` / `→` | 当问题详情占用方向键时移动选择器的选中项 |
 | `Ctrl+L` | 全量重绘 |
 
-退出时——无运行时按 Ctrl+C、按 Ctrl+D，或执行 `/quit`——应用会恢复终端，并把会话 id 以 `dsh --resume <session-id>` 命令的形式打印出来，以便之后的调用继续同一段对话。仅当部署挂载了会话持久化后端时才会打印该提示；没有后端时 `--resume` 无可打开的对象。
+退出时——无运行时按 Ctrl+C、按 Ctrl+D，或执行 `/quit`——应用会恢复终端，并把会话 id 以 `dsh --resume <session-id>` 命令的形式打印出来，以便之后的调用继续同一段对话。恢复时——启动时执行该命令，或在输入框执行 `/resume`——应用会把已存储的对话恢复到对话记录中，然后才接受下一条提示，因此此前的提示、回复与工具行都会重新出现在屏幕上，而不只是留在模型上下文中。仅当部署挂载了会话持久化后端时才会打印该提示；没有后端时 `--resume` 无可打开的对象。
 
 ### 命令
 
@@ -89,7 +89,7 @@ dsh
 <details>
 <summary>实现细节——点击展开</summary>
 
-应用拥有一个 `TuiSession` 与一个终端界面。它先等待组合完成（`ctx.get('loader')?.await()`），以确保 Agent 的 scoped 工具与适配器已挂载，再通过核心注册表创建或恢复 Agent，然后订阅持久的 `session/event` 日志、实时的 `agent/assistant-stream` 流与 `agent/status`。
+应用拥有一个 `TuiSession` 与一个终端界面。它先等待组合完成（`ctx.get('loader')?.await()`），以确保 Agent 的 scoped 工具与适配器已挂载，再通过核心注册表创建或恢复 Agent，然后订阅持久的 `session/event` 日志、实时的 `agent/assistant-stream` 流与 `agent/status`。恢复会话中较早的事件早于这些订阅，因此应用会通过 [`TuiSession.history()`](src/session.ts) 从持久化后端读回它们——读到 Session 的首个实时序列号为止，避免恢复后追加的事件被折叠两次——并在接受输入前将其折叠进对话记录；若读取期间有新事件到达，会先缓冲，待已存储行折叠完后再应用，从而保持日志顺序。
 
 ### 渲染
 
@@ -114,7 +114,7 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 | [`src/index.ts`](src/index.ts) | `tui-app` 插件：启动器事实、启动与失败退出 |
 | [`src/startup.ts`](src/startup.ts) | `tui-startup` provider：参数族与 `--help` |
 | [`src/app.ts`](src/app.ts) | 界面构建、事件接线、输入路由与收尾 |
-| [`src/session.ts`](src/session.ts) | Agent 创建／恢复、提示提交、路由切换 |
+| [`src/session.ts`](src/session.ts) | Agent 创建／恢复、历史读取、提示提交、路由切换 |
 | [`src/transcript.ts`](src/transcript.ts) | 把事件折叠为可渲染行 |
 | [`src/diff.ts`](src/diff.ts) | 纯文件 diff 行模型 |
 | [`src/tool-view.ts`](src/tool-view.ts) | Host 工具呈现桥接层 |

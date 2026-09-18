@@ -222,15 +222,15 @@ export class TuiApp implements InteractionHost {
       ? await TuiSession.create(options.ctx, sessionOptions)
       : await TuiSession.resume(options.ctx, options.invocation.resume, sessionOptions)
     const app = new TuiApp(options, session, internals.createTerminal())
-    app.mount()
+    await app.mount()
     return app
   }
 
   /**
    * Build the surface, subscribe to the session, and start the terminal UI.
    */
-  mount(): void {
-    this.attach(this.session)
+  async mount(): Promise<void> {
+    await this.attach(this.session)
     if (this.viewport === undefined) {
       this.tui.addChild(this.transcriptView)
       this.tui.addChild(this.composer)
@@ -287,14 +287,25 @@ export class TuiApp implements InteractionHost {
   }
 
   /**
-   * Subscribe to the session's durable events, live stream, and status.
+   * Subscribe to the session's durable events, live stream, and status, and
+   * fold the stored history a resumed session already holds.
    * @param session - the session to observe.
    */
-  private attach(session: TuiSession): void {
+  private async attach(session: TuiSession): Promise<void> {
     const owned = session.agent
     this.editor.setAutocompleteProvider(slashAutocomplete(this.options.ctx, owned, this.options.cwd))
+    // A resumed session's earlier events are not re-published on the live
+    // stream, so they are folded from stored history. An event that lands
+    // while that read is in flight is buffered and applied after it, keeping
+    // log order; a fresh session has no history and applies events directly.
+    let loading = session.session.firstLiveSeq > 0
+    const buffered: SessionEvent[] = []
     this.sessionDisposers.push(this.options.ctx.on('session/event', (source: Session, event: SessionEvent) => {
       if (source !== session.session) return
+      if (loading) {
+        buffered.push(event)
+        return
+      }
       // Every appended event can move a footer fact, including the ones the
       // transcript does not show.
       this.transcript.applyEvent(event)
@@ -309,6 +320,17 @@ export class TuiApp implements InteractionHost {
     }))
     this.sessionDisposers.push(installApprovalAnswerer(this.options.ctx, this, owned))
     this.sessionDisposers.push(installQuestionAnswerer(this.options.ctx, this, owned))
+    if (!loading) return
+    try {
+      for (const event of await session.history()) this.transcript.applyEvent(event)
+    } catch (error) {
+      this.notice('error', `could not restore the session history: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      loading = false
+      for (const event of buffered) this.transcript.applyEvent(event)
+      buffered.length = 0
+      this.refresh()
+    }
   }
 
   /** Install the global key bindings; the viewport owns scrolling keys. */
@@ -750,7 +772,7 @@ export class TuiApp implements InteractionHost {
     await previous.dispose()
     this.transcript.reset()
     this.session = await open()
-    this.attach(this.session)
+    await this.attach(this.session)
     this.refresh()
   }
 

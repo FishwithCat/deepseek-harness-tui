@@ -14,7 +14,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 
 /** Invocation facts and route overrides for a session this app opens. */
 export interface TuiSessionOptions {
@@ -100,6 +100,26 @@ export class TuiSession {
   /** The route in force for the next step. */
   get route(): ModelSelection {
     return this.selection.current ?? { provider: '', model: '' }
+  }
+
+  /**
+   * The stored events that seeded this session at resume, oldest first. The
+   * read stops at the Session's first live sequence, so events appended after
+   * resume stay with the live `session/event` stream instead of being folded
+   * twice.
+   * @returns the seed events in sequence order; empty when the deployment mounts no persistence backend.
+   * @throws when the backend refuses to open or read the stored session.
+   */
+  async history(): Promise<readonly SessionEvent[]> {
+    const persistence = this.ctx.get('sessionPersistence')
+    /* v8 ignore next -- a seeded Session exists only on the resume path, which requires a persistence backend */
+    if (persistence === undefined) return []
+    const handle = await persistence.open(this.session.id, 'read')
+    try {
+      return (await handle.read(0, this.session.firstLiveSeq)).events
+    } finally {
+      await handle.close()
+    }
   }
 
   /** Whether the Agent currently has work in flight. */

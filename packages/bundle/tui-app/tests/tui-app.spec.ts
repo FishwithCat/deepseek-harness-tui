@@ -9,18 +9,19 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
 import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
 import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
-import { createAssistantMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { LlmModelInfo, LlmModelReasoningInfo, LlmResolvedModelInfo, ModelModality, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { FileDiff } from '@deepseek-ai/dsh-tools'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
-import SessionStore from '@deepseek-ai/dsh-session'
+import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
@@ -163,6 +164,15 @@ async function bench(
     tools?: boolean
     /** Mount a session-persistence service so exit names a resumable session. */
     persistence?: boolean
+    /** Mount a persistence backend holding this one stored session, readable by `--resume` and `/resume`. */
+    stored?: {
+      sessionId: string
+      history: readonly SessionEvent[]
+      /** Runs inside the history read, to land a live event while the transcript is still loading. */
+      whileReading?: (session: Session) => void
+    }
+    /** Resume this stored session at boot. */
+    resume?: string
     models?: readonly LlmModelInfo[]
     modalities?: readonly ModelModality[]
     reasoning?: LlmModelReasoningInfo
@@ -200,40 +210,71 @@ async function bench(
   const submitted: UserMessage[] = []
   const steered: UserMessage[] = []
   const observed = { cancelled: 0, running: false }
+  const publishAgent = async (
+    ownerCtx: Context,
+    session: Session,
+    request: Pick<CreateAgentOptions, 'agentOptions' | 'setup'>,
+  ): Promise<AgentHandle> => {
+    const inbox = createInboxStub()
+    let idle = Promise.resolve()
+    const agent: Agent = {
+      id: session.id,
+      options: request.agentOptions ?? {},
+      session,
+      inbox,
+      get status() { return observed.running ? 'running' : 'idle' },
+      ctx: ownerCtx,
+      cancel: () => { observed.cancelled += 1 },
+      runMaintenance: () => Promise.reject(new Error('not used')),
+      send: () => {},
+      followup: (message: UserMessage) => {
+        submitted.push(message)
+        agent.inbox.append('next-turn', message)
+        idle = Promise.resolve().then(() => script.afterPrompt(session, message))
+      },
+      steer: (message: UserMessage) => { steered.push(message) },
+      inject: () => {},
+      whenIdle: () => idle,
+    }
+    await request.setup?.(ownerCtx, agent)
+    ctx.agents.register(agent)
+    return { agent, dispose: () => Promise.resolve() }
+  }
   ctx.agents.setFactory({
     async createAgent(ownerCtx: Context, createOptions: CreateAgentOptions): Promise<AgentHandle> {
-      const session = ctx.sessions.create(createOptions.sessionId)
-      const inbox = createInboxStub()
-      let idle = Promise.resolve()
-      const agent: Agent = {
-        id: session.id,
-        options: createOptions.agentOptions ?? {},
-        session,
-        inbox,
-        get status() { return observed.running ? 'running' : 'idle' },
-        ctx: ownerCtx,
-        cancel: () => { observed.cancelled += 1 },
-        runMaintenance: () => Promise.reject(new Error('not used')),
-        send: () => {},
-        followup: (message: UserMessage) => {
-          submitted.push(message)
-          agent.inbox.append('next-turn', message)
-          idle = Promise.resolve().then(() => script.afterPrompt(session, message))
-        },
-        steer: (message: UserMessage) => { steered.push(message) },
-        inject: () => {},
-        whenIdle: () => idle,
-      }
-      await createOptions.setup?.(ownerCtx, agent)
-      ctx.agents.register(agent)
-      return { agent, dispose: () => Promise.resolve() }
+      return await publishAgent(ownerCtx, ctx.sessions.create(createOptions.sessionId), createOptions)
     },
-    resume: () => Promise.reject(new Error('not used')),
+    async resume(ownerCtx: Context, resumeOptions: ResumeAgentOptions): Promise<AgentHandle> {
+      const session = ctx.sessions.create(resumeOptions.resumeSessionId, {
+        seed: structuredClone([...(options.stored?.history ?? [])]),
+      })
+      return await publishAgent(ownerCtx, session, resumeOptions)
+    },
   })
   ctx.provide('appExit', (code: number) => { exits.push(code) })
-  // Only the service's presence is under test here; the exit hint never calls
-  // the backend, and the scripted Agent stores no events through it.
-  if (options.persistence === true) ctx.provide('sessionPersistence', {} as SessionPersistence)
+  // Only the service's presence is under test for the exit hint; a `stored`
+  // fixture additionally serves the read a resumed boot folds into the transcript.
+  if (options.stored !== undefined) {
+    const stored = options.stored
+    ctx.provide('sessionPersistence', {
+      async open(id: string) {
+        if (id !== stored.sessionId) throw new Error(`no stored session ${id}`)
+        return {
+          async read(offset = 0, length?: number) {
+            const live = ctx.sessions.get(SessionId(stored.sessionId))
+            if (live !== undefined) stored.whileReading?.(live)
+            return {
+              eventState: 'shared-frozen' as const,
+              events: stored.history.slice(offset, length === undefined ? undefined : offset + length),
+            }
+          },
+          close: () => Promise.resolve(),
+        }
+      },
+    } as unknown as SessionPersistence)
+  } else if (options.persistence === true) {
+    ctx.provide('sessionPersistence', {} as SessionPersistence)
+  }
   const terminal = new FakeTerminal()
   internals.isInteractive = () => true
   internals.createTerminal = () => terminal
@@ -241,7 +282,7 @@ async function bench(
     ctx,
     config: { screen: options.screen ?? 'inline', colorScheme: 'auto' },
     cwd: process.cwd(),
-    invocation: {},
+    invocation: options.resume === undefined ? {} : { resume: options.resume },
     exit: (code: number) => { exits.push(code) },
   })
   return {
@@ -280,6 +321,21 @@ function appendAnsweredTurn(session: Agent['session'], message: UserMessage, rep
   }, { surfaceOp: 'append' })
   session.append('step/end', { turn, step: 1 })
   session.append('turn/end', { turn, reason: { kind: 'completed' } })
+}
+
+/**
+ * The durable events of one stored answered turn, as a resumed Session seeds them.
+ * @param prompt - the stored prompt text.
+ * @param reply - the stored reply text.
+ * @returns the events in sequence order.
+ */
+function storedTurn(prompt: string, reply: string): SessionEvent[] {
+  const session = Session.create(SessionId('stored-history'))
+  appendAnsweredTurn(session, createUserMessage({
+    content: [{ type: 'text', text: prompt }],
+    source: { kind: 'user' },
+  }), reply)
+  return [...session.ownEvents()]
 }
 
 describe('TuiApp', () => {
@@ -640,6 +696,71 @@ describe('TuiApp', () => {
 
     await test.app.stop(0)
     expect(writes).toEqual([])
+  })
+
+  it('restores the stored conversation when booting with --resume', async () => {
+    internals.stderr = { write: () => true }
+    const history = storedTurn('what changed?', 'the parser now accepts it')
+    const test = await bench({ afterPrompt: () => {} }, {
+      resume: 'session-1',
+      stored: { sessionId: 'session-1', history },
+    })
+    const rendered = plain(test.terminal.output)
+    expect(rendered).toContain('what changed?')
+    expect(rendered).toContain('the parser now accepts it')
+    await test.app.stop(0)
+  })
+
+  it('restores the stored conversation when /resume replaces the live session', async () => {
+    internals.stderr = { write: () => true }
+    const history = storedTurn('earlier prompt', 'earlier reply')
+    const test = await bench({ afterPrompt: () => {} }, {
+      stored: { sessionId: 'session-1', history },
+    })
+    expect(plain(test.terminal.output)).not.toContain('earlier prompt')
+    test.terminal.feed('/resume session-1')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('resumed session-1') })
+    const rendered = plain(test.terminal.output)
+    expect(rendered.indexOf('earlier prompt')).toBeGreaterThanOrEqual(0)
+    expect(rendered.indexOf('resumed session-1')).toBeGreaterThan(rendered.indexOf('earlier prompt'))
+    await test.app.stop(0)
+  })
+
+  it('keeps a live event that lands while the resumed history is loading', async () => {
+    internals.stderr = { write: () => true }
+    const history = storedTurn('stored prompt', 'stored reply')
+    const test = await bench({ afterPrompt: () => {} }, {
+      resume: 'session-1',
+      stored: {
+        sessionId: 'session-1',
+        history,
+        whileReading: (session) => {
+          session.append('user/message', createUserMessage({
+            content: [{ type: 'text', text: 'live during restore' }],
+            source: { kind: 'user' },
+          }), { surfaceOp: 'append' })
+        },
+      },
+    })
+    const rendered = plain(test.terminal.output)
+    expect(rendered).toContain('stored prompt')
+    expect(rendered).toContain('live during restore')
+    expect(rendered.indexOf('stored prompt')).toBeLessThan(rendered.indexOf('live during restore'))
+    await test.app.stop(0)
+  })
+
+  it('reports a resumed history the backend cannot read', async () => {
+    internals.stderr = { write: () => true }
+    const test = await bench({ afterPrompt: () => {} }, {
+      stored: { sessionId: 'session-1', history: storedTurn('stored prompt', 'stored reply') },
+    })
+    test.terminal.feed('/resume missing-session')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('could not restore the session history')
+    })
+    await test.app.stop(0)
   })
 
   it('shows a modal picker as plain rows above the composer, without the transcript showing through', async () => {
