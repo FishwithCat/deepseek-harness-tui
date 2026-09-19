@@ -33,6 +33,7 @@ import CommandRuntime from '@deepseek-ai/dsh-commands'
 import UserApprovalService from '@deepseek-ai/dsh-user-approval'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import { TuiApp, internals, reservesCtrlV } from '../src/app.ts'
+import { copyClipboardText } from '../src/clipboard.ts'
 import type { ClipboardImage } from '../src/clipboard.ts'
 import { apply, inject, name, TUI_STARTUP_SERVICE } from '../src/index.ts'
 import type { Config } from '../src/config.ts'
@@ -278,6 +279,7 @@ async function bench(
   const terminal = new FakeTerminal()
   internals.isInteractive = () => true
   internals.createTerminal = () => terminal
+  internals.copyClipboardText = (text, write) => copyClipboardText(text, write, { platform: 'linux', env: {} })
   const app = await TuiApp.boot({
     ctx,
     config: { screen: options.screen ?? 'inline', colorScheme: 'auto' },
@@ -630,6 +632,43 @@ describe('TuiApp', () => {
     expect(test.terminal.output).toContain('\x1b[?1049h')
     await test.app.stop(0)
     expect(test.exits).toEqual([0])
+  })
+
+  it.each([true, false])('reports native clipboard success=%s after mouse selection', async (success) => {
+    const copy = vi.fn(async () => success)
+    const test = await bench({
+      afterPrompt(session, message) {
+        appendAnsweredTurn(session, message, 'COPY-MARKER')
+      },
+    }, { screen: 'alternate' })
+    internals.copyClipboardText = copy
+    test.terminal.feed('reply')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('COPY-MARKER'))).toBe(true) })
+    const rows = screen(test.app)
+    const y = rows.findIndex(row => row.includes('COPY-MARKER')) + 1
+    const x = rows[y - 1]!.indexOf('COPY-MARKER') + 1
+    test.terminal.feed(`\x1b[<0;${x};${y}M`)
+    test.terminal.feed(`\x1b[<32;${x + 10};${y}M`)
+    test.terminal.feed(`\x1b[<0;${x + 10};${y}m`)
+    expect(copy).toHaveBeenCalledWith('COPY-MARKER', expect.any(Function))
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain(success ? 'Copied!' : 'Copy failed') })
+    expect(test.terminal.output).not.toContain('\x1b]52;')
+    copy.mockClear()
+    test.terminal.feed('\x1b[99;9u')
+    expect(copy).toHaveBeenCalledTimes(1)
+    test.terminal.feed('\x1b[99;9:3u')
+    expect(copy).toHaveBeenCalledTimes(1)
+    expect(test.exits).toEqual([])
+    await test.app.stop(0)
+  })
+
+  it('ignores Command+C without a selection', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    test.terminal.feed('\x1b[99;9u')
+    expect(test.terminal.output).not.toContain('\x1b]52;')
+    expect(test.exits).toEqual([])
+    await test.app.stop(0)
   })
 
   it('restores the transcript to the main screen when an alternate-screen run exits', async () => {

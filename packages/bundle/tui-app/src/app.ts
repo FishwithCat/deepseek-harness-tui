@@ -42,7 +42,7 @@ import type { SessionStatsProjection } from '@deepseek-ai/dsh-session-stats/clie
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { createTheme, editorTheme, resolveColorScheme, selectListTheme, supportsColor } from './ansi.ts'
 import type { TuiTheme } from './ansi.ts'
-import { readClipboardImage } from './clipboard.ts'
+import { copyClipboardText, readClipboardImage } from './clipboard.ts'
 import type { ClipboardImage } from './clipboard.ts'
 import type { Config } from './config.ts'
 import { commandCatalog, executeCommand, listEffortChoices, listModelChoices, parseCommand, slashAutocomplete } from './commands.ts'
@@ -98,12 +98,15 @@ export const internals: {
   isInteractive: () => boolean
   /** Read one image from the system clipboard, or undefined when it holds none. */
   readClipboardImage: () => Promise<ClipboardImage | undefined>
+  /** Copy selected text through the host clipboard or terminal. */
+  copyClipboardText: typeof copyClipboardText
   /** Sink for boot failures and the exit resume hint, neither of which the terminal surface can show. */
   stderr: { write(chunk: string): unknown }
 } = {
   createTerminal: () => new ProcessTerminal(),
   isInteractive: () => process.stdin.isTTY && process.stdout.isTTY,
   readClipboardImage: () => readClipboardImage(),
+  copyClipboardText,
   stderr: process.stderr,
 }
 
@@ -190,7 +193,10 @@ export class TuiApp implements InteractionHost {
     this.transcript = new Transcript(createToolPresentationResolver(options.ctx, () => this.session.agent))
     this.providerCount = options.ctx.llm.listProviders().length
     this.autoCompaction = options.ctx.get('compaction')?.autoCompactionEnabled ?? false
-    this.viewport = options.config.screen === 'alternate' ? new TuiAltScreen(terminal, true, undefined, { mouse: true }) : undefined
+    this.viewport = options.config.screen === 'alternate' ? new TuiAltScreen(terminal, true, undefined, {
+      mouse: true,
+      copySelection: text => internals.copyClipboardText(text, (data) => { terminal.write(data) }),
+    }) : undefined
     this.tui = this.viewport ?? new TuiMainScreen(terminal, true)
     this.transcriptView = new TranscriptView(this.transcript, this.theme)
     this.statusBar = new StatusBar(this.theme)
@@ -340,6 +346,10 @@ export class TuiApp implements InteractionHost {
       // after the press for one keystroke. The renderer drops that release only
       // after this listener chain, so a binding that did not would run twice.
       if (isKeyRelease(data)) return undefined
+      if (matchesKey(data, Key.super('c')) && this.viewport !== undefined) {
+        void this.viewport.copyActiveSelectionToClipboard()
+        return { consume: true }
+      }
       // Windows terminals keep Ctrl+V for their own paste, so the surface binds
       // the same action to Alt+V there.
       if (matchesKey(data, Key.ctrl('v')) || (this.altPaste && matchesKey(data, Key.alt('v')))) {

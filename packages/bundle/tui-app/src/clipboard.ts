@@ -1,5 +1,5 @@
 /**
- * Reading one raster image from the system clipboard.
+ * Native clipboard text writes and raster image reads.
  *
  * A terminal delivers pasted text through bracketed paste, but no terminal
  * protocol carries image bytes to a full-screen application, so the app asks
@@ -42,12 +42,14 @@ export interface ClipboardImage {
  * @param command - the reader program.
  * @param args - its arguments.
  * @param timeoutMs - how long the program may run.
+ * @param input - optional UTF-8 text supplied on stdin.
  * @returns the program's stdout, or undefined when it is absent, fails, or times out.
  */
 export type ClipboardCommandRunner = (
   command: string,
   args: readonly string[],
   timeoutMs: number,
+  input?: string,
 ) => Promise<Buffer | undefined>
 
 /** Process facts and readers a clipboard read may substitute. */
@@ -69,21 +71,27 @@ export interface ClipboardReadOptions {
  * @param command - the program to run.
  * @param args - its arguments.
  * @param timeoutMs - how long it may run before it is killed.
+ * @param input - optional UTF-8 text supplied on stdin.
  * @returns its stdout, or undefined when it cannot be run or exits non-zero.
  */
 function runClipboardCommand(
   command: string,
   args: readonly string[],
   timeoutMs: number,
+  input?: string,
 ): Promise<Buffer | undefined> {
   return new Promise((resolve) => {
-    execFile(command, [...args], {
+    let inputFailed = false
+    const child = execFile(command, [...args], {
       timeout: timeoutMs,
       maxBuffer: MAX_CLIPBOARD_BYTES,
       encoding: 'buffer',
     }, (error, stdout) => {
-      resolve(error === null ? stdout : undefined)
+      resolve(error === null && !inputFailed ? stdout : undefined)
     })
+    // A reader may exit before accepting stdin; contain EPIPE and report failure.
+    child.stdin?.on('error', () => { inputFailed = true })
+    child.stdin?.end(input)
   })
 }
 
@@ -325,4 +333,24 @@ export async function readClipboardImage(options: ClipboardReadOptions = {}): Pr
     default:
       return undefined
   }
+}
+
+/**
+ * Copy a selection using the local macOS pasteboard, or the terminal elsewhere.
+ * @param text - exact selected text, supplied to pbcopy through stdin.
+ * @param write - terminal output for the OSC 52 path.
+ * @param options - process facts and command runner; defaults to this process.
+ * @returns native command success, or true after an unacknowledged OSC 52 write.
+ */
+export async function copyClipboardText(
+  text: string,
+  write: (data: string) => void,
+  options: Pick<ClipboardReadOptions, 'platform' | 'env' | 'run'> = {},
+): Promise<boolean> {
+  const { platform, env, run } = { ...systemClipboard, ...options }
+  if (platform === 'darwin' && !env.SSH_CONNECTION && !env.SSH_CLIENT && !env.SSH_TTY) {
+    return await run('/usr/bin/pbcopy', [], READ_TIMEOUT_MS, text) !== undefined
+  }
+  write(`\x1b]52;c;${Buffer.from(text).toString('base64')}\x07`)
+  return true
 }

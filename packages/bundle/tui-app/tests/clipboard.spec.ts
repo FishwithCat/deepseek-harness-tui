@@ -7,7 +7,7 @@ import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { readClipboardImage, systemClipboard } from '../src/clipboard.ts'
+import { copyClipboardText, readClipboardImage, systemClipboard } from '../src/clipboard.ts'
 import type { ClipboardCommandRunner, ClipboardReadOptions } from '../src/clipboard.ts'
 
 /** Stand-in clipboard bytes; the attachment service owns real decoding. */
@@ -250,5 +250,39 @@ describe('systemClipboard', () => {
   it('reports nothing when no staged file exists', async () => {
     const directory = await temporaryDirectory()
     await expect(systemClipboard.readStaged(join(directory, 'missing.png'))).resolves.toBeUndefined()
+  })
+})
+
+describe('copyClipboardText', () => {
+  it.each([Buffer.alloc(0), undefined])('reports the native writer result without OSC 52 fallback: %s', async (result) => {
+    const text = '中文\n"quotes" $HOME `literal`\n'
+    const run = vi.fn(async () => result)
+    const write = vi.fn()
+    await expect(copyClipboardText(text, write, { platform: 'darwin', env: {}, run })).resolves.toBe(result !== undefined)
+    expect(run).toHaveBeenCalledWith('/usr/bin/pbcopy', [], 5_000, text)
+    expect(write).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { platform: 'linux' as const, env: {} },
+    { platform: 'darwin' as const, env: { SSH_CONNECTION: 'remote' } },
+    { platform: 'darwin' as const, env: { SSH_CLIENT: 'remote' } },
+    { platform: 'darwin' as const, env: { SSH_TTY: '/dev/pts/1' } },
+  ])('keeps terminal clipboard transport for $platform $env', async (options) => {
+    const write = vi.fn()
+    const run = vi.fn()
+    await expect(copyClipboardText('中文\n', write, { ...options, run })).resolves.toBe(true)
+    expect(write).toHaveBeenCalledWith(`\x1b]52;c;${Buffer.from('中文\n').toString('base64')}\x07`)
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('passes UTF-8 text to a real child through stdin without shell expansion', async () => {
+    const text = '中文\n"quotes" $HOME `literal`\n'
+    const result = await systemClipboard.run(process.execPath, ['-e', 'process.stdin.pipe(process.stdout)'], 5_000, text)
+    expect(result?.toString('utf8')).toBe(text)
+  })
+
+  it('contains a child closing stdin before reading the selection', async () => {
+    await expect(systemClipboard.run(process.execPath, ['-e', 'process.exit(1)'], 5_000, 'x'.repeat(1024 * 1024))).resolves.toBeUndefined()
   })
 })
