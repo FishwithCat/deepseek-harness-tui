@@ -38,3 +38,9 @@
       config:
         screen: !!js process.env.DSH_TUI_SCREEN ?? 'alternate'
         colorScheme: !!js process.env.DSH_TUI_COLOR_SCHEME ?? 'auto'
+
+# The terminal app holds one Agent and the terminal for the life of the
+# process, so its layers apply once at startup like the other applications that
+# own work once they start.
+- id: hmr
+  disabled: true
