@@ -336,12 +336,12 @@ export class Transcript {
   }
 
   private applyToolResult(data: SessionEvent<'tool/result'>['data']): boolean {
-    const block = data.message.content[0]
-    const row = this.toolByCallId.get(block.toolCallId)
+    const message = data.message
+    const row = this.toolByCallId.get(message.toolCallId)
     if (row === undefined) return false
-    const isError = block.isError === true
+    const isError = message.isError === true
     row.status = isError ? 'error' : 'ok'
-    row.result = textOfBlocks(block.content)
+    row.result = textOfBlocks(message.content)
     if (data.error !== undefined) row.error = `${data.error.name}: ${data.error.code}`
     // A failed mutation's card no longer describes the file, so it is dropped
     // with the outcome. A successful result replaces the pending card when the
@@ -352,7 +352,7 @@ export class Transcript {
       row.diffs = undefined
     } else {
       this.applyCard(row, this.views?.result(row.name, row.args, {
-        content: block.content,
+        content: [...message.content],
         isError: false,
         ...data.meta === undefined ? {} : { meta: data.meta },
       }))

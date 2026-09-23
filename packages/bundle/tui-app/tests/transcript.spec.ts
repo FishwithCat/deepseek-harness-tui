@@ -12,7 +12,7 @@ import { CURSOR_MARKER, Editor, SelectList, visibleWidth } from '@earendil-works
 import type { Component, TUI, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { AssistantStreamRecord, StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord, MessageSource, StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import { Transcript } from '../src/transcript.ts'
@@ -211,26 +211,26 @@ describe('Transcript', () => {
   it('hides injected context and keeps only the notices its producers declare', async () => {
     const session = await makeSession()
     session.append('turn/start', { turn: 1 })
-    const injected = [
+    const injected: { text: string; source: MessageSource }[] = [
       {
         text: '<system-reminder>\nworkspace instructions\n</system-reminder>',
-        source: { kind: 'plugin', plugin: 'agent-instructions', form: 'instructions' } as const,
+        source: { kind: 'agent-instructions', form: 'instructions', changes: [] },
       },
       {
         text: 'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.',
-        source: { kind: 'plugin', plugin: 'runtime-context', form: 'snapshot', sections: [] } as const,
+        source: { kind: 'runtime-context', form: 'snapshot', sections: [] },
       },
       {
         text: '<system-reminder>\n<available_skills>\n</system-reminder>',
-        source: { kind: 'plugin', plugin: 'skill-catalog', form: 'catalog' } as const,
+        source: { kind: 'skill-catalog', form: 'catalog', entries: [] },
       },
       {
         text: 'context from a producer that declares no form',
-        source: { kind: 'plugin', plugin: 'opaque' } as const,
+        source: { kind: 'runtime-context' },
       },
       {
         text: '',
-        source: { kind: 'plugin', plugin: 'plan-mode', form: 'notice', summary: '' } as const,
+        source: { kind: 'plan-mode', form: 'notice', summary: '' },
       },
     ]
     for (const message of injected) {
@@ -241,7 +241,7 @@ describe('Transcript', () => {
     }
     session.append('user/message', createUserMessage({
       content: [{ type: 'text', text: 'plain/model → capable/model' }],
-      source: { kind: 'plugin', plugin: 'model-selection', form: 'notice', summary: 'plain/model → capable/model' },
+      source: { kind: 'model-selection', form: 'notice', summary: 'plain/model → capable/model' },
     }), { surfaceOp: 'append' })
 
     const transcript = new Transcript()
