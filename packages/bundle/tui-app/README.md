@@ -35,7 +35,7 @@ dsh
 
 ### Composing, prompting, and interrupting
 
-Type a prompt and press Enter. While the Agent works, the composer switches to steering: an Enter submits text the running turn consumes at its next step, and Esc interrupts the turn. PageUp/PageDown, the mouse wheel, and terminal search scroll the transcript without leaving the app; the status bar reports when the view has scrolled away from the newest row.
+Type a prompt and press Enter. While the Agent works, the composer switches to steering: an Enter submits text the running turn consumes at its next step, and Esc interrupts the turn together with every live subagent descendant the session delegated to. Delegated work outlives the Agent's own turn, so the footer keeps reporting `running` and the composer keeps offering the cancel keys while a subagent is still inside a turn. PageUp/PageDown, the mouse wheel, and terminal search scroll the transcript without leaving the app; the status bar reports when the view has scrolled away from the newest row.
 
 In alternate-screen mode, dragging to select text copies it automatically on release. Local macOS sessions use `pbcopy`, including in Terminal.app; a failed write displays `Copy failed`. Other platforms and SSH sessions require terminal support for OSC 52 clipboard writes, whose success cannot be confirmed. Command+C copies the selection again when the terminal forwards that key. If the terminal intercepts Command+C, use its native selection gesture (often Option-drag on macOS), then Command+C; native selection also handles copying in inline mode. Ctrl+C retains its interrupt/exit behavior.
 
@@ -46,10 +46,10 @@ Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is 
 | Key | Action |
 |---|---|
 | `Enter` | Submit the prompt, or steer the running turn |
-| `Esc` | Interrupt the running turn |
+| `Esc` | Interrupt the running turn and the session's live subagents |
 | `Shift+Tab` | Toggle plan mode |
 | `Ctrl+V` | Attach the image on the system clipboard to the draft (`Alt+V` on Windows and WSL, where the terminal owns Ctrl+V) |
-| `Ctrl+C` | Cancel the running turn; with nothing running, exit |
+| `Ctrl+C` | Cancel the running turn and the session's live subagents; with neither working, exit |
 | `Ctrl+D` | Exit |
 | `PageUp` / `PageDown` | Scroll the transcript, or a question's overflowing detail |
 | `Up` / `Down` | Scroll a question's overflowing detail; otherwise move its picker |
@@ -91,7 +91,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The app owns one `TuiSession` and one terminal UI. It waits for the complete composition (`ctx.get('loader')?.await()`) so the Agent's scoped tools and adapters are mounted, creates or resumes the Agent through the core registry, and then subscribes to the durable `session/event` log, the live `agent/assistant-stream` feed, and `agent/status`. A resumed session's earlier events predate those subscriptions, so the app reads them back from the persistence backend through [`TuiSession.history()`](src/session.ts) — stopping at the Session's first live sequence so an event appended after resume is not folded twice — and folds them into the transcript before accepting input; an event that lands while that read is in flight is buffered and applied after the stored rows, keeping log order.
+The app owns one `TuiSession` and one terminal UI. It waits for the complete composition (`ctx.get('loader')?.await()`) so the Agent's scoped tools and adapters are mounted, creates or resumes the Agent through the core registry, and then subscribes to the durable `session/event` log, the live `agent/assistant-stream` feed, `agent/status`, and the `subagent/start` / `subagent/end` edges that report delegated work the footer and cancel keys follow. A resumed session's earlier events predate those subscriptions, so the app reads them back from the persistence backend through [`TuiSession.history()`](src/session.ts) — stopping at the Session's first live sequence so an event appended after resume is not folded twice — and folds them into the transcript before accepting input; an event that lands while that read is in flight is buffered and applied after the stored rows, keeping log order.
 
 ### Rendering
 

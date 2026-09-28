@@ -15,6 +15,7 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-subagent'
 
 /** Invocation facts and route overrides for a session this app opens. */
 export interface TuiSessionOptions {
@@ -127,6 +128,19 @@ export class TuiSession {
     return this.agent.status === 'running'
   }
 
+  /** Whether the Agent or any live subagent descendant has work in flight. */
+  get busy(): boolean {
+    return this.running || this.hasRunningSubagents()
+  }
+
+  /**
+   * Whether any live subagent descendant of this session is inside a turn.
+   * @returns true when the subagent service lists at least one running descendant.
+   */
+  hasRunningSubagents(): boolean {
+    return (this.ctx.get('subagents')?.runningDescendantIds(this.agent).length ?? 0) > 0
+  }
+
   /**
    * Queue one human prompt as its own turn.
    * @param content - the prompt's content blocks in message order.
@@ -150,9 +164,16 @@ export class TuiSession {
     }))
   }
 
-  /** Abort the active turn and drop pending input; a user interrupt owns the cause. */
+  /**
+   * Abort the active turn, drop pending input, and interrupt every running
+   * subagent descendant; a user interrupt owns the cause. The subagent service
+   * stops resident continuable children and one-shot runs alike, logging a
+   * child that refuses its cancel without keeping its siblings running. A
+   * composition without the subagent service stops only this Agent.
+   */
   cancel(): void {
     this.agent.cancel({ kind: 'user' })
+    this.ctx.get('subagents')?.interruptDescendants(this.agent)
   }
 
   /**

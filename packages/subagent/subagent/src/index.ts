@@ -73,7 +73,7 @@ import SubagentContinuationManager from './continuation.ts'
 import type { SubagentDelivery } from './inbox.ts'
 import { listChildren as listSubagentChildren, listDescendants as listSubagentDescendants } from './list-children.ts'
 import type { SubagentDescendantListEntry } from './list-children.ts'
-import { installSubagentArchiveAdmission } from './archive-admission.ts'
+import { installSubagentArchiveAdmission, runningSubagentDescendants } from './archive-admission.ts'
 import { snapshotSubagentDescriptor } from './descriptor.ts'
 import { subagentIdentityProjectionDefinition, subagentTimingProjectionDefinition } from './projection.ts'
 import { establishCatalogChild, subagentCatalogProjectionDefinition } from './catalog.ts'
@@ -327,6 +327,46 @@ export class SubagentRuntime extends TypertRemoteService {
    */
   interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void {
     this.continuations?.interrupt(targetSessionId, authority)
+  }
+
+  /**
+   * List the durable ids of every running subagent descendant of one exact live
+   * root Agent, at any depth, read from the live Agent registry rather than a
+   * catalog read. This is the same lineage the archive stop reaches, exposed so
+   * a surface that owns the root Session can report and stop delegated work.
+   * Forks share the lineage field without the subagent origin and are
+   * independent conversations, so they are never included. The result is a
+   * snapshot: a child may settle before a caller acts on its id.
+   * @param root - the root Agent whose running descendants are listed.
+   * @returns the running descendant ids in breadth-first traversal order, or an
+   *   empty list when the composition mounts no Agent registry.
+   */
+  runningDescendantIds(root: Agent): readonly SessionId[] {
+    const agents = this.ctx.get('agents')
+    if (agents === undefined) return []
+    return runningSubagentDescendants(agents.list(), root.id).map(child => child.id)
+  }
+
+  /**
+   * Cancel the current turn of every running subagent descendant of one exact
+   * live root Agent, at any depth, the way the archive stop reaches them. One
+   * child whose cancel throws is logged and does not keep its siblings running.
+   * A descendant that is already settling observes first-wins cancellation.
+   * @param root - the root Agent whose running descendants stop.
+   * @returns the number of descendants whose cancel was requested.
+   */
+  interruptDescendants(root: Agent): number {
+    const agents = this.ctx.get('agents')
+    if (agents === undefined) return 0
+    const descendants = runningSubagentDescendants(agents.list(), root.id)
+    for (const child of descendants) {
+      try {
+        child.cancel({ kind: 'parent' })
+      } catch (error: unknown) {
+        this.ctx.logger.warn(`subagent: cancelling "${child.id}" for its interrupted root failed: ${String(error)}`)
+      }
+    }
+    return descendants.length
   }
 
   /**

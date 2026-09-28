@@ -35,7 +35,7 @@ dsh
 
 ### 组合、提问与中断
 
-输入提示并按 Enter 提交。Agent 工作期间，输入框切换为 steer 模式：Enter 提交的文本会在运行的 turn 的下一个 step 被消费，Esc 中断该 turn。PageUp/PageDown、鼠标滚轮与终端搜索可在不退出应用的情况下滚动对话记录；当视图滚离最新一行时，状态栏会给出提示。
+输入提示并按 Enter 提交。Agent 工作期间，输入框切换为 steer 模式：Enter 提交的文本会在运行的 turn 的下一个 step 被消费，Esc 则中断该 turn 以及会话委派的所有存活 subagent 后代。委派工作会比 Agent 自身的 turn 更晚结束，因此只要还有 subagent 处于 turn 中，页脚会持续显示 `running`，输入框也会继续提供取消按键。PageUp/PageDown、鼠标滚轮与终端搜索可在不退出应用的情况下滚动对话记录；当视图滚离最新一行时，状态栏会给出提示。
 
 在 alternate-screen 模式下，拖动选中文本并松开鼠标即可自动复制。本机 macOS 会话使用 `pbcopy`，包括 Terminal.app；写入失败时显示 `Copy failed`。其他平台及 SSH 会话需要终端支持 OSC 52 剪贴板写入，该路径无法确认写入成功。终端转发 Command+C 时，也可按该键再次复制选中的文本。如果终端拦截 Command+C，请使用终端原生选择手势（macOS 上通常为 Option 加拖动），再按 Command+C；inline 模式也使用原生选择来复制。Ctrl+C 仍用于中断或退出。
 
@@ -46,10 +46,10 @@ dsh
 | 按键 | 作用 |
 |---|---|
 | `Enter` | 提交提示；若 turn 正在运行则作为 steer |
-| `Esc` | 中断正在运行的 turn |
+| `Esc` | 中断正在运行的 turn 及会话的存活 subagent |
 | `Shift+Tab` | 切换 plan 模式 |
 | `Ctrl+V` | 把系统剪贴板中的图片附到草稿（Windows 与 WSL 上为 `Alt+V`，因为那里的终端占用了 Ctrl+V） |
-| `Ctrl+C` | 取消正在运行的 turn；无运行时退出 |
+| `Ctrl+C` | 取消正在运行的 turn 及会话的存活 subagent；两者都未运行时退出 |
 | `Ctrl+D` | 退出 |
 | `PageUp` / `PageDown` | 滚动对话记录，或问题详情溢出时的详情 |
 | `↑` / `↓` | 问题详情溢出时滚动它；否则移动其选择器 |
@@ -91,7 +91,7 @@ dsh
 <details>
 <summary>实现细节——点击展开</summary>
 
-应用拥有一个 `TuiSession` 与一个终端界面。它先等待组合完成（`ctx.get('loader')?.await()`），以确保 Agent 的 scoped 工具与适配器已挂载，再通过核心注册表创建或恢复 Agent，然后订阅持久的 `session/event` 日志、实时的 `agent/assistant-stream` 流与 `agent/status`。恢复会话中较早的事件早于这些订阅，因此应用会通过 [`TuiSession.history()`](src/session.ts) 从持久化后端读回它们——读到 Session 的首个实时序列号为止，避免恢复后追加的事件被折叠两次——并在接受输入前将其折叠进对话记录；若读取期间有新事件到达，会先缓冲，待已存储行折叠完后再应用，从而保持日志顺序。
+应用拥有一个 `TuiSession` 与一个终端界面。它先等待组合完成（`ctx.get('loader')?.await()`），以确保 Agent 的 scoped 工具与适配器已挂载，再通过核心注册表创建或恢复 Agent，然后订阅持久的 `session/event` 日志、实时的 `agent/assistant-stream` 流、`agent/status`，以及用于报告委派工作、供页脚与取消按键跟踪的 `subagent/start` / `subagent/end`。恢复会话中较早的事件早于这些订阅，因此应用会通过 [`TuiSession.history()`](src/session.ts) 从持久化后端读回它们——读到 Session 的首个实时序列号为止，避免恢复后追加的事件被折叠两次——并在接受输入前将其折叠进对话记录；若读取期间有新事件到达，会先缓冲，待已存储行折叠完后再应用，从而保持日志顺序。
 
 ### 渲染
 

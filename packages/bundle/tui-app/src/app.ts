@@ -34,6 +34,8 @@ import type {} from '@deepseek-ai/dsh-compaction'
 import type {} from '@deepseek-ai/dsh-plan-mode'
 // Empty type import carries the optional measurement projection the footer reads.
 import type {} from '@deepseek-ai/dsh-session-projection'
+// Empty type import carries the optional subagent activity and stop the session owns.
+import type {} from '@deepseek-ai/dsh-subagent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ContextPressureProjection, TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
@@ -322,8 +324,14 @@ export class TuiApp implements InteractionHost {
       if (this.transcript.applyFrame(frame)) this.refresh()
     }))
     this.sessionDisposers.push(this.options.ctx.on('agent/status', ({ agent }) => {
-      if (agent === owned) this.refresh()
+      // A descendant's idle transition ends delegated work the footer reports;
+      // this surface owns one Agent, so no unrelated Agent repaints the frame.
+      if (agent === owned || agent.session.header.origin === 'subagent') this.refresh()
     }))
+    // A continuable child becomes resident before its first turn and is disposed
+    // at settlement, so the lifecycle edges bracket states no status flip covers.
+    this.sessionDisposers.push(this.options.ctx.on('subagent/start', () => { this.refresh() }))
+    this.sessionDisposers.push(this.options.ctx.on('subagent/end', () => { this.refresh() }))
     this.sessionDisposers.push(installApprovalAnswerer(this.options.ctx, this, owned))
     this.sessionDisposers.push(installQuestionAnswerer(this.options.ctx, this, owned))
     if (!loading) return
@@ -360,7 +368,7 @@ export class TuiApp implements InteractionHost {
       if (matchesKey(data, Key.ctrl('c'))) {
         // A focused prompt owns Ctrl+C as its own cancel gesture.
         if (this.promptActive) return undefined
-        if (this.session.running) {
+        if (this.session.busy) {
           this.interrupt()
           return { consume: true }
         }
@@ -372,7 +380,7 @@ export class TuiApp implements InteractionHost {
         // alternate-screen viewport consumes it first while a transcript
         // search is open.
         if (this.promptActive || this.editor.isShowingAutocomplete()) return undefined
-        if (this.session.running) {
+        if (this.session.busy) {
           this.interrupt()
           return { consume: true }
         }
@@ -419,14 +427,21 @@ export class TuiApp implements InteractionHost {
   }
 
   /**
-   * Abort the running turn and report the interruption.
+   * Abort the running turn, interrupt the session's live subagents, and report
+   * the interruption.
    *
    * The Agent's lifecycle status stays `running` until the turn settles, so the
-   * notice is the immediate acknowledgement that the interrupt landed.
+   * notice is the immediate acknowledgement that the interrupt landed. The
+   * notice names subagents too whenever delegated work was in flight, whether
+   * or not the Agent itself was working.
    */
   private interrupt(): void {
+    const subagents = this.session.hasRunningSubagents()
+    const agent = this.session.running
     this.session.cancel()
-    this.notice('info', 'cancelling the current turn')
+    this.notice('info', agent
+      ? (subagents ? 'cancelling the current turn and its subagents' : 'cancelling the current turn')
+      : 'cancelling the session\'s subagents')
   }
 
   /**
@@ -794,9 +809,10 @@ export class TuiApp implements InteractionHost {
     const route = session.route
     const plan = this.planStatus()
     const measured = this.measurement(session.session)
+    const busy = session.busy
     const status: TuiStatus = {
       workspace: this.options.cwd.replace(homedir(), '~'),
-      state: session.running ? 'running' : 'idle',
+      state: busy ? 'running' : 'idle',
       model: modelLabel(route.provider, route.model, this.providerCount),
       effort: route.reasoningEffort,
       context: measured.context,
@@ -805,7 +821,7 @@ export class TuiApp implements InteractionHost {
       pasting: this.pasteReads > 0,
     }
     this.statusBar.set(status)
-    this.composer.setHint(this.hints(plan !== undefined))
+    this.composer.setHint(this.hints(busy, plan !== undefined))
     this.tui.requestRender()
   }
 
@@ -863,13 +879,14 @@ export class TuiApp implements InteractionHost {
 
   /**
    * The placeholder the empty composer shows: the keys valid in the current state.
+   * @param busy - whether the Agent or a live subagent descendant is working.
    * @param planAvailable - whether the deployment mounts plan mode.
    */
-  private hints(planAvailable: boolean): string {
+  private hints(busy: boolean, planAvailable: boolean): string {
     const parts: string[] = [this.session.running ? 'Enter steer' : 'Enter send']
     if (planAvailable) parts.push('Shift+Tab plan')
     parts.push(`${this.altPaste ? 'Alt+V' : 'Ctrl+V'} image`)
-    if (this.session.running) parts.push('Esc/Ctrl+C cancel')
+    if (busy) parts.push('Esc/Ctrl+C cancel')
     if (this.viewport !== undefined) parts.push('PgUp/PgDn scroll')
     parts.push('/help commands', 'Ctrl+D quit')
     if (this.viewport !== undefined && !this.viewport.isFollowingOutput) parts.push('scrolled up')

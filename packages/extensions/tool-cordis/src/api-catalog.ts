@@ -2893,6 +2893,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['{SubagentError} `UNAUTHORIZED` when the authority does not own the live target.'],
       },
       {
+        signature: 'runningDescendantIds(root: Agent): readonly SessionId[]',
+        description: 'List the durable ids of every running subagent descendant of one exact live root Agent, at any depth, read from the live Agent registry rather than a catalog read. This is the same lineage the archive stop reaches, exposed so a surface that owns the root Session can report and stop delegated work. Forks share the lineage field without the subagent origin and are independent conversations, so they are never included. The result is a snapshot: a child may settle before a caller acts on its id.',
+        parameters: [{ name: 'root', description: 'the root Agent whose running descendants are listed.' }],
+        returns: 'the running descendant ids in breadth-first traversal order, or an empty list when the composition mounts no Agent registry.',
+      },
+      {
+        signature: 'interruptDescendants(root: Agent): number',
+        description: 'Cancel the current turn of every running subagent descendant of one exact live root Agent, at any depth, the way the archive stop reaches them. One child whose cancel throws is logged and does not keep its siblings running. A descendant that is already settling observes first-wins cancellation.',
+        parameters: [{ name: 'root', description: 'the root Agent whose running descendants stop.' }],
+        returns: 'the number of descendants whose cancel was requested.',
+      },
+      {
         signature: 'async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>',
         description: 'Close continuable admission below exact live parent Agents, stop only their visible descendant Activations synchronously, then await admitted scoped materializations and release those forests child-first. The scoped cutoff lasts until each exact parent leaves the registry; unrelated parent trees remain live.',
         parameters: [{ name: 'parents', description: 'exact host-owned parent Agents entering teardown.' }],
@@ -7265,7 +7277,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRuntime',
-    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentCatalogEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote(\'prompt\')\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote(\'interruptByParent\')\n    interruptByParent(childSessionId: SessionId, parentSessionId: SessionId, mode: \'continuable\'): SubagentInterruptReceipt;\n    registerProvider(provider: SubagentProvider): () => void;\n    getProvider(name: string): SubagentProvider | undefined;\n    list(): string[];\n    async start(name: string, request: SubagentStartRequest): Promise<SubagentRun>;\n}',
+    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config;\n    constructor(ctx: Context, private config: Config);\n    resolveMaxDepth(configured?: number | \'provider-managed\'): number | undefined;\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    runningDescendantIds(root: Agent): readonly SessionId[];\n    interruptDescendants(root: Agent): number;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentCatalogEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote(\'prompt\')\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote(\'interruptByParent\')\n    interruptByParent(childSessionId: SessionId, parentSessionId: SessionId, mode: \'continuable\'): SubagentInterruptReceipt;\n    registerProvider(provider: SubagentProvider): () => void;\n    getProvider(name: string): SubagentProvider | undefined;\n    list(): string[];\n    async start(name: string, request: Subagent /* …truncated — full shape in source */',
   },
   {
     name: 'SubagentSendMessageOptions',

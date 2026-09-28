@@ -25,6 +25,37 @@ function fakeParent(id = 'parent-1'): Agent {
   return { id: SessionId(id) } as unknown as Agent
 }
 
+/** Minimal live Agent plus the cancel recorder the descendant-stop test reads. */
+interface FakeDescendant extends Agent {
+  /** Whether this child received a cancel request. */
+  cancelled: boolean
+}
+
+/**
+ * Minimal live Agent carrying the lineage, origin, and status the descendant
+ * walk reads. Asserting the partial avoids adding a second `unknown` cast.
+ */
+function fakeDescendant(
+  id: string,
+  parentSession: string | undefined,
+  status: 'running' | 'idle',
+  origin = 'subagent',
+): FakeDescendant {
+  const agent = {
+    id: SessionId(id),
+    status,
+    cancelled: false,
+    cancel: () => { agent.cancelled = true },
+    session: {
+      header: {
+        ...parentSession === undefined ? {} : { parentSession: SessionId(parentSession) },
+        origin,
+      },
+    },
+  }
+  return agent as FakeDescendant
+}
+
 const ALL_CAPS: SubagentCapabilities = { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true }
 const NO_CAPS: SubagentCapabilities = { agentOptions: false, outputSchema: false, depthLimit: false, toolFilter: false, persona: false }
 
@@ -165,6 +196,52 @@ describe('SubagentRuntime', () => {
       kind: 'user',
       parentSessionId: SessionId('parent-1'),
     }) }).not.toThrow()
+  })
+
+  it('lists no running descendants when the composition mounts no Agent registry', async () => {
+    const { subagents } = await service()
+    expect(subagents.runningDescendantIds(fakeParent())).toEqual([])
+  })
+
+  it('lists only running subagent descendants, skipping idle children, forks, and unrelated trees', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SubagentRuntime)
+    const root = fakeDescendant('root', undefined, 'idle')
+    const running = fakeDescendant('child-running', 'root', 'running')
+    const idle = fakeDescendant('child-idle', 'root', 'idle')
+    const grandchild = fakeDescendant('grandchild', 'child-running', 'running')
+    // A fork shares the lineage field without the subagent origin.
+    const forkChild = fakeDescendant('fork-child', 'root', 'running', 'fork')
+    const unrelated = fakeDescendant('unrelated', 'other-root', 'running')
+    ctx.provide('agents', {
+      list: () => [root, running, idle, grandchild, forkChild, unrelated],
+    } as never)
+
+    expect(ctx.subagents.runningDescendantIds(root)).toEqual([
+      SessionId('child-running'),
+      SessionId('grandchild'),
+    ])
+  })
+
+  it('cancels exactly the running subagent descendants and counts them', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SubagentRuntime)
+    const root = fakeDescendant('root', undefined, 'idle')
+    const running = fakeDescendant('child-running', 'root', 'running')
+    const grandchild = fakeDescendant('grandchild', 'child-running', 'running')
+    const idle = fakeDescendant('child-idle', 'root', 'idle')
+    const forkChild = fakeDescendant('fork-child', 'root', 'running', 'fork')
+    const unrelated = fakeDescendant('unrelated', 'other-root', 'running')
+    ctx.provide('agents', {
+      list: () => [root, running, grandchild, idle, forkChild, unrelated],
+    } as never)
+
+    expect(ctx.subagents.interruptDescendants(root)).toBe(2)
+    expect(running.cancelled).toBe(true)
+    expect(grandchild.cancelled).toBe(true)
+    expect(idle.cancelled).toBe(false)
+    expect(forkChild.cancelled).toBe(false)
+    expect(unrelated.cancelled).toBe(false)
   })
 
   it('rejects continuable operations when their runtime services are absent', async () => {

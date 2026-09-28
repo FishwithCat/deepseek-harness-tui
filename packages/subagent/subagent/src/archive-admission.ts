@@ -1,7 +1,8 @@
 /**
  * The `subagent` family of the Workspace registry's archive admission: which
  * subagent descendants of a Session are still inside a turn, and how they
- * stop when the Session is archived with its work.
+ * stop when the Session is archived with its work. The same live-descendant
+ * walk backs the runtime's `runningDescendantIds()` read.
  *
  * @module @deepseek-ai/dsh-subagent
  */
@@ -21,14 +22,14 @@ import { foldSubagentDescriptor } from './descriptor.ts'
  */
 export function installSubagentArchiveAdmission(ctx: Context): void {
   ctx.on('workspace/session-activity', async ({ sessionId }, next) => {
-    const running = runningDescendants(ctx, sessionId)
+    const running = runningSubagentDescendants(ctx.agents.list(), sessionId)
     const rest = await next()
     if (running.length === 0) return rest
     const own: SessionActivity = { kind: 'subagent', items: await Promise.all(running.map(child => describe(ctx, child))) }
     return [own, ...rest]
   })
   ctx.on('workspace/session-stop', ({ sessionId }) => {
-    for (const child of runningDescendants(ctx, sessionId)) {
+    for (const child of runningSubagentDescendants(ctx.agents.list(), sessionId)) {
       try {
         child.cancel({ kind: 'parent' })
       } catch (error: unknown) {
@@ -45,10 +46,13 @@ export function installSubagentArchiveAdmission(ctx: Context): void {
  * records, at any depth. A fork shares the lineage field without the origin
  * and is an independent conversation, so it never holds its source. Lineage
  * is read as data, so a damaged header chain that loops is visited once.
+ * @param agents - the live Agent registry's snapshot to traverse.
+ * @param rootId - the Session whose running descendants are collected.
+ * @returns the running descendants, in breadth-first traversal order.
  */
-function runningDescendants(ctx: Context, rootId: SessionId): Agent[] {
+export function runningSubagentDescendants(agents: readonly Agent[], rootId: SessionId): Agent[] {
   const childrenOf = new Map<SessionId, Agent[]>()
-  for (const agent of ctx.agents.list()) {
+  for (const agent of agents) {
     const { parentSession, origin } = agent.session.header
     if (parentSession === undefined || origin !== 'subagent') continue
     const siblings = childrenOf.get(parentSession) ?? []

@@ -24,6 +24,7 @@ import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import { SubagentRunId } from '@deepseek-ai/dsh-subagent'
 import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
@@ -121,6 +122,10 @@ interface Fixture {
   cancelled(): number
   /** Flip the scripted Agent's lifecycle status. */
   setRunning(value: boolean): void
+  /** Live subagent descendants the scripted session reports, mutable per test. */
+  subagents: SessionId[]
+  /** Descendant ids the surface asked the subagent service to interrupt. */
+  interruptedSubagents: SessionId[]
 }
 
 /**
@@ -177,6 +182,8 @@ async function bench(
     models?: readonly LlmModelInfo[]
     modalities?: readonly ModelModality[]
     reasoning?: LlmModelReasoningInfo
+    /** Mount a scripted subagent service so delegated work can be reported and stopped. */
+    subagents?: boolean
   } = {},
 ): Promise<Fixture> {
   const ctx = new Context()
@@ -253,6 +260,21 @@ async function bench(
     },
   })
   ctx.provide('appExit', (code: number) => { exits.push(code) })
+  const subagents: SessionId[] = []
+  const interruptedSubagents: SessionId[] = []
+  if (options.subagents === true) {
+    // The surface reads liveness from the service on every refresh and stops
+    // every listed descendant through one `interruptDescendants` call.
+    ctx.provide('subagents', {
+      runningDescendantIds: () => [...subagents],
+      interruptDescendants: () => {
+        const stopped = [...subagents]
+        interruptedSubagents.push(...stopped)
+        subagents.length = 0
+        return stopped.length
+      },
+    } as never)
+  }
   // Only the service's presence is under test for the exit hint; a `stored`
   // fixture additionally serves the read a resumed boot folds into the transcript.
   if (options.stored !== undefined) {
@@ -296,6 +318,8 @@ async function bench(
     steered,
     cancelled: () => observed.cancelled,
     setRunning: (value: boolean) => { observed.running = value },
+    subagents,
+    interruptedSubagents,
   }
 }
 
@@ -613,6 +637,72 @@ describe('TuiApp', () => {
     // With the search closed, Escape reaches the app and interrupts the turn.
     test.terminal.feed('\x1b')
     await vi.waitFor(() => { expect(test.cancelled()).toBe(1) })
+    await test.app.stop(0)
+  })
+
+  it('interrupts a running subagent on Escape while the Agent itself is idle', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { subagents: true })
+    test.subagents.push(SessionId('child-1'))
+
+    test.terminal.feed('\x1b')
+
+    await vi.waitFor(() => { expect(test.interruptedSubagents).toEqual([SessionId('child-1')]) })
+    expect(test.cancelled()).toBe(1)
+    expect(test.exits).toEqual([])
+    await test.app.stop(0)
+  })
+
+  it('interrupts subagents on Ctrl+C instead of exiting while the Agent is idle', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { subagents: true })
+    test.subagents.push(SessionId('child-1'))
+
+    test.terminal.feed('\x03')
+
+    await vi.waitFor(() => { expect(test.interruptedSubagents).toEqual([SessionId('child-1')]) })
+    expect(test.exits).toEqual([])
+    await test.app.stop(0)
+  })
+
+  it('reports a running session and offers cancel while only a subagent works', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { subagents: true })
+    test.subagents.push(SessionId('child-1'))
+    test.ctx.emit('subagent/start', {
+      runId: SubagentRunId('run-child-1'),
+      provider: 'spawn',
+      id: SessionId('child-1'),
+      local: true,
+    })
+
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Esc/Ctrl+C cancel') })
+    expect(plain(test.terminal.output)).toContain('running')
+    await test.app.stop(0)
+  })
+
+  it('returns the footer to idle when the last subagent settles', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { subagents: true, screen: 'alternate' })
+    test.subagents.push(SessionId('child-1'))
+    test.ctx.emit('subagent/start', {
+      runId: SubagentRunId('run-child-1'),
+      provider: 'spawn',
+      id: SessionId('child-1'),
+      local: true,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Esc/Ctrl+C cancel'))).toBe(true)
+    })
+
+    test.subagents.length = 0
+    test.ctx.emit('subagent/end', {
+      runId: SubagentRunId('run-child-1'),
+      provider: 'spawn',
+      id: SessionId('child-1'),
+      local: true,
+      stopReason: 'aborted',
+    })
+
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Esc/Ctrl+C cancel'))).toBe(false)
+    })
     await test.app.stop(0)
   })
 
