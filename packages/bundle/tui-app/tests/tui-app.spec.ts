@@ -146,7 +146,7 @@ function screen(app: TuiApp): string[] {
   // The renderer owns its composited rows, and the written byte stream alone
   // does not say what a terminal ends up showing; the layout tests read the
   // frame the renderer keeps for its own differential repaints.
-  const renderer = (app as unknown as { tui: { previousScreen: string[] } }).tui
+  const renderer = Reflect.get(app, 'tui') as { previousScreen: string[] }
   return renderer.previousScreen.map(line => plain(line).replaceAll('\u001b]8;;\u0007', ''))
 }
 
@@ -294,7 +294,7 @@ async function bench(
           close: () => Promise.resolve(),
         }
       },
-    } as unknown as SessionPersistence)
+    } as never)
   } else if (options.persistence === true) {
     ctx.provide('sessionPersistence', {} as SessionPersistence)
   }
@@ -806,7 +806,7 @@ describe('TuiApp', () => {
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('started a new session') })
     // The scripted factory's dispose does not unregister the old Agent, so read
     // the live session from the app rather than the registry.
-    const replacement = (test.app as unknown as { session: { session: { id: string } } }).session.session.id
+    const replacement = (Reflect.get(test.app, 'session') as { session: { id: string } }).session.id
     expect(replacement).not.toBe(first)
 
     await test.app.stop(0)
@@ -1111,7 +1111,7 @@ describe('TuiApp tool diffs', () => {
       presentResult: (_args, result) => ({
         card: 'diff',
         title: 'Edit a.ts',
-        diffs: (result.meta as unknown as { diffs: FileDiff[] }).diffs,
+        diffs: (result.meta as { diffs?: FileDiff[] } | undefined)?.diffs ?? [],
       }),
     }))
     test.terminal.feed('edit the file')
@@ -1457,7 +1457,7 @@ describe('TuiApp question detail', () => {
 
     // A theme or cell-size change invalidates every component; the review must
     // redraw its cached detail instead of losing it.
-    ;(test.app as unknown as { tui: { invalidate(): void } }).tui.invalidate()
+    ;(Reflect.get(test.app, 'tui') as { invalidate(): void }).invalidate()
     for (let press = 0; press < 8; press += 1) test.terminal.feed('\x1b[5~')
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('marker-01'))).toBe(true)

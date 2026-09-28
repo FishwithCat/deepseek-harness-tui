@@ -68,7 +68,7 @@ export function summarizeToolArguments(args: string): string {
   if (trimmed === '') return ''
   let parsed: unknown
   try {
-    parsed = JSON.parse(trimmed) as unknown
+    parsed = JSON.parse(trimmed)
   } catch {
     // The model produced arguments the Tool will reject; show them verbatim.
     return singleLine(trimmed)

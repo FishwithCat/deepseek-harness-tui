@@ -62,12 +62,7 @@ export const apply = ctx => globalThis.__tuiStartupApply(ctx)
   const observing = { write: (chunk: string) => { observed.out += chunk; return true } }
   internals.stdout = observing
   internals.stderr = observing
-  const globals = globalThis as unknown as {
-    __tuiStartupApply: typeof apply
-    __tuiStartupObserved: Observed
-  }
-  globals.__tuiStartupApply = apply
-  globals.__tuiStartupObserved = observed
+  Object.assign(globalThis, { __tuiStartupApply: apply, __tuiStartupObserved: observed })
 
   const ctx = new Context()
   await ctx.plugin(Loader)

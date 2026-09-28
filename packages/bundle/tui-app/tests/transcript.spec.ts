@@ -8,8 +8,8 @@ import type { Mock } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { CURSOR_MARKER, Editor, SelectList, visibleWidth } from '@earendil-works/pi-tui'
-import type { Component, TUI, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
+import { CURSOR_MARKER, Editor, SelectList, TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui'
+import type { Component, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord, MessageSource, StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
@@ -21,6 +21,23 @@ import type { ToolPresentationResolver } from '../src/tool-view.ts'
 import { PROMPT_PANEL_CHROME_ROWS, DetailBody, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
 import type { TuiSessionStats, TuiStatus } from '../src/views.ts'
 import { createTheme, editorTheme, selectListTheme } from '../src/ansi.ts'
+import { FakeTerminal } from './support/fake-terminal.ts'
+
+/** A real screen over a fake terminal whose renderer requests are inert. */
+class InertTui extends TuiMainScreen {
+  override requestRender(): void {}
+}
+
+/**
+ * Build an 80x30 TUI for direct component rendering.
+ * @returns the inert TUI.
+ */
+function stubTui(): InertTui {
+  const terminal = new FakeTerminal()
+  terminal.columns = 80
+  terminal.rows = 30
+  return new InertTui(terminal)
+}
 
 const contexts: Context[] = []
 afterEach(async () => {
@@ -757,7 +774,7 @@ describe('PlaceholderEditor', () => {
    * @returns the editor and its placeholder wrapper.
    */
   function composer(): { editor: Editor; view: PlaceholderEditor } {
-    const tui = { terminal: { rows: 30, columns: 80 }, requestRender: () => {} } as unknown as TUI
+    const tui = stubTui()
     const theme = createTheme({ enabled: false, palette: 'dark' })
     const editor = new Editor(tui, editorTheme(theme), { paddingX: 1 })
     return { editor, view: new PlaceholderEditor(editor, theme) }
@@ -778,7 +795,7 @@ describe('PlaceholderEditor', () => {
   })
 
   it('keeps the reverse-video cursor when styles are emitted', () => {
-    const tui = { terminal: { rows: 30, columns: 80 }, requestRender: () => {} } as unknown as TUI
+    const tui = stubTui()
     const theme = createTheme({ enabled: true, palette: 'dark' })
     const editor = new Editor(tui, editorTheme(theme), { paddingX: 1 })
     const view = new PlaceholderEditor(editor, theme)
