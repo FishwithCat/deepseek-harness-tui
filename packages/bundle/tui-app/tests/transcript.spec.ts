@@ -15,8 +15,9 @@ import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUs
 import type { AssistantStreamRecord, MessageSource, StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
+import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import { TerminalTranscript } from '../src/transcript.ts'
-import type { ToolDiffCard, ToolPresentationResolver } from '../src/tool-view.ts'
+import type { ToolPresentationResolver } from '../src/tool-view.ts'
 import { PROMPT_PANEL_CHROME_ROWS, DetailBody, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
 import type { TuiSessionStats, TuiStatus } from '../src/views.ts'
 import { createTheme, editorTheme, selectListTheme } from '../src/ansi.ts'
@@ -417,6 +418,37 @@ describe('TranscriptView', () => {
     for (const line of view.render(40)) {
       expect(line.length).toBeLessThanOrEqual(40)
     }
+  })
+
+  it('skips an assistant row the markdown renderer leaves empty', async () => {
+    const session = await makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      stream: [],
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: '   ' }],
+        source: { provider: 'test-provider', model: 'test-model' },
+      }),
+    }, { surfaceOp: 'append' })
+    const transcript = new TerminalTranscript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
+    expect(view.render(60)).toEqual([])
+  })
+
+  it('clips a row when the viewport is narrower than its body', async () => {
+    const session = await makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'hello there' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const transcript = new TerminalTranscript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
+    for (const line of view.render(0)) expect(visibleWidth(line)).toBe(0)
   })
 
   it('renders a prompt as its image markers followed by its text', async () => {
@@ -1003,7 +1035,7 @@ describe('PromptPanel', () => {
   })
 })
 
-describe('TerminalTranscript diff cards', () => {
+describe('TerminalTranscript tool presentation', () => {
   /** The literal replacement the helper's `edit` call carries. */
   const EDIT_ARGS = '{"file_path":"a.ts","old_string":"old","new_string":"new"}'
 
@@ -1039,110 +1071,114 @@ describe('TerminalTranscript diff cards', () => {
     for (const event of session.ownEvents()) transcript.applyEvent(event)
   }
 
-  /** A resolver returning the same fixed cards for every call. */
-  function fixed(call: ToolDiffCard | undefined, result: ToolDiffCard | undefined): ToolPresentationResolver {
+  /** A resolver returning the same fixed views for every call. */
+  function fixed(call: ToolCallView | undefined, result: ToolResultView | undefined): ToolPresentationResolver {
     return { call: () => call, result: () => result }
   }
 
-  it('attaches the pending diff card its resolver declares', async () => {
+  it('stores the pending view its resolver declares', async () => {
     const session = await makeSession()
     appendEdit(session)
     const transcript = new TerminalTranscript(fixed(
-      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
       undefined,
     ))
     fold(session, transcript)
     expect(transcript.entries()[0]).toMatchObject({
       kind: 'tool',
       status: 'running',
-      title: 'Edit a.ts',
-      diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }],
+      callView: { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
     })
+    expect((transcript.entries()[0] as { resultView?: ToolResultView }).resultView).toBeUndefined()
   })
 
-  it('replaces the pending card with the settled one', async () => {
+  it('stores the settled result view over the pending view', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'The file a.ts has been updated successfully.', isError: false })
     const transcript = new TerminalTranscript(fixed(
-      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
-      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }] },
+      { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }] },
     ))
     fold(session, transcript)
     expect(transcript.entries()[0]).toMatchObject({
       status: 'ok',
-      diffs: [{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }],
+      resultView: { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }] },
     })
   })
 
-  it('keeps the pending card when the Tool declares no result view', async () => {
+  it('keeps the pending view when the Tool declares no result view', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'Replaced.', isError: false })
     const transcript = new TerminalTranscript(fixed(
-      { title: 'str_replace_editor a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      { card: 'diff', title: 'str_replace_editor a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
       undefined,
     ))
     fold(session, transcript)
     expect(transcript.entries()[0]).toMatchObject({
       status: 'ok',
-      title: 'str_replace_editor a.ts',
-      diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }],
+      callView: { card: 'diff', title: 'str_replace_editor a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
     })
   })
 
-  it('clears the card when the mutation failed', async () => {
+  it('clears both views when the mutation failed', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'the file changed since it was read', isError: true })
     const transcript = new TerminalTranscript(fixed(
-      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
-      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
     ))
     fold(session, transcript)
     const entry = transcript.entries()[0]
     expect(entry).toMatchObject({ status: 'error', result: 'the file changed since it was read' })
-    const row = entry as { title?: string; diffs?: readonly unknown[] }
-    expect(row.title).toBeUndefined()
-    expect(row.diffs).toBeUndefined()
+    const row = entry as { callView?: ToolCallView; resultView?: ToolResultView }
+    expect(row.callView).toBeUndefined()
+    expect(row.resultView).toBeUndefined()
   })
 
-  it('keeps raw rows without a resolver, and ignores another card', async () => {
+  it('leaves both views absent without a resolver, and for a declined card', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'Replaced.', isError: false })
     const raw = new TerminalTranscript()
     fold(session, raw)
     const rawEntry = raw.entries()[0]
     expect(rawEntry).toMatchObject({ kind: 'tool' })
-    expect(Object.hasOwn(rawEntry ?? {}, 'title')).toBe(false)
-    expect(Object.hasOwn(rawEntry ?? {}, 'diffs')).toBe(false)
+    expect(Object.hasOwn(rawEntry ?? {}, 'callView')).toBe(false)
+    expect(Object.hasOwn(rawEntry ?? {}, 'resultView')).toBe(false)
 
     const other = new TerminalTranscript({ call: () => undefined, result: () => undefined })
     fold(session, other)
     const otherEntry = other.entries()[0]
-    expect(Object.hasOwn(otherEntry ?? {}, 'title')).toBe(false)
-    expect(Object.hasOwn(otherEntry ?? {}, 'diffs')).toBe(false)
+    expect(Object.hasOwn(otherEntry ?? {}, 'callView')).toBe(false)
+    expect(Object.hasOwn(otherEntry ?? {}, 'resultView')).toBe(false)
   })
 
-  it('drops a card whose hunk list is empty', async () => {
+  it('clears both views when a settled result declares an empty hunk list', async () => {
     const session = await makeSession()
-    appendEdit(session)
-    const transcript = new TerminalTranscript(fixed({ title: 'Edit a.ts', diffs: [] }, undefined))
+    appendEdit(session, { text: 'Replaced.', isError: false })
+    const transcript = new TerminalTranscript(fixed(
+      { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      { card: 'diff', title: 'Edit a.ts', diffs: [] },
+    ))
     fold(session, transcript)
-    const entry = transcript.entries()[0]
-    expect(entry).toMatchObject({ title: 'Edit a.ts' })
-    expect((entry as { diffs?: readonly unknown[] }).diffs).toBeUndefined()
+    const row = transcript.entries()[0] as { callView?: ToolCallView; resultView?: ToolResultView }
+    expect(row.callView).toBeUndefined()
+    expect(row.resultView).toBeUndefined()
   })
 
-  it('keeps the call-time heading when a settled card declares no title', async () => {
+  it('keeps the call view when a settled view declares no title', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'Replaced.', isError: false })
     const transcript = new TerminalTranscript({
-      call: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
-      result: () => ({ diffs: [{ path: 'a.ts', oldText: 'ctx', newText: 'ctx2' }] }),
+      call: () => ({ card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
+      result: () => ({ card: 'diff', diffs: [{ path: 'a.ts', oldText: 'ctx', newText: 'ctx2' }] }),
     })
     fold(session, transcript)
     expect(transcript.entries()[0]).toMatchObject({
-      title: 'Edit a.ts',
-      diffs: [{ path: 'a.ts', oldText: 'ctx', newText: 'ctx2' }],
+      callView: { card: 'diff', title: 'Edit a.ts' },
+      resultView: { card: 'diff', diffs: [{ path: 'a.ts', oldText: 'ctx', newText: 'ctx2' }] },
     })
+    const rendered = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60).join('\n')
+    expect(rendered).toContain('Edit a.ts')
   })
 
   it('keeps the failure identity on a failed mutation', async () => {
@@ -1153,7 +1189,7 @@ describe('TerminalTranscript diff cards', () => {
       error: { name: 'FsError', code: 'FS_NOT_OBSERVED' },
     })
     const transcript = new TerminalTranscript(fixed(
-      { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
       undefined,
     ))
     fold(session, transcript)
@@ -1165,8 +1201,8 @@ describe('TerminalTranscript diff cards', () => {
   it('hands the resolver the call identity and the settled result projection', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'Replaced.', isError: false, meta: { diffs: [] } })
-    const resultSpy = vi.fn((): ToolDiffCard | undefined => undefined)
-    const callSpy = vi.fn((): ToolDiffCard | undefined => undefined)
+    const resultSpy = vi.fn((): ToolResultView | undefined => undefined)
+    const callSpy = vi.fn((): ToolCallView | undefined => undefined)
     const transcript = new TerminalTranscript({ call: callSpy, result: resultSpy })
     fold(session, transcript)
     expect(callSpy).toHaveBeenCalledWith('edit', EDIT_ARGS)
@@ -1185,7 +1221,7 @@ describe('TranscriptView diff cards', () => {
    * @param result - the model-facing result text the tool returned.
    * @returns the rendered transcript lines.
    */
-  async function render(diffs: ToolDiffCard['diffs'], result = 'The file a.ts has been updated successfully.'): Promise<string[]> {
+  async function render(diffs: FileDiff[], result = 'The file a.ts has been updated successfully.'): Promise<string[]> {
     const session = await makeSession()
     const callId = 'call-edit' as ToolCallId
     session.append('turn/start', { turn: 1 })
@@ -1197,8 +1233,8 @@ describe('TranscriptView diff cards', () => {
       message: createToolResultMessage({ callId, content: [{ type: 'text', text: result }], isError: false }),
     }, { surfaceOp: 'append' })
     const transcript = new TerminalTranscript({
-      call: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
-      result: () => ({ title: 'Edit a.ts', diffs }),
+      call: () => ({ card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
+      result: () => ({ card: 'diff', title: 'Edit a.ts', diffs }),
     })
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     return new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60)
@@ -1264,14 +1300,306 @@ describe('TranscriptView diff cards', () => {
       }),
     }, { surfaceOp: 'append' })
     const transcript = new TerminalTranscript({
-      call: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
-      result: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
+      call: () => ({ card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
+      result: () => ({ card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
     })
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     const rendered = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60).join('\n')
     expect(rendered).toContain('✘ edit')
     expect(rendered).toContain('old_string not found')
     expect(rendered).not.toContain('+ new')
+  })
+})
+
+describe('TranscriptView tool cards', () => {
+  /**
+   * Fold one tool call and, unless the test keeps it pending, its settled
+   * result through fixed declared views, then render the transcript.
+   * @param call - the call view the resolver returns.
+   * @param result - the result view the resolver returns.
+   * @param options - the raw result text and whether a result event is appended.
+   * @returns the rendered transcript.
+   */
+  async function render(
+    call: ToolCallView | undefined,
+    result: ToolResultView | undefined,
+    options: { raw?: string; settle?: boolean; isError?: boolean; error?: { name: string; code: string } } = {},
+  ): Promise<string> {
+    const settle = options.settle ?? result !== undefined
+    const session = await makeSession()
+    const callId = 'call-card' as ToolCallId
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('tool/call', { turn: 1, step: 1, callId, name: 'tool', arguments: '{"path":"a.ts"}' })
+    if (settle) {
+      session.append('tool/result', {
+        turn: 1,
+        step: 1,
+        message: createToolResultMessage({
+          callId,
+          content: [{ type: 'text', text: options.raw ?? 'raw result text' }],
+          isError: options.isError ?? false,
+        }),
+        ...options.error === undefined ? {} : { error: options.error },
+      }, { surfaceOp: 'append' })
+    }
+    const transcript = new TerminalTranscript({ call: () => call, result: () => result })
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    return new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60).join('\n')
+  }
+
+  it('draws a generic call title and its raw-input summary', async () => {
+    const titled = await render({ card: 'generic', title: 'List all', kind: 'read', rawInput: 'reminders' }, undefined)
+    expect(titled).toContain('⏺ List all')
+    expect(titled).toContain('(reminders)')
+
+    const structured = await render({ card: 'generic', title: 'Query', rawInput: { id: 1 } }, undefined)
+    expect(structured).toContain('({"id":1})')
+
+    const duplicated = await render({ card: 'generic', title: 'List reminders', rawInput: 'reminders' }, undefined)
+    expect(duplicated).toContain('⏺ List reminders')
+    expect(duplicated).not.toContain('(reminders)')
+
+    const bare = await render({ card: 'generic', title: 'Bare' }, undefined)
+    expect(bare).toContain('⏺ Bare')
+    expect(bare).not.toContain('(')
+
+    const empty = await render({ card: 'generic', title: 'Empty', rawInput: '' }, undefined)
+    expect(empty).not.toContain('(')
+  })
+
+  it('unwraps a fenced generic result and keeps plain content verbatim', async () => {
+    const fenced = await render(
+      { card: 'generic', title: 'Run' },
+      { card: 'generic', content: [{ type: 'text', text: '```console\nhello\n```' }] },
+    )
+    expect(fenced).toContain('✔ Run')
+    expect(fenced).toContain('hello')
+    expect(fenced).not.toContain('```')
+
+    const plain = await render(
+      { card: 'generic', title: 'Run' },
+      { card: 'generic', content: [{ type: 'text', text: 'plain body' }] },
+    )
+    expect(plain).toContain('plain body')
+  })
+
+  it('falls back to the raw result when a generic card carries no content', async () => {
+    const empty = await render({ card: 'generic', title: 'Run' }, { card: 'generic', content: [] })
+    expect(empty).toContain('raw result text')
+
+    const absent = await render({ card: 'generic', title: 'Run' }, { card: 'generic' })
+    expect(absent).toContain('raw result text')
+
+    const blank = await render({ card: 'generic', title: 'Run' }, { card: 'generic' }, { raw: '' })
+    expect(blank).toContain('✔ Run')
+    expect(blank).not.toContain('raw')
+  })
+
+  it('names a generic result that declares no title and has no call head', async () => {
+    const rendered = await render(undefined, { card: 'generic', content: [{ type: 'text', text: 'body' }] })
+    expect(rendered).toContain('✔ tool')
+    expect(rendered).toContain('body')
+
+    const noContent = await render(undefined, { card: 'generic' })
+    expect(noContent).toContain('raw result text')
+  })
+
+  it('draws a pending terminal call with its description and working directory', async () => {
+    const rendered = await render({ card: 'terminal', title: 'ls -la', description: 'List files', cwd: '/tmp/x' }, undefined)
+    expect(rendered).toContain('List files')
+    expect(rendered).toContain('⏺ /tmp/x ls -la')
+  })
+
+  it('omits an absent or empty terminal working directory and description', async () => {
+    const emptyCwd = await render({ card: 'terminal', title: 'pwd', cwd: '' }, undefined)
+    expect(emptyCwd).toContain('⏺ pwd')
+
+    const bare = await render({ card: 'terminal', title: 'pwd' }, undefined)
+    expect(bare).toContain('⏺ pwd')
+  })
+
+  it('draws a settled terminal output with its exit pill', async () => {
+    const clean = await render({ card: 'terminal', title: 'echo hi' }, { card: 'terminal', output: 'hi', exitCode: 0 })
+    expect(clean).toContain('✔ echo hi')
+    expect(clean).toContain('exit 0')
+    expect(clean).toContain('hi')
+
+    const failed = await render({ card: 'terminal', title: 'false' }, { card: 'terminal', output: '', exitCode: 3 })
+    expect(failed).toContain('exit 3')
+    expect(failed).not.toContain('raw result text')
+
+    const killed = await render({ card: 'terminal', title: 'sleep' }, { card: 'terminal', signal: 'SIGKILL' })
+    expect(killed).toContain('SIGKILL')
+  })
+
+  it('keeps the call heading on a terminal result and falls back to the Tool name', async () => {
+    const kept = await render({ card: 'terminal', title: 'echo hi', cwd: '/w' }, { card: 'terminal', output: 'hi' })
+    expect(kept).toContain('/w echo hi')
+
+    const unnamed = await render(undefined, { card: 'terminal', output: 'hi' })
+    expect(unnamed).toContain('✔ tool')
+  })
+
+  it('falls back to the raw result when a terminal result carries no output', async () => {
+    const rendered = await render({ card: 'terminal', title: 'echo hi' }, { card: 'terminal' })
+    expect(rendered).toContain('raw result text')
+  })
+
+  it('does not take a terminal heading from a non-terminal call', async () => {
+    const rendered = await render({ card: 'generic', title: 'Run' }, { card: 'terminal', title: 'cmd', output: 'x' })
+    expect(rendered).toContain('✔ cmd')
+    expect(rendered).not.toContain('Run')
+  })
+
+  it('draws a line-numbered read window and its extent', async () => {
+    const multiple = await render(
+      { card: 'generic', title: 'Read a.ts' },
+      { card: 'read', path: 'a.ts', offset: 5, lines: [{ number: 5, text: 'x' }, { number: 6, text: 'y' }], totalLines: 10 },
+    )
+    expect(multiple).toContain('Read a.ts')
+    expect(multiple).toContain('lines 5-6 of 10')
+    expect(multiple).toContain('x')
+
+    const single = await render(undefined, { card: 'read', path: 'a.ts', offset: 7, lines: [{ number: 7, text: 'z' }], totalLines: 10 })
+    expect(single).toContain('Read a.ts')
+    expect(single).toContain('line 7 of 10')
+
+    const empty = await render(undefined, { card: 'read', path: 'a.ts', offset: 5, lines: [], totalLines: 10 })
+    expect(empty).toContain('line 5 of 10')
+  })
+
+  it('folds a long read window', async () => {
+    const lines = Array.from({ length: 14 }, (_, index) => ({ number: index + 1, text: `line ${String(index)}` }))
+    const rendered = await render(undefined, { card: 'read', path: 'a.ts', offset: 1, lines, totalLines: 14 })
+    expect(rendered).toContain('more lines')
+  })
+
+  it('draws grouped search matches with the cap signal', async () => {
+    const rendered = await render(
+      { card: 'generic', title: 'Grep x' },
+      {
+        card: 'search',
+        shape: 'matches',
+        files: [{ path: 'a.ts', matches: [{ lineNumber: 1, line: 'one' }, { lineNumber: 2, line: 'two' }] }],
+        truncated: true,
+        total: 9,
+      },
+    )
+    expect(rendered).toContain('Grep x')
+    expect(rendered).toContain('a.ts')
+    expect(rendered).toContain('one')
+    expect(rendered).toContain('showing 2 of 9')
+  })
+
+  it('draws a path list without a cap signal and falls back to the Tool name', async () => {
+    const rendered = await render(
+      undefined,
+      { card: 'search', shape: 'paths', paths: ['a.ts', 'b.ts'], truncated: false, total: 2 },
+    )
+    expect(rendered).toContain('✔ tool')
+    expect(rendered).toContain('a.ts')
+    expect(rendered).toContain('b.ts')
+    expect(rendered).not.toContain('showing')
+  })
+
+  it('folds a long search body', async () => {
+    const matches = Array.from({ length: 14 }, (_, index) => ({ lineNumber: index + 1, line: `line ${String(index)}` }))
+    const rendered = await render(
+      undefined,
+      { card: 'search', shape: 'matches', files: [{ path: 'a.ts', matches }], truncated: false, total: 14 },
+    )
+    expect(rendered).toContain('more lines')
+  })
+
+  it('draws web search sources, the answer, and the cap signal', async () => {
+    const rendered = await render(
+      undefined,
+      {
+        card: 'web',
+        kind: 'search',
+        sources: [{ url: 'https://a', title: 'A' }, { url: 'https://b' }, { url: 'https://c', title: '' }],
+        answer: 'An answer',
+        truncated: true,
+      },
+    )
+    expect(rendered).toContain('A — https://a')
+    expect(rendered).toContain('https://b')
+    expect(rendered).toContain('An answer')
+    expect(rendered).toContain('… more sources')
+  })
+
+  it('omits the web search answer and cap signal when neither is declared', async () => {
+    const rendered = await render(undefined, { card: 'web', kind: 'search', sources: [], truncated: false })
+    expect(rendered).toContain('✔ tool')
+    expect(rendered).not.toContain('more sources')
+    expect(rendered).not.toContain('An answer')
+  })
+
+  it('draws a web fetch summary and its truncation notice', async () => {
+    const truncated = await render(undefined, { card: 'web', kind: 'fetch', url: 'https://x', statusCode: 404, truncated: true })
+    expect(truncated).toContain('https://x · HTTP 404')
+    expect(truncated).toContain('… body truncated')
+
+    const whole = await render({ card: 'generic', title: 'Fetch' }, { card: 'web', kind: 'fetch', url: 'https://y', statusCode: 200, truncated: false })
+    expect(whole).toContain('Fetch')
+    expect(whole).not.toContain('… body truncated')
+  })
+
+  it('draws a pending non-empty diff before the result settles', async () => {
+    const rendered = await render(
+      { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      undefined,
+      { settle: false },
+    )
+    expect(rendered).toContain('⏺ Edit a.ts')
+    expect(rendered).toContain('+ new')
+    expect(rendered).toContain('- old')
+  })
+
+  it('draws a raw row with its error and result when no view resolves', async () => {
+    const rendered = await render(undefined, undefined, {
+      settle: true,
+      isError: true,
+      error: { name: 'FsError', code: 'FS_NOT_OBSERVED' },
+      raw: 'the file was not observed',
+    })
+    expect(rendered).toContain('✘ tool')
+    expect(rendered).toContain('FsError: FS_NOT_OBSERVED')
+    expect(rendered).toContain('the file was not observed')
+  })
+
+  it('draws a raw heading with no body before a result settles', async () => {
+    const rendered = await render(undefined, undefined, { settle: false })
+    expect(rendered).toContain('⏺ tool')
+    expect(rendered.trim().split('\n')).toHaveLength(1)
+  })
+
+  it('draws a diff whose card declares no title under the Tool name', async () => {
+    const rendered = await render(undefined, { card: 'diff', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] })
+    expect(rendered).toContain('✔ tool')
+    expect(rendered).toContain('+ new')
+  })
+
+  it('reports the cap on a truncated path list', async () => {
+    const rendered = await render(
+      undefined,
+      { card: 'search', shape: 'paths', paths: ['a.ts'], truncated: true, total: 9 },
+    )
+    expect(rendered).toContain('showing 1 of 9')
+  })
+
+  it('falls back to the raw row for an empty diff hunk list', async () => {
+    const pending = await render({ card: 'diff', title: 'Edit a.ts', diffs: [] }, undefined)
+    expect(pending).toContain('⏺ tool')
+    expect(pending).not.toContain('Edit a.ts')
+
+    const settled = await render(
+      { card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
+      { card: 'diff', diffs: [] },
+    )
+    expect(settled).toContain('raw result text')
+    expect(settled).not.toContain('+ new')
   })
 })
 

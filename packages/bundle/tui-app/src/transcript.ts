@@ -10,10 +10,10 @@ import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { expandAssistantStream } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord, ContentBlock, MessageSource, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type { FileDiff } from '@deepseek-ai/dsh-tools'
+import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { imageMarker } from './images.ts'
-import type { ToolDiffCard, ToolPresentationResolver } from './tool-view.ts'
+import type { ToolPresentationResolver } from './tool-view.ts'
 
 /** A human prompt row. */
 export interface UserEntry {
@@ -63,10 +63,10 @@ export interface ToolEntry {
   result: string
   /** Failure identity when the Tool reported an error. */
   error?: string
-  /** Heading the Tool declared for its diff card, replacing the derived name and summary. */
-  title?: string | undefined
-  /** File hunks the Tool declared, rendered as a diff card instead of the result text. */
-  diffs?: readonly FileDiff[] | undefined
+  /** The presentation view the Tool declared for its call, when it declared one. */
+  callView?: ToolCallView | undefined
+  /** The presentation view the Tool declared for its settled result; absent keeps the call view. */
+  resultView?: ToolResultView | undefined
 }
 
 /** An app-level account that belongs to no message: injected context, turn outcomes, discarded attempts. */
@@ -319,7 +319,8 @@ export class TerminalTranscript {
       status: 'running',
       result: '',
     }
-    this.applyCard(row, this.views?.call(data.name, data.arguments))
+    const callView = this.views?.call(data.name, data.arguments)
+    if (callView !== undefined) row.callView = callView
     this.rows.push(row)
     this.toolByCallId.set(data.callId, row)
     return this.changed()
@@ -333,35 +334,30 @@ export class TerminalTranscript {
     row.status = isError ? 'error' : 'ok'
     row.result = textOfBlocks(message.content)
     if (data.error !== undefined) row.error = `${data.error.name}: ${data.error.code}`
-    // A failed mutation's card no longer describes the file, so it is dropped
-    // with the outcome. A successful result replaces the pending card when the
-    // Tool declares one; a Tool that declares only `presentCall` (for example
-    // `str_replace_editor`) keeps the card its call already produced.
+    // A failed call's view no longer describes the outcome, so both views are
+    // dropped and the raw error text is what the user needs. A successful
+    // result installs the Tool's result view; a Tool that declares none (for
+    // example `str_replace_editor`) keeps the call-time view, and an empty hunk
+    // list clears the row back to raw rendering.
     if (isError) {
-      row.title = undefined
-      row.diffs = undefined
+      row.callView = undefined
+      row.resultView = undefined
     } else {
-      this.applyCard(row, this.views?.result(row.name, row.args, {
+      const view = this.views?.result(row.name, row.args, {
         content: [...message.content],
         isError: false,
         ...data.meta === undefined ? {} : { meta: data.meta },
-      }))
+      })
+      if (view !== undefined) {
+        if (view.card === 'diff' && view.diffs.length === 0) {
+          row.callView = undefined
+          row.resultView = undefined
+        } else {
+          row.resultView = view
+        }
+      }
     }
     return this.changed()
-  }
-
-  /**
-   * Copy a resolved diff card onto one Tool row.
-   *
-   * An absent title keeps the call-time heading, and an empty hunk list clears
-   * the row back to raw rendering.
-   * @param row - the row the card belongs to.
-   * @param card - the resolved card, or undefined for another presentation.
-   */
-  private applyCard(row: ToolEntry, card: ToolDiffCard | undefined): void {
-    if (card === undefined) return
-    if (card.title !== undefined) row.title = card.title
-    row.diffs = card.diffs.length > 0 ? card.diffs : undefined
   }
 
   private applyTurnEnd(data: SessionEvent<'turn/end'>['data']): boolean {

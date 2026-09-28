@@ -94,7 +94,7 @@ spec 提供同步的 `cancel`、在资源清理后 settle 且不 reject 的 `don
 
 ## 终端展示
 
-终端界面是这些展示器的 Host 消费方。它在折叠每条 `tool/call` 与 `tool/result` 事件时解析 `ctx.tools.get(name, agent)`，并把声明的视图收窄为 `card: 'diff'`，因此文件变更会渲染为统一 diff，而不是其面向模型的确认句。工具只需声明 `presentCall`／`presentResult` 即可触达终端；终端不持有任何工具名称知识，其他所有卡片仍渲染为工具的原始行。[TUI 消费 Host 工具呈现 Agent Note](../../.agents/notes/implemented/architecture/2026-09-13-tui-host-tool-presentation.zh.md)规定收窄与回退规则。
+终端界面是这些展示器的 Host 消费方。它在折叠每条 `tool/call` 与 `tool/result` 事件时解析 `ctx.tools.get(name, agent)`，并把声明的调用或结果视图交给对话记录。渲染器把每种卡片——generic、terminal、diff、read、search 与 web——都绘制为终端行，因此文件变更渲染为统一 diff，前台命令渲染为终端卡片，而不是其面向模型的结果句。工具只需声明 `presentCall`／`presentResult` 即可触达终端；终端不持有任何工具名称知识，未声明视图的工具渲染为其原始行。[TUI 消费 Host 工具呈现 Agent Note](../../.agents/notes/implemented/architecture/2026-09-13-tui-host-tool-presentation.zh.md)规定解析与回退规则。
 
 ## Web Client 展示
 

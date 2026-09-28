@@ -92,7 +92,7 @@ The neutral vocabulary lives in `dsh-tools`; tools never import a UI or transpor
 
 ## Terminal presentation
 
-The terminal surface is the Host consumer of these presenters. It resolves `ctx.tools.get(name, agent)` while folding each `tool/call` and `tool/result` event and narrows the declared view to `card: 'diff'`, so a mutation renders as a unified diff instead of its model-facing confirmation sentence. A Tool reaches the terminal by declaring `presentCall`/`presentResult`; the terminal holds no Tool-name knowledge, and every other card still renders as the tool's raw row. The [TUI Host tool presentation Agent Note](../../.agents/notes/implemented/architecture/2026-09-13-tui-host-tool-presentation.md) owns the narrowing and fallback rules.
+The terminal surface is the Host consumer of these presenters. It resolves `ctx.tools.get(name, agent)` while folding each `tool/call` and `tool/result` event and hands the declared call or result view to the transcript. The renderer draws each card — generic, terminal, diff, read, search, and web — as terminal rows, so a mutation renders as a unified diff and a foreground command as a terminal card instead of their model-facing result sentence. A Tool reaches the terminal by declaring `presentCall`/`presentResult`; the terminal holds no Tool-name knowledge, and a Tool that declares no view renders as its raw row. The [TUI Host tool presentation Agent Note](../../.agents/notes/implemented/architecture/2026-09-13-tui-host-tool-presentation.md) owns the resolution and fallback rules.
 
 ## Web Client presentation
 

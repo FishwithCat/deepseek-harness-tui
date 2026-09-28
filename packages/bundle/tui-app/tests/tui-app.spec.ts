@@ -1035,6 +1035,65 @@ describe('TuiApp tool diffs', () => {
     expect(rendered).not.toContain('has been updated successfully')
     await test.app.stop(0)
   })
+
+  it('renders a terminal card through the Host presenter it resolves from the registry', async () => {
+    const test = await bench({
+      afterPrompt(session, message) {
+        const turn = session.seq + 1
+        const callId = 'call-run' as ToolCallId
+        session.append('turn/start', { turn })
+        session.append('step/start', { turn, step: 1 })
+        session.append('user/message', message, { surfaceOp: 'append' })
+        session.append('assistant/message', {
+          turn,
+          step: 1,
+          stream: [],
+          message: createAssistantMessage({
+            content: [{ type: 'text', text: 'Running now.' }],
+            source: { provider: 'test-provider', model: 'test-model' },
+          }),
+        }, { surfaceOp: 'append' })
+        session.append('tool/call', {
+          turn,
+          step: 1,
+          callId,
+          name: 'run',
+          arguments: JSON.stringify({ command: 'run --now' }),
+        })
+        session.append('tool/result', {
+          turn,
+          step: 1,
+          message: createToolResultMessage({
+            callId,
+            content: [{ type: 'text', text: 'done\n[exit code: 3]' }],
+            isError: false,
+          }),
+        }, { surfaceOp: 'append' })
+        session.append('step/end', { turn, step: 1 })
+        session.append('turn/end', { turn, reason: { kind: 'completed' } })
+      },
+    }, { tools: true })
+    test.ctx.tools.register(defineTool({
+      name: 'run',
+      description: 'Stub terminal over the real registry.',
+      parameters: { command: { type: 'string', required: true } },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value }],
+      },
+      execute: () => Promise.resolve('done'),
+      presentCall: args => ({ card: 'terminal', title: args.command, cwd: '/work' }),
+      presentResult: () => ({ card: 'terminal', output: 'done', exitCode: 3 }),
+    }))
+    test.terminal.feed('run it')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('exit 3') })
+    const rendered = plain(test.terminal.output)
+    expect(rendered).toContain('run --now')
+    expect(rendered).toContain('/work')
+    expect(rendered).not.toContain('exit code: 3')
+    await test.app.stop(0)
+  })
 })
 
 describe('TuiApp plan mode', () => {

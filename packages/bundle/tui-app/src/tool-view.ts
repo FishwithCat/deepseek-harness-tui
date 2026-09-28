@@ -2,38 +2,31 @@
  * Host tool-presentation bridge for the terminal surface: the Host consumer
  * of `ToolDefinition.presentCall`/`presentResult` anticipated by the
  * [decision](../../../../.agents/notes/implemented/architecture/2026-08-23-client-derived-tool-presentation.md).
- * The bridge narrows the provider-neutral view vocabulary to the one card this
- * surface draws today — `card: 'diff'` — so every other card falls back to the
- * surface's ordinary tool row.
+ * The bridge resolves the acting scope's Tool definition and hands the declared
+ * call or result view to the transcript unchanged; the terminal renderer
+ * switches on the card tag and degrades to the surface's ordinary tool row when
+ * a Tool declares no view.
  * @module @deepseek-ai/dsh-tui-app/tool-view
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { FileDiff, ToolCallView, ToolDefinition, ToolResult, ToolResultView } from '@deepseek-ai/dsh-tools'
+import type { ToolCallView, ToolDefinition, ToolResult, ToolResultView } from '@deepseek-ai/dsh-tools'
 
-/** The diff card the terminal surface renders, narrowed from the Host vocabulary. */
-export interface ToolDiffCard {
-  /** Heading the tool declared; absent keeps the call-time heading. */
-  title?: string | undefined
-  /** The hunks to draw, in the order the tool declared them. */
-  diffs: readonly FileDiff[]
-}
-
-/** Resolves the diff card a Tool declared for one call and its settled result. */
+/** Resolves the presentation view a Tool declared for one call and its settled result. */
 export interface ToolPresentationResolver {
   /**
    * @param name - the Tool name as the model requested it.
    * @param argsJson - the raw arguments JSON the model produced.
-   * @returns the pending diff card, or undefined for every other presentation.
+   * @returns the pending call view, or undefined when the Tool declares none.
    */
-  call(name: string, argsJson: string): ToolDiffCard | undefined
+  call(name: string, argsJson: string): ToolCallView | undefined
   /**
    * @param name - the Tool name as the model requested it.
    * @param argsJson - the raw arguments JSON the model produced.
    * @param result - the settled result projection the durable event carries.
-   * @returns the completed diff card, or undefined for every other presentation.
+   * @returns the completed result view, or undefined when the Tool declares none.
    */
-  result(name: string, argsJson: string, result: ToolResult): ToolDiffCard | undefined
+  result(name: string, argsJson: string, result: ToolResult): ToolResultView | undefined
 }
 
 /**
@@ -49,21 +42,11 @@ function parseArguments(argsJson: string): Record<string, unknown> | undefined {
   try {
     value = JSON.parse(argsJson)
   } catch {
-    // The model produced arguments its Tool will reject; there is no card to derive.
+    // The model produced arguments its Tool will reject; there is no view to derive.
     return undefined
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
   return value as Record<string, unknown>
-}
-
-/**
- * Narrow one declared view to the diff card this surface draws.
- * @param view - the view a presenter returned, when it returned one.
- * @returns the diff card, or undefined for another card or no view.
- */
-function diffCard(view: ToolCallView | ToolResultView | undefined): ToolDiffCard | undefined {
-  if (view === undefined || view.card !== 'diff') return undefined
-  return { title: view.title, diffs: view.diffs }
 }
 
 /**
@@ -74,17 +57,17 @@ function diffCard(view: ToolCallView | ToolResultView | undefined): ToolDiffCard
  * @returns the resolver the transcript folds with.
  */
 export function createToolPresentationResolver(ctx: Context, agent: () => object): ToolPresentationResolver {
-  const resolve = (
+  const resolve = <View>(
     name: string,
     argsJson: string,
-    present: (definition: ToolDefinition, args: Record<string, unknown>) => ToolCallView | ToolResultView | undefined,
-  ): ToolDiffCard | undefined => {
+    present: (definition: ToolDefinition, args: Record<string, unknown>) => View | undefined,
+  ): View | undefined => {
     const args = parseArguments(argsJson)
     if (args === undefined) return undefined
     const definition = ctx.get('tools')?.get(name, agent())
     if (definition === undefined) return undefined
     try {
-      return diffCard(present(definition, args))
+      return present(definition, args)
     } catch {
       // A presenter that throws on model-produced arguments must not break the
       // transcript fold that is already rendering the surrounding turn.

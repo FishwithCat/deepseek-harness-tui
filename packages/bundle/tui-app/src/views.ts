@@ -8,13 +8,15 @@
 
 import { CURSOR_MARKER, Key, Markdown, isFocusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
 import type { Component, Editor, Focusable, MarkdownTheme, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import type { FileDiff, ReadFileLine, SearchResultView, WebResultView } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { markdownTheme } from './ansi.ts'
 import type { Styler, TuiTheme } from './ansi.ts'
 import { buildDiffCard } from './diff.ts'
 import type { DiffCard, DiffRow } from './diff.ts'
 import type { ToolEntry, TranscriptEntry, UserEntry } from './transcript.ts'
-import { TerminalTranscript } from './transcript.ts'
+import { TerminalTranscript, textOfBlocks } from './transcript.ts'
 
 /** Indent applied to a Tool row's result body. */
 const TOOL_BODY_INDENT = '    '
@@ -26,6 +28,21 @@ const DIFF_MAX_LINES = 24
 const TOOL_SUMMARY_MAX_CHARS = 96
 /** Argument keys worth showing alone, in preference order. */
 const TOOL_SUMMARY_KEYS = ['command', 'path', 'file_path', 'pattern', 'query', 'url', 'prompt', 'description', 'name']
+
+/**
+ * The presentation one Tool row draws, after the call and result views are
+ * reconciled. It mirrors the Host vocabulary but merges a result card with the
+ * call card it completes, so a terminal result keeps the command heading and
+ * working directory its call declared. Fields the terminal cannot draw — a
+ * generic card's `kind` and a read card's `lang` — are not carried.
+ */
+type RowCard =
+  | { card: 'generic'; title?: string | undefined; rawInput?: unknown; content?: readonly ContentBlock[] | undefined }
+  | { card: 'terminal'; title?: string | undefined; description?: string | undefined; cwd?: string | undefined; output?: string | undefined; exitCode?: number | undefined; signal?: string | undefined }
+  | { card: 'diff'; title?: string | undefined; diffs: readonly FileDiff[] }
+  | { card: 'read'; title?: string | undefined; path: string; offset: number; lines: readonly ReadFileLine[]; totalLines: number }
+  | { card: 'search'; title?: string | undefined; view: SearchResultView }
+  | { card: 'web'; title?: string | undefined; view: WebResultView }
 
 /**
  * Collapse text to a single terminal line.
@@ -64,6 +81,82 @@ export function summarizeToolArguments(args: string): string {
   }
   const pairs = Object.entries(record).map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`)
   return pairs.length === 0 ? '' : singleLine(pairs.join(' '))
+}
+
+/**
+ * Unwrap the single fenced code block a generic result view uses as its
+ * UI-facing form. The terminal draws plain text, so the block's text is the
+ * body and the markdown fence around it would print literally. Any other text,
+ * including a fence without a trailing block, is returned unchanged.
+ * @param text - the generic card's text content.
+ * @returns the block's body, or the original text.
+ */
+function unfence(text: string): string {
+  const match = /^```[^\n]*\n([\s\S]*)\n```$/u.exec(text)
+  return match?.[1] ?? text
+}
+
+/**
+ * Resolve the card one Tool row draws from the views its call and result
+ * declared.
+ *
+ * A settled result view wins over the call view; a result that omits a title
+ * or the call-only terminal fields keeps the call values they replace, and a
+ * result the Tool did not declare leaves the call view in place. An error, a
+ * missing resolver, or an empty diff hunk list falls back to the raw row.
+ * @param entry - the folded Tool row.
+ * @returns the card to draw, or undefined for the raw name-and-result row.
+ */
+function resolveRowCard(entry: ToolEntry): RowCard | undefined {
+  if (entry.status === 'error') return undefined
+  const call = entry.callView
+  const result = entry.resultView
+  const callTitle = call === undefined ? undefined : call.title
+  if (result !== undefined) {
+    if (result.card === 'diff') return { card: 'diff', title: result.title ?? callTitle, diffs: result.diffs }
+    if (result.card === 'terminal') {
+      const base = call?.card === 'terminal' ? call : undefined
+      return {
+        card: 'terminal',
+        title: result.title ?? base?.title,
+        description: base?.description,
+        cwd: base?.cwd,
+        output: result.output,
+        exitCode: result.exitCode,
+        signal: result.signal,
+      }
+    }
+    if (result.card === 'read') {
+      return {
+        card: 'read',
+        title: result.title ?? callTitle,
+        path: result.path,
+        offset: result.offset,
+        lines: result.lines,
+        totalLines: result.totalLines,
+      }
+    }
+    if (result.card === 'search') return { card: 'search', title: result.title ?? callTitle, view: result }
+    if (result.card === 'web') return { card: 'web', title: result.title ?? callTitle, view: result }
+    return {
+      card: 'generic',
+      title: result.title ?? callTitle,
+      rawInput: call?.card === 'generic' ? call.rawInput : undefined,
+      content: result.content ?? (call?.card === 'generic' ? call.content : undefined),
+    }
+  }
+  if (call === undefined) return undefined
+  switch (call.card) {
+    case 'generic':
+      return { card: 'generic', title: call.title, rawInput: call.rawInput, content: call.content }
+    case 'terminal':
+      return { card: 'terminal', title: call.title, description: call.description, cwd: call.cwd }
+    case 'diff':
+      return call.diffs.length === 0 ? undefined : { card: 'diff', title: call.title, diffs: call.diffs }
+    /* v8 ignore next -- closed-union exhaustiveness guard */
+    default:
+      return assertNever(call, 'tool call view card')
+  }
 }
 
 /**
@@ -208,17 +301,36 @@ export class TranscriptView implements Component {
     const style = entry.status === 'running'
       ? this.theme.tool
       : entry.status === 'ok' ? this.theme.toolOk : this.theme.toolError
-    // A failed mutation reverted or never applied, so its card no longer
-    // describes the file and the raw error text is what the user needs.
-    const card = entry.status === 'error' || entry.diffs === undefined ? undefined : buildDiffCard(entry.diffs)
-    const heading = card === undefined
-      ? this.nameHeading(entry, marker, style)
-      : this.diffHeading(entry, card, marker, style)
-    const lines = [truncateToWidth(heading, width)]
+    const card = resolveRowCard(entry)
+    // An error clears every view in the fold, so a card and an error never
+    // coexist; the raw branch below is the only one that draws one.
+    const lines = card === undefined
+      ? [truncateToWidth(this.nameHeading(entry, marker, style), width)]
+      : this.cardLines(entry, card, marker, style, width)
     if (entry.error !== undefined) lines.push(...prefixBody(entry.error, width, this.theme.error('  '), '  '))
-    if (card !== undefined) lines.push(...this.diffBody(card, width))
-    else if (entry.result !== '') lines.push(...toolBody(entry.result, width, this.theme.toolResult))
+    if (card === undefined && entry.result !== '') lines.push(...toolBody(entry.result, width, this.theme.toolResult))
     return lines
+  }
+
+  /** One Tool row's heading and body for the card its views resolved to. */
+  private cardLines(entry: ToolEntry, card: RowCard, marker: string, style: Styler, width: number): string[] {
+    switch (card.card) {
+      case 'generic':
+        return this.genericLines(entry, card, marker, style, width)
+      case 'terminal':
+        return this.terminalLines(entry, card, marker, style, width)
+      case 'diff':
+        return this.diffLines(entry, card, marker, style, width)
+      case 'read':
+        return this.readLines(card, marker, style, width)
+      case 'search':
+        return this.searchLines(entry, card, marker, style, width)
+      case 'web':
+        return this.webLines(entry, card, marker, style, width)
+      /* v8 ignore next -- closed-union exhaustiveness guard */
+      default:
+        return assertNever(card, 'tool row card')
+    }
   }
 
   /** The ordinary heading: the Tool name and a one-line argument summary. */
@@ -227,9 +339,149 @@ export class TranscriptView implements Component {
     return `${style(marker)} ${this.theme.bold(singleLine(entry.name))}${summary === '' ? '' : this.theme.dim(`(${summary})`)}`
   }
 
+  /**
+   * A generic card's rows: the Tool's declared title (falling back to the
+   * ordinary name heading) and raw-input summary, then its UI-facing content or
+   * the raw result text.
+   */
+  private genericLines(entry: ToolEntry, card: Extract<RowCard, { card: 'generic' }>, marker: string, style: Styler, width: number): string[] {
+    const heading = card.title === undefined
+      ? this.nameHeading(entry, marker, style)
+      : `${style(marker)} ${this.theme.bold(singleLine(card.title))}${this.rawInputSuffix(card.title, card.rawInput)}`
+    const lines = [truncateToWidth(heading, width)]
+    const content = card.content === undefined ? '' : unfence(textOfBlocks(card.content))
+    const body = content !== '' ? content : entry.result
+    if (body !== '') lines.push(...toolBody(body, width, this.theme.toolResult))
+    return lines
+  }
+
+  /**
+   * The parenthesized suffix a generic card shows for its salient raw input.
+   * A title that already spells the input out suppresses the repetition.
+   * @param title - the card's declared title.
+   * @param rawInput - the presenter's salient input.
+   * @returns the suffix, or an empty string when it adds nothing.
+   */
+  private rawInputSuffix(title: string, rawInput: unknown): string {
+    if (rawInput === undefined) return ''
+    // Presenter raw input is JSON-safe by contract, so stringify always yields text.
+    const text = typeof rawInput === 'string' ? rawInput : JSON.stringify(rawInput)
+    if (text === '' || title.includes(text)) return ''
+    return ` ${this.theme.dim(`(${truncateToWidth(singleLine(text), TOOL_SUMMARY_MAX_CHARS, '…')})`)}`
+  }
+
+  /** A terminal card's rows: description, command heading with cwd and exit state, then output. */
+  private terminalLines(entry: ToolEntry, card: Extract<RowCard, { card: 'terminal' }>, marker: string, style: Styler, width: number): string[] {
+    const lines: string[] = []
+    if (card.description !== undefined && card.description !== '') {
+      lines.push(truncateToWidth(this.theme.dim(singleLine(card.description)), width))
+    }
+    const title = card.title ?? entry.name
+    const cwd = card.cwd === undefined || card.cwd === '' ? '' : this.theme.dim(`${singleLine(card.cwd)} `)
+    lines.push(truncateToWidth(`${style(marker)} ${cwd}${this.theme.bold(singleLine(title))}${this.exitPill(card)}`, width))
+    const output = card.output ?? entry.result
+    if (output !== '') lines.push(...toolBody(output, width, this.theme.toolResult))
+    return lines
+  }
+
+  /** The exit-status pill a settled terminal card declares, when it declares one. */
+  private exitPill(card: Extract<RowCard, { card: 'terminal' }>): string {
+    if (card.exitCode !== undefined) {
+      return card.exitCode === 0
+        ? `  ${this.theme.dim('exit 0')}`
+        : `  ${this.theme.error(`exit ${String(card.exitCode)}`)}`
+    }
+    if (card.signal !== undefined) return `  ${this.theme.error(singleLine(card.signal))}`
+    return ''
+  }
+
+  /** A mutation's rows: the declared title with +/- totals, then the unified diff. */
+  private diffLines(entry: ToolEntry, card: Extract<RowCard, { card: 'diff' }>, marker: string, style: Styler, width: number): string[] {
+    const built = buildDiffCard(card.diffs)
+    const lines = [truncateToWidth(this.diffHeading(entry, card.title, built, marker, style), width)]
+    lines.push(...this.diffBody(built, width))
+    return lines
+  }
+
+  /** A read card's rows: the title and window extent, then numbered file lines. */
+  private readLines(card: Extract<RowCard, { card: 'read' }>, marker: string, style: Styler, width: number): string[] {
+    const label = card.title ?? `Read ${card.path}`
+    const first = card.lines.at(0)
+    const last = card.lines.at(-1)
+    const extent = first === undefined || last === undefined
+      ? `line ${String(card.offset)}`
+      : first.number === last.number ? `line ${String(first.number)}` : `lines ${String(first.number)}-${String(last.number)}`
+    const stat = this.theme.dim(`  ${extent} of ${String(card.totalLines)}`)
+    const lines = [truncateToWidth(`${style(marker)} ${this.theme.bold(singleLine(label))}${stat}`, width)]
+    lines.push(...this.boundedRows(card.lines.map(line => `${this.theme.dim(String(line.number).padStart(4))} ${this.theme.toolResult(line.text)}`), width))
+    return lines
+  }
+
+  /** A search card's rows: grouped matched lines or a path list, with the cap signal. */
+  private searchLines(entry: ToolEntry, card: Extract<RowCard, { card: 'search' }>, marker: string, style: Styler, width: number): string[] {
+    const label = card.title ?? entry.name
+    const lines = [truncateToWidth(`${style(marker)} ${this.theme.bold(singleLine(label))}${this.searchCap(card.view)}`, width)]
+    const rows: string[] = []
+    if (card.view.shape === 'matches') {
+      for (const file of card.view.files) {
+        rows.push(this.theme.bold(singleLine(file.path)))
+        for (const match of file.matches) rows.push(`  ${this.theme.dim(`${String(match.lineNumber)}:`)} ${this.theme.toolResult(match.line)}`)
+      }
+    } else {
+      for (const path of card.view.paths) rows.push(this.theme.toolResult(singleLine(path)))
+    }
+    lines.push(...this.boundedRows(rows, width))
+    return lines
+  }
+
+  /** The cap signal a truncated search card declares. */
+  private searchCap(view: SearchResultView): string {
+    if (!view.truncated) return ''
+    const retained = view.shape === 'matches'
+      ? view.files.reduce((sum, file) => sum + file.matches.length, 0)
+      : view.paths.length
+    return `  ${this.theme.dim(`showing ${String(retained)} of ${String(view.total)}`)}`
+  }
+
+  /** A web card's rows: the cited sources with the provider answer, or the fetch summary. */
+  private webLines(entry: ToolEntry, card: Extract<RowCard, { card: 'web' }>, marker: string, style: Styler, width: number): string[] {
+    const view = card.view
+    const label = card.title ?? entry.name
+    const lines = [truncateToWidth(`${style(marker)} ${this.theme.bold(singleLine(label))}`, width)]
+    const rows: string[] = []
+    if (view.kind === 'search') {
+      for (const source of view.sources) {
+        const sourceLabel = source.title === undefined || source.title === '' ? source.url : `${source.title} — ${source.url}`
+        rows.push(this.theme.toolResult(singleLine(sourceLabel)))
+      }
+      if (view.answer !== undefined && view.answer !== '') rows.push(this.theme.dim(singleLine(view.answer)))
+      if (view.truncated) rows.push(this.theme.dim('… more sources'))
+    } else {
+      rows.push(this.theme.toolResult(`${singleLine(view.url)} · HTTP ${String(view.statusCode)}`))
+      if (view.truncated) rows.push(this.theme.dim('… body truncated'))
+    }
+    lines.push(...this.boundedRows(rows, width))
+    return lines
+  }
+
+  /**
+   * Indent and bound pre-styled body rows to the viewport width.
+   * @param rows - the already-styled rows.
+   * @param width - the viewport width.
+   * @returns the indented rows, folded when they exceed the body budget.
+   */
+  private boundedRows(rows: readonly string[], width: number): string[] {
+    const bodyWidth = Math.max(1, width - TOOL_BODY_INDENT.length)
+    const shown = rows.slice(0, TOOL_RESULT_MAX_LINES).map(row => TOOL_BODY_INDENT + truncateToWidth(row, bodyWidth))
+    if (rows.length > TOOL_RESULT_MAX_LINES) {
+      shown.push(TOOL_BODY_INDENT + this.theme.dim(`… ${String(rows.length - TOOL_RESULT_MAX_LINES)} more lines`))
+    }
+    return shown
+  }
+
   /** A mutation's heading: the Tool's own card title and the change's +/- totals. */
-  private diffHeading(entry: ToolEntry, card: DiffCard, marker: string, style: Styler): string {
-    const label = entry.title ?? singleLine(entry.name)
+  private diffHeading(entry: ToolEntry, title: string | undefined, card: DiffCard, marker: string, style: Styler): string {
+    const label = title ?? singleLine(entry.name)
     const stat = card.added === 0 && card.removed === 0
       ? ''
       : `${this.theme.dim('  ')}${this.theme.diffAdd(`+${String(card.added)}`)}${this.theme.dim(' ')}${this.theme.diffDel(`-${String(card.removed)}`)}`

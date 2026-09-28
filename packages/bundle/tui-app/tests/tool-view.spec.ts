@@ -1,6 +1,6 @@
 /**
- * The Host tool-presentation bridge: the diff card a Tool declares, narrowed
- * from the raw call and result the terminal surface folds.
+ * The Host tool-presentation bridge: the call and result views a Tool declares,
+ * resolved from the raw call and result the terminal surface folds.
  */
 
 import { afterEach, describe, expect, it } from 'vitest'
@@ -67,25 +67,26 @@ function registerGeneric(ctx: Context): void {
 }
 
 describe('createToolPresentationResolver', () => {
-  it('narrows the pending and settled diff cards a Tool declares', async () => {
+  it('passes the pending and settled views a Tool declares through unchanged', async () => {
     const ctx = await registry()
     registerMutate(ctx)
     const resolver = createToolPresentationResolver(ctx, () => ({}))
     expect(resolver.call('mutate', '{"file_path":"src/a.ts"}')).toEqual({
+      card: 'diff',
       title: 'Mutate src/a.ts',
       diffs: [{ path: 'src/a.ts', oldText: 'old', newText: 'new' }],
     })
     expect(resolver.result('mutate', '{"file_path":"src/a.ts"}', {
       content: [{ type: 'text', text: 'ok' }],
       isError: false,
-    })).toEqual({ title: 'Mutated', diffs: [{ path: 'a', oldText: null, newText: 'applied' }] })
+    })).toEqual({ card: 'diff', title: 'Mutated', diffs: [{ path: 'a', oldText: null, newText: 'applied' }] })
   })
 
-  it('declines every other card, an unknown tool, and a missing registry', async () => {
+  it('keeps a generic card, and declines an unknown tool or a missing registry', async () => {
     const ctx = await registry()
     registerGeneric(ctx)
     const resolver = createToolPresentationResolver(ctx, () => ({}))
-    expect(resolver.call('generic', '{}')).toBeUndefined()
+    expect(resolver.call('generic', '{}')).toEqual({ card: 'generic', title: 'Generic' })
     expect(resolver.call('missing', '{}')).toBeUndefined()
 
     const bare = new Context()
@@ -139,6 +140,7 @@ describe('createToolPresentationResolver', () => {
     const resolver = createToolPresentationResolver(ctx, () => ({}))
     const meta = { diffs: [{ path: 'a', oldText: 'x', newText: 'y' }] }
     expect(resolver.result('meta', '{}', { content: [], isError: false, meta })).toEqual({
+      card: 'diff',
       title: 'meta',
       diffs: meta.diffs,
     })
