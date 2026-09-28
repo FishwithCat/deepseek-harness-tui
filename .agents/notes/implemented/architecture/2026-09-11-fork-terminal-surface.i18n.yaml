@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-11-fork-terminal-surface.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-11-fork-terminal-surface.md
-2026-09-11-fork-terminal-surface.md: 509d5be87787cc229e252dbf166f6d79c266c0ce
-2026-09-11-fork-terminal-surface.zh.md: 46f919968041f122c8402268dec2c7945376e0dd
+/agent-note-the-fork-terminal-surface:
+  en: 77bbf0b6d3d6eaaa
+  zh: 43a12cd4da5cb423
+/agent-note-the-fork-terminal-surface/problem:
+  en: 8d3a359891125cf2
+  zh: bbee6ea300567a10
+/agent-note-the-fork-terminal-surface/decision:
+  en: 04ca1a55361f26a5
+  zh: e2ced0d45de94f36
+/agent-note-the-fork-terminal-surface/reintroduction-after-the-upstream-removal:
+  en: 48be020dcb299ffd
+  zh: 65abdb56bb1d4fee
+/agent-note-the-fork-terminal-surface/alternatives-considered:
+  en: d74050a7cda116a7
+  zh: 0254bd3d9f8e0bf9
+/agent-note-the-fork-terminal-surface/consequences:
+  en: 3faf37daa449b61d
+  zh: 458520e404fa64b6

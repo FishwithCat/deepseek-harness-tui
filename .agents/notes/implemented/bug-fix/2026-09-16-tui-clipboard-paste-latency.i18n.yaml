@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-16-tui-clipboard-paste-latency.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-16-tui-clipboard-paste-latency.md
-2026-09-16-tui-clipboard-paste-latency.md: 44635fef2838800c476c1e12ba5f94d5bffcb3fa
-2026-09-16-tui-clipboard-paste-latency.zh.md: 72ca53ebf3a45ea166650704a90717f2940dc656
+/agent-note-tui-clipboard-paste-latency:
+  en: a83ebdc1d0c0c7a9
+  zh: 64b1662d26f3cb09
+/agent-note-tui-clipboard-paste-latency/problem:
+  en: 92c7a5f1bd7b81e0
+  zh: ea8ba3aa9814b6c7
+/agent-note-tui-clipboard-paste-latency/decision:
+  en: 3e4f37f6efc4d751
+  zh: da6b1acd1a06b9bb
+/agent-note-tui-clipboard-paste-latency/alternatives-considered:
+  en: f4e249bed2c8a418
+  zh: b95f7d130358db00
+/agent-note-tui-clipboard-paste-latency/consequences:
+  en: cc54da401beaa46f
+  zh: 5414e2d6e3381452
+/agent-note-tui-clipboard-paste-latency/testing:
+  en: a96bfb30a3c57d14
+  zh: df90837bbab45f56

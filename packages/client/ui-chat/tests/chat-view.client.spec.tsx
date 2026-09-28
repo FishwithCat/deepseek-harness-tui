@@ -9,7 +9,7 @@ import { useEffect } from 'react'
 import type {
   AssistantMessageNode, ChatNode, ChatNodeHookContext, ChatNodeOwnerProps, ChatSnapshot,
   ChatViewSlotProps, CommandNode, CompactionSummaryNode, ContextMessageNode, ConversationNode,
-  LegacyConversationSlice, ModelRetryNode, RunningToolCall, SteeringMessageNode,
+  LegacyConversationSlice, ModelRetryNode, StartedToolCall, SteeringMessageNode,
   ToolCallBlock, ToolResultNode, TurnErrorNode, TurnMaxTokensNode, UseChatNodeTurnData,
   TranscriptViewMode, UserMessageNode,
 } from '@deepseek-ai/dsh-client-ui-chat/client'
@@ -206,8 +206,8 @@ const toolResult = (seq: number, callId: string, name = 'bash'): ToolResultNode 
   callTime: seq * 1_000 - 500,
   content: [], isError: false, subCalls: [],
 })
-const runningCall = (callId: string, name = 'bash'): RunningToolCall => ({
-  callId, name, argsRaw: `{"command":"cmd-${callId}"}`, turn: 2, step: 1, time: 1_000, subCalls: [],
+const runningCall = (callId: string, name = 'bash'): StartedToolCall => ({
+  phase: 'start' as const, callId, name, argsRaw: `{"command":"cmd-${callId}"}`, turn: 2, step: 1, time: 1_000, subCalls: [],
 })
 const command = (over: Partial<CommandNode> = {}): CommandNode => ({
   kind: 'command', seq: 5, time: 5_000, commandId: 'cmd-1' as CommandNode['commandId'],
@@ -505,6 +505,10 @@ function turnProcessControl(container: HTMLElement): HTMLButtonElement | null {
   return container.querySelector<HTMLButtonElement>('[data-turn-process]')
 }
 
+function runningContent(container: HTMLElement): HTMLElement | null {
+  return container.querySelector<HTMLElement>('[data-chat-running] > :last-child')
+}
+
 function withClock(time: number, run: () => void): () => void {
   return () => {
     vi.useFakeTimers()
@@ -681,7 +685,7 @@ describe('ChatView', () => {
     expect(parent?.tagName).toBe('DIV')
     fireEvent.change(input, { target: { value: 'retained local input' } })
     const observe = vi.spyOn(ResizeObserver.prototype, 'observe')
-    for (const mode of ['detailed', 'expanded', 'compact'] as const) {
+    for (const mode of ['standard', 'detailed', 'compact'] as const) {
       act(() => { h.setTranscriptView(mode) })
       expect(view.getByRole('textbox', { name: inside.key })).toBe(input)
       expect(input.value).toBe('retained local input')
@@ -690,7 +694,7 @@ describe('ChatView', () => {
     }
     fireEvent.click(groupHeader)
     expect(groupHeader.getAttribute('aria-expanded')).toBe('false')
-    act(() => { h.setTranscriptView('expanded') })
+    act(() => { h.setTranscriptView('detailed') })
     expect(view.getByRole('textbox', { name: inside.key })).toBe(input)
     act(() => { h.setTranscriptView('compact') })
     expect(view.queryByRole('textbox', { name: inside.key })).toBeNull()
@@ -737,10 +741,10 @@ describe('ChatView', () => {
     expect(bodies.map(body => body.hasAttribute('hidden'))).toEqual([true, true, true])
     fireEvent.click(headers[0]!)
 
-    for (const mode of ['detailed', 'expanded', 'compact', 'expanded'] as const) {
+    for (const mode of ['standard', 'detailed', 'compact', 'detailed'] as const) {
       act(() => { h.setTranscriptView(mode) })
-      expect(bodies.map(body => body.hasAttribute('hidden'))).toEqual([false, true, mode !== 'expanded'])
-      expect(headers.map(header => header.closest('[hidden]') !== null)).toEqual([false, false, mode === 'expanded'])
+      expect(bodies.map(body => body.hasAttribute('hidden'))).toEqual([false, true, mode !== 'detailed'])
+      expect(headers.map(header => header.closest('[hidden]') !== null)).toEqual([false, false, mode === 'detailed'])
       expect([...view.container.querySelectorAll('[data-chat-group-key]')]).toEqual(roots)
     }
 
@@ -753,6 +757,16 @@ describe('ChatView', () => {
     expect(bodies[2]!.hasAttribute('hidden')).toBe(true)
     expect(bodies[0]!.hasAttribute('hidden')).toBe(false)
     expect(bodies[1]!.hasAttribute('hidden')).toBe(true)
+
+    act(() => { h.setTranscriptView('verbose') })
+    expect(roots.every(root => root.closest('[hidden]') === null)).toBe(true)
+    expect(headers.every(header => header.closest('[hidden]') !== null)).toBe(true)
+    expect(bodies.every(body => !body.hasAttribute('hidden'))).toBe(true)
+    expect(control.disabled).toBe(true)
+    expect(control.textContent).toContain(h.props.t('message.turnProcess.took', { duration: formatRunDuration(3_000, h.props.t) }))
+    fireEvent.click(control)
+    expect(bodies.every(body => !body.hasAttribute('hidden'))).toBe(true)
+    expect([...view.container.querySelectorAll<HTMLElement>('[data-chat-group-key]')]).toEqual(roots)
   })
 
   it.each([
@@ -918,7 +932,7 @@ describe('ChatView', () => {
     expect(headers).toHaveLength(40)
     const titles = headers.map(header => header.textContent)
 
-    for (const mode of ['detailed', 'expanded', 'compact'] as const) {
+    for (const mode of ['standard', 'detailed', 'compact'] as const) {
       translate.mockClear()
       act(() => { h.setTranscriptView(mode) })
       expect(translate.mock.calls.filter(([key]) => key === 'message.stepProcess.thinking')).toHaveLength(0)
@@ -936,7 +950,7 @@ describe('ChatView', () => {
       groupStore.publish()
     })
     translate.mockClear()
-    act(() => { h.setTranscriptView('detailed') })
+    act(() => { h.setTranscriptView('standard') })
     expect(translate.mock.calls.filter(([key]) => key.startsWith('message.stepProcess.'))).toHaveLength(0)
   })
 
@@ -1319,9 +1333,9 @@ describe('ChatView', () => {
   })
 
   it.each([
-    { mode: 'compact', anchor: 'group' }, { mode: 'detailed', anchor: 'group' },
-    { mode: 'expanded', anchor: 'group' },
-    { mode: 'compact', anchor: 'node' }, { mode: 'detailed', anchor: 'node' }, { mode: 'expanded', anchor: 'node' },
+    { mode: 'compact', anchor: 'group' }, { mode: 'standard', anchor: 'group' },
+    { mode: 'detailed', anchor: 'group' },
+    { mode: 'compact', anchor: 'node' }, { mode: 'standard', anchor: 'node' }, { mode: 'detailed', anchor: 'node' },
   ] as const)(
     'keeps the first visible item in place when paging inserts a steering boundary ($mode, $anchor)', ({ mode, anchor }) => {
       const tool = (seq: number, id: string) => ({ ...toolResult(seq, id), turn: 1 })
@@ -1387,14 +1401,14 @@ describe('ChatView', () => {
 
   it.each([
     { mode: 'compact', hasProcess: false, hasSteering: false },
+    { mode: 'standard', hasProcess: false, hasSteering: false },
     { mode: 'detailed', hasProcess: false, hasSteering: false },
-    { mode: 'expanded', hasProcess: false, hasSteering: false },
     { mode: 'compact', hasProcess: true, hasSteering: false },
+    { mode: 'standard', hasProcess: true, hasSteering: false },
     { mode: 'detailed', hasProcess: true, hasSteering: false },
-    { mode: 'expanded', hasProcess: true, hasSteering: false },
     { mode: 'compact', hasProcess: false, hasSteering: true },
+    { mode: 'standard', hasProcess: false, hasSteering: true },
     { mode: 'detailed', hasProcess: false, hasSteering: true },
-    { mode: 'expanded', hasProcess: false, hasSteering: true },
   ] as const)('keeps the loaded message anchored when paging exposes steering inside a closed Turn ($mode, process=$hasProcess, steer=$hasSteering)', ({ mode, hasProcess, hasSteering }) => {
     const tool = (seq: number, id: string) => ({ ...toolResult(seq, id), turn: 1 })
     const initial = {
@@ -1609,9 +1623,10 @@ describe('ChatView', () => {
     fireEvent.click(within(pendingBubble as HTMLElement).getByRole('button', { name: '复制' }))
     expect(writeText).toHaveBeenCalledWith('interrupt now')
     expect(within(pendingBubble as HTMLElement).queryByRole('button', { name: '在新对话中分支' })).toBeNull()
-    expect(turnProcessControl(view.container)?.textContent).toBe('深度求索中，用时2秒')
+    expect(turnProcessControl(view.container)).toBeNull()
+    expect(runningContent(view.container)?.textContent).toMatch(/^深度求索中，用时 \d+秒\.\.\.$/)
     expect(view.getByRole('status').compareDocumentPosition(view.getByText('interrupt now'))
-      & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
+      & Node.DOCUMENT_POSITION_PRECEDING).not.toBe(0)
 
     act(() => {
       h.setSession({ testInbox: { 'next-turn': [queued], 'next-step': [] } })
@@ -1716,7 +1731,7 @@ describe('ChatView', () => {
     expect(view.getAllByText('即发即显')).toHaveLength(1)
   })
 
-  it.each(['compact', 'detailed', 'expanded'] as const)(
+  it.each(['compact', 'standard', 'detailed'] as const)(
     'keeps the opening echo above a new Turn title and steering below it (%s)', (mode) => {
       const opening = {
         requestId: 'opening' as never, placement: 'transcript' as const,
@@ -1825,7 +1840,7 @@ describe('ChatView', () => {
     expect(view.getByLabelText('回到底部')).toBeTruthy()
   })
 
-  it.each(['compact', 'detailed', 'expanded'] as const)(
+  it.each(['compact', 'standard', 'detailed'] as const)(
     'hides an admitted local steer while its Inbox claim projection is delayed (%s)', (mode) => {
       const pending: InboxState['next-step'] = ['first', 'second'].map(text => ({
         id: text as never, role: 'user', source: { kind: 'user', rpcId: text as never },
@@ -2102,14 +2117,23 @@ describe('ChatView', () => {
     expect(within(cancelledDisclosure).getByRole('status').textContent).toContain('重试已取消')
   })
 
-  it('renders terminal turn failures inline with their durable message and optional code', () => {
-    const h = makeHarness({ nodes: [user(1, 'try'), turnError(2, 'AUTH'), turnError(3)] })
+  it('renders every terminal failure inline with neutral quota copy and no transient notice', () => {
+    const h = makeHarness({ nodes: [
+      user(1, 'try'), turnError(2, 'AUTH'), turnError(3), turnError(4, 'QUOTA'), turnError(5, 'ACCOUNT_QUOTA'),
+    ] })
     const view = render(<h.ChatView {...h.props} />)
     const statuses = view.getAllByRole('status')
     expect(statuses.map(status => status.textContent)).toEqual([
       '本轮运行失败API 密钥无效AUTH',
       '本轮运行失败plugin exploded',
+      '本轮运行失败当前请求的额度已用尽QUOTA',
+      '本轮运行失败当前请求的额度已用尽ACCOUNT_QUOTA',
     ])
+    // The transient notice is the frame-wide host's job; the failure row keeps
+    // neither a recharge affordance nor a toast of its own.
+    expect(view.queryByRole('alert')).toBeNull()
+    expect(view.queryByRole('dialog')).toBeNull()
+    expect(view.queryByRole('button', { name: '去充值' })).toBeNull()
   })
 
   it('renders the max-tokens notice with localized guidance, distinct from turn errors', () => {
@@ -2252,7 +2276,8 @@ describe('ChatView', () => {
     const h = makeHarness({ chat: initial }, { running: true })
     const view = render(<h.ChatView {...h.props} />)
     expect(renderedFlowKinds(view.container)).toEqual(['user', 'turn-process'])
-    expect(turnProcessControl(view.container)?.textContent).toBe('深度求索中，用时4秒')
+    expect(turnProcessControl(view.container)).toBeNull()
+    expect(runningContent(view.container)?.textContent).toMatch(/^深度求索中，用时 \d+秒\.\.\.$/)
     expect(view.container.querySelector('[data-chat-flow-kind="system-prompt"]')).toBeNull()
 
     act(() => {
@@ -2345,7 +2370,7 @@ describe('ChatView', () => {
     expect(answer?.hasAttribute('data-turn-process-answer')).toBe(false)
   })
 
-  it.each(['compact', 'detailed', 'expanded'] as const)(
+  it.each(['compact', 'standard', 'detailed'] as const)(
     'preserves steering-separated process groups in %s mode after Turn completion', (mode) => {
       const nodes = [
         userInTurn(1, 'question', 1),
@@ -2389,7 +2414,7 @@ describe('ChatView', () => {
         view.getByText('second direction').closest('[data-chat-flow-kind]'),
         roots[2], view.getByText('final answer').closest('[data-chat-flow-kind]'),
       ])
-      for (const next of ['compact', 'detailed', 'expanded', mode] as const) {
+      for (const next of ['compact', 'standard', 'detailed', mode] as const) {
         act(() => { h.setTranscriptView(next) })
         expect(visibleOrder()).toEqual(order)
         expect([...view.container.querySelectorAll('[data-chat-group-key]')]).toEqual(roots)
@@ -2434,11 +2459,9 @@ describe('ChatView', () => {
       turnTimings: new Map([[1, { startTime: 0 }]]),
     })
     const view = render(<h.ChatView {...h.props} />)
-    const liveToggle = view.getByRole('button', { name: '深度求索中，用时3秒' }) as HTMLButtonElement
-    expect(liveToggle.disabled).toBe(true)
-    expect(liveToggle.getAttribute('aria-expanded')).toBe('true')
+    expect(turnProcessControl(view.container)).toBeNull()
+    expect(runningContent(view.container)?.textContent).toMatch(/^深度求索中，用时 \d+秒\.\.\.$/)
     const processRow = view.getByText('inspect').closest('[data-chat-flow-kind="assistant-step"]') as HTMLElement
-    fireEvent.click(liveToggle)
     expect(processRow.getAttribute('hidden')).toBeNull()
 
     act(() => {
@@ -2450,7 +2473,7 @@ describe('ChatView', () => {
       })
     })
     const toggle = turnProcessControl(view.container)!
-    expect(toggle).toBe(liveToggle)
+    expect(runningContent(view.container)).toBeNull()
     expect(toggle.textContent).toBe('用时 5秒')
     expect(toggle.disabled).toBe(false)
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
@@ -2476,14 +2499,14 @@ describe('ChatView', () => {
     expect(processRow.getAttribute('hidden')).toBe('until-found')
 
     const toggle = turnProcessControl(view.container)!
-    for (const mode of ['detailed', 'expanded', 'compact'] as const) {
+    for (const mode of ['standard', 'detailed', 'compact'] as const) {
       act(() => { h.setTranscriptView(mode) })
       expect(turnProcessControl(view.container)).toBe(toggle)
       expect(toggle.getAttribute('aria-expanded')).toBe('false')
       expect(processRow.getAttribute('hidden')).toBe('until-found')
     }
     fireEvent.click(toggle)
-    for (const mode of ['detailed', 'expanded', 'compact'] as const) {
+    for (const mode of ['standard', 'detailed', 'compact'] as const) {
       act(() => { h.setTranscriptView(mode) })
       expect(turnProcessControl(view.container)).toBe(toggle)
       expect(toggle.getAttribute('aria-expanded')).toBe('true')
@@ -2674,7 +2697,7 @@ describe('ChatView', () => {
     const toggle = view.getByRole('button', { name: h.props.t('message.turnProcess.worked') })
     let row = view.container.querySelector<HTMLElement>('[data-chat-node-key="fixture:tool:partial"]')!
     let group = view.container.querySelector<HTMLElement>('[data-chat-group-key]')
-    for (const mode of ['compact', 'detailed', 'expanded'] as const) {
+    for (const mode of ['compact', 'standard', 'detailed'] as const) {
       act(() => { h.setTranscriptView(mode) })
       expect(toggle.getAttribute('aria-expanded')).toBe('false')
       expect(row.getAttribute('hidden')).toBe('until-found')
@@ -2689,7 +2712,7 @@ describe('ChatView', () => {
     const beforePageGroup = group
     const groupToggle = group?.querySelector<HTMLButtonElement>('[data-process-activity]')
     if (grouped && manualOpen) {
-      act(() => { h.setTranscriptView('detailed') })
+      act(() => { h.setTranscriptView('standard') })
       fireEvent.click(groupToggle!)
       expect(groupToggle?.getAttribute('aria-expanded')).toBe('true')
     }
@@ -3184,10 +3207,9 @@ describe('ChatView', () => {
     const view = render(<h.ChatView {...h.props} />)
     expect(view.getByTestId('tool-seat-r1')).toBeTruthy()
     expect(h.toolOwners[0]?.block).toMatchObject({ callId: 'r1', argsRaw: '{"command":"cmd-r1"}' })
-    expect(view.getByRole('status').textContent).toBe('深度求索中')
-    const toggle = view.getByRole('button', { name: '深度求索中，用时2秒' }) as HTMLButtonElement
-    expect(toggle.disabled).toBe(true)
-    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(view.getByRole('status').textContent).toBe('深度求索中...')
+    expect(turnProcessControl(view.container)).toBeNull()
+    expect(runningContent(view.container)?.textContent).toMatch(/^深度求索中，用时 \d+秒\.\.\.$/)
   }))
 
   it('keeps the Tool renderer mounted when a running call settles into log order', () => {
@@ -3246,13 +3268,13 @@ describe('ChatView', () => {
     )
     const view = render(<h.ChatView {...h.props} />)
     const status = view.getByRole('status')
-    const toggle = view.getByRole('button', { name: '深度求索中，用时2分5秒' }) as HTMLButtonElement
-    expect(toggle).toBe(turnProcessControl(view.container))
-    expect(toggle.disabled).toBe(true)
-    expect(status.textContent).toBe('深度求索中')
+    const content = runningContent(view.container)!
+    expect(content.textContent).toMatch(/^深度求索中，用时 \d+分\d+秒\.\.\.$/)
+    expect(turnProcessControl(view.container)).toBeNull()
+    expect(status.textContent).toBe('深度求索中...')
     expect(status.getAttribute('aria-live')).toBe('polite')
     expect(status.getAttribute('aria-atomic')).toBe('true')
-    expect(toggle.closest('[aria-live]')).toBeNull()
+    expect(content.closest('[aria-live]')).toBeNull()
     expect(view.container.querySelector('[data-chat-flow-kind="assistant-step"]')).toBeNull()
     act(() => {
       h.setSession({ testInbox: { 'next-turn': [], 'next-step': [{
@@ -3262,21 +3284,23 @@ describe('ChatView', () => {
         role: 'user', source: { kind: 'user' },
       }] } })
     })
-    expect(toggle.textContent).toBe('深度求索中，用时2分5秒')
+    expect(content.textContent).toMatch(/^深度求索中，用时 \d+分\d+秒\.\.\.$/)
+    const beforeTick = content.textContent
     act(() => { vi.advanceTimersByTime(2_000) })
-    expect(toggle.textContent).toBe('深度求索中，用时2分7秒')
+    expect(content.textContent).toMatch(/^深度求索中，用时 \d+分\d+秒\.\.\.$/)
+    expect(content.textContent).not.toBe(beforeTick)
     expect(view.getByRole('status')).toBe(status)
-    expect(status.textContent).toBe('深度求索中')
+    expect(status.textContent).toBe('深度求索中...')
     act(() => {
       h.setSession({ testInbox: { 'next-turn': [], 'next-step': [] } })
       h.setChat({ nodes: [trigger, { ...steering(2, 'also', 1), time: 128_000 }] })
     })
-    expect(turnProcessControl(view.container)).toBe(toggle)
-    expect(toggle.textContent).toBe('深度求索中，用时2分7秒')
+    expect(runningContent(view.container)).toBe(content)
+    expect(content.textContent).toMatch(/^深度求索中，用时 \d+分\d+秒\.\.\.$/)
     expect(view.getByText('also').closest('[data-pending-steering]')).toBeNull()
     act(() => { vi.advanceTimersByTime(1_000) })
-    expect(toggle.textContent).toBe('深度求索中，用时2分8秒')
-    expect(status.textContent).toBe('深度求索中')
+    expect(content.textContent).toMatch(/^深度求索中，用时 \d+分\d+秒\.\.\.$/)
+    expect(status.textContent).toBe('深度求索中...')
     view.unmount()
     expect(vi.getTimerCount()).toBe(0)
   }))
@@ -3289,12 +3313,15 @@ describe('ChatView', () => {
       { running: true },
     )
     const view = render(<h.ChatView {...h.props} />)
-    const toggle = view.getByRole('button', { name: '深度求索中，用时59分59秒' })
+    const content = runningContent(view.container)!
+    expect(content.textContent).toMatch(/^深度求索中，用时 \d+分\d+秒\.\.\.$/)
     act(() => { vi.advanceTimersByTime(1_000) })
-    expect(toggle.textContent).toBe('深度求索中，用时1小时00分0秒')
+    expect(content.textContent).toMatch(/^深度求索中，用时 \d+小时\d+分\d+秒\.\.\.$/)
+    const hourlyText = content.textContent
     act(() => { vi.advanceTimersByTime(303_000) })
-    expect(toggle.textContent).toBe('深度求索中，用时1小时05分3秒')
-    expect(view.getByRole('status').textContent).toBe('深度求索中')
+    expect(content.textContent).toMatch(/^深度求索中，用时 \d+小时\d+分\d+秒\.\.\.$/)
+    expect(content.textContent).not.toBe(hourlyText)
+    expect(view.getByRole('status').textContent).toBe('深度求索中...')
     view.unmount()
     expect(vi.getTimerCount()).toBe(0)
   }))
@@ -4069,5 +4096,19 @@ describe('ChatView', () => {
     const failedView = render(<failed.ChatView {...failed.props} />)
     expect(failedView.getByText('Compaction cancelled.')).toBeTruthy()
     expect(failedView.container.querySelector('[data-state="error"]')).not.toBeNull()
+  })
+
+  it('appends the running status at the transcript bottom only while the Session runs', () => {
+    const h = makeHarness({ nodes: [user(1, 'do the thing'), assistant(2, 'working')] }, { running: true })
+    const view = render(<h.ChatView {...h.props} />)
+    const column = view.container.querySelector('[data-chat-flow]')!
+    const status = column.querySelector('[data-chat-running]')
+    expect(column.lastElementChild).toBe(status)
+    expect(within(status as HTMLElement).getByRole('status').textContent).toBe('深度求索中...')
+    expect(status?.lastElementChild?.textContent).toBe('深度求索中...')
+    expect(status?.querySelector('svg')?.parentElement?.getAttribute('aria-hidden')).toBe('true')
+    expect(status?.querySelector('animate')).not.toBeNull()
+    act(() => { h.setSession({ running: false }) })
+    expect(column.querySelector('[data-chat-running]')).toBeNull()
   })
 })

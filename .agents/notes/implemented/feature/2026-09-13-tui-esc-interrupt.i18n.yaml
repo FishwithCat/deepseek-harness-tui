@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-13-tui-esc-interrupt.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-13-tui-esc-interrupt.md
-2026-09-13-tui-esc-interrupt.md: 5a0feed2ca67169758d6ca81320fd216ee400ceb
-2026-09-13-tui-esc-interrupt.zh.md: b1599ad2db07623adb6c378a99053b6cc08a8f64
+/agent-note-tui-escape-interrupt:
+  en: a11b153b883fd828
+  zh: ed6d8f03b60fa18c
+/agent-note-tui-escape-interrupt/problem:
+  en: 1774f83b04cfb32a
+  zh: 6a0237c8d4005d1d
+/agent-note-tui-escape-interrupt/decision:
+  en: b0ef3401dc31f26a
+  zh: f4d8b932c6503894
+/agent-note-tui-escape-interrupt/alternatives-considered:
+  en: 47ea7b45a913016d
+  zh: 70a488802a6e0a39
+/agent-note-tui-escape-interrupt/consequences:
+  en: aece7b329e37763b
+  zh: 0e31cd1cf707e807
+/agent-note-tui-escape-interrupt/testing:
+  en: 5eaf6ff3c4206e9c
+  zh: c027776ea046c0c8

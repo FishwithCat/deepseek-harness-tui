@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-13-tui-detailed-prompt-rows.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-13-tui-detailed-prompt-rows.md
-2026-09-13-tui-detailed-prompt-rows.md: f8976a59d88fbc0b8dabb73e81c76fb741d73416
-2026-09-13-tui-detailed-prompt-rows.zh.md: 97c8732f2486cf10137d3bf551f139c91d190476
+/agent-note-give-a-detailed-terminal-prompt-the-rows-above-the-pinned-footer:
+  en: 88c68491fdf8e11a
+  zh: 13451ff98b28d182
+/agent-note-give-a-detailed-terminal-prompt-the-rows-above-the-pinned-footer/problem:
+  en: 49ecacc2f1a5caca
+  zh: 37fc2168439d971c
+/agent-note-give-a-detailed-terminal-prompt-the-rows-above-the-pinned-footer/decision:
+  en: 5f94d3e465ac9053
+  zh: 779667fcc8da3287
+/agent-note-give-a-detailed-terminal-prompt-the-rows-above-the-pinned-footer/alternatives-considered:
+  en: dd051bbf7d9f59b6
+  zh: 3105fc2c3d5908ba
+/agent-note-give-a-detailed-terminal-prompt-the-rows-above-the-pinned-footer/consequences:
+  en: 9e594f2a507eb8cd
+  zh: 8806ff9ebae5b766
+/agent-note-give-a-detailed-terminal-prompt-the-rows-above-the-pinned-footer/testing:
+  en: 82541adea06644c2
+  zh: a48c6bfb9e6d3371

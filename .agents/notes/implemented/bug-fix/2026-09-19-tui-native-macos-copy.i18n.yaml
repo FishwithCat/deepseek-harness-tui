@@ -1,6 +1,19 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-19-tui-native-macos-copy.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-19-tui-native-macos-copy.md
-2026-09-19-tui-native-macos-copy.md: 7e8feff03a468af424158fb494c75b5200fa8326
-2026-09-19-tui-native-macos-copy.zh.md: 13e3aa6000428132711937a7f920dc0afcd5ca29
+/agent-note-native-macos-selection-copying:
+  en: ad0aab10c0be8141
+  zh: 508b5b9d31188979
+/agent-note-native-macos-selection-copying/problem:
+  en: 14eb601fed2786ed
+  zh: a5826ebaaadc106a
+/agent-note-native-macos-selection-copying/decision:
+  en: 506a1249bd602ee5
+  zh: 8d56999b8759dba0
+/agent-note-native-macos-selection-copying/alternatives-considered:
+  en: 7473648046bf7ce4
+  zh: 81486fed4d5ff106
+/agent-note-native-macos-selection-copying/consequences:
+  en: 4d80035289c9dec8
+  zh: 5931672210c94ddc

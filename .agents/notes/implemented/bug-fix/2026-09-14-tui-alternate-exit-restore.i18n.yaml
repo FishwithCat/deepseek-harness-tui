@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-14-tui-alternate-exit-restore.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-14-tui-alternate-exit-restore.md
-2026-09-14-tui-alternate-exit-restore.md: 8a73b37e5151cfd6160f5ade91b0ce163ecc442d
-2026-09-14-tui-alternate-exit-restore.zh.md: e8aa30686b58209a325c07809bc21852caf08810
+/agent-note-restore-the-transcript-when-the-alternate-screen-tui-exits:
+  en: 659806cb34519f00
+  zh: e7d4e0f74d387062
+/agent-note-restore-the-transcript-when-the-alternate-screen-tui-exits/problem:
+  en: 313d81c8a47891fe
+  zh: 7e7754bae58f492b
+/agent-note-restore-the-transcript-when-the-alternate-screen-tui-exits/decision:
+  en: bb0ff801fc493ed5
+  zh: d994a0299682ec23
+/agent-note-restore-the-transcript-when-the-alternate-screen-tui-exits/alternatives-considered:
+  en: 93345d30538c9e70
+  zh: 6180168c7dc8b314
+/agent-note-restore-the-transcript-when-the-alternate-screen-tui-exits/consequences:
+  en: 378f50574b29f228
+  zh: 77345be414792d0f
+/agent-note-restore-the-transcript-when-the-alternate-screen-tui-exits/testing:
+  en: d76e9c92307e9bbe
+  zh: ce2bda804f6fa327

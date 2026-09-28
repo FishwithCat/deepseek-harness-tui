@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-13-tui-host-tool-presentation.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-13-tui-host-tool-presentation.md
-2026-09-13-tui-host-tool-presentation.md: 4ff476a3ab347ac31a5c094c67b3549547e29855
-2026-09-13-tui-host-tool-presentation.zh.md: edf8b65481fe8d8439893ee40bcdb91485f72ead
+/agent-note-the-tui-consumes-host-tool-presentation-views:
+  en: 9521786daddd525c
+  zh: f49c640a41a32a7c
+/agent-note-the-tui-consumes-host-tool-presentation-views/problem:
+  en: 6cd317f696940df8
+  zh: c8394c82c88837c9
+/agent-note-the-tui-consumes-host-tool-presentation-views/decision:
+  en: 974ff58f092076e0
+  zh: 9aa3da8b940f13cb
+/agent-note-the-tui-consumes-host-tool-presentation-views/alternatives-considered:
+  en: 01d0e0cbe753c253
+  zh: 0ad39218a577a4d5
+/agent-note-the-tui-consumes-host-tool-presentation-views/consequences:
+  en: 870c71999fa0fcef
+  zh: e1ac883089240e9b
+/agent-note-the-tui-consumes-host-tool-presentation-views/testing:
+  en: 11b40f91099a0ca0
+  zh: 67d9723401e7fadc

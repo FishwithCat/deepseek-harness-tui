@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-13-tui-token-throughput-footer.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-13-tui-token-throughput-footer.md
-2026-09-13-tui-token-throughput-footer.md: e0bc83c534992fd66f446f352d23f91c079436c0
-2026-09-13-tui-token-throughput-footer.zh.md: 715618d9439713052850e9321edf6a4989417d6b
+/agent-note-tui-footer-token-throughput-and-cache-figures:
+  en: 910008bddaeede65
+  zh: e697ba0e2f832d3c
+/agent-note-tui-footer-token-throughput-and-cache-figures/problem:
+  en: e506a26a7d9f785b
+  zh: 79a88e08e309f3b1
+/agent-note-tui-footer-token-throughput-and-cache-figures/decision:
+  en: b47d1df1a37a7976
+  zh: e66736a05e2affc3
+/agent-note-tui-footer-token-throughput-and-cache-figures/alternatives-considered:
+  en: c5a704401335babe
+  zh: c21984cff56afe18
+/agent-note-tui-footer-token-throughput-and-cache-figures/consequences:
+  en: 82f28350ffda648f
+  zh: f4fef277ab8d8782
+/agent-note-tui-footer-token-throughput-and-cache-figures/testing:
+  en: 6bae93ea38049c67
+  zh: 1f7b11ffaa70d6be

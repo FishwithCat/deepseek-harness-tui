@@ -15,7 +15,7 @@ import type { Styler, TuiTheme } from './ansi.ts'
 import { buildDiffCard } from './diff.ts'
 import type { DiffCard, DiffRow } from './diff.ts'
 import type { ToolEntry, TranscriptEntry, UserEntry } from './transcript.ts'
-import { Transcript } from './transcript.ts'
+import { TerminalTranscript } from './transcript.ts'
 
 /** Indent applied to a Tool row's result body. */
 const TOOL_BODY_INDENT = '    '
@@ -131,7 +131,7 @@ export class TranscriptView implements Component {
    * @param theme - the surface theme.
    */
   constructor(
-    private readonly transcript: Transcript,
+    private readonly transcript: TerminalTranscript,
     private readonly theme: TuiTheme,
   ) {
     this.markdownTheme = markdownTheme(theme)

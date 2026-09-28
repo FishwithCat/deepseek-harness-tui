@@ -55,7 +55,7 @@ import type { TuiStartupValues } from './startup.ts'
 import { createToolPresentationResolver } from './tool-view.ts'
 import { DetailBody, PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
 import type { TuiContextStatus, TuiSessionStats, TuiStatus } from './views.ts'
-import { Transcript } from './transcript.ts'
+import { TerminalTranscript } from './transcript.ts'
 
 /** Longest stored-session list rendered by `/sessions`. */
 const SESSION_LIST_LIMIT = 20
@@ -154,7 +154,7 @@ export class TuiApp implements InteractionHost {
   private readonly tui: TUI
   private readonly viewport: TuiAltScreen | undefined
   private readonly theme: TuiTheme
-  private readonly transcript: Transcript
+  private readonly transcript: TerminalTranscript
   private readonly transcriptView: TranscriptView
   private readonly statusBar: StatusBar
   private readonly editor: Editor
@@ -190,7 +190,7 @@ export class TuiApp implements InteractionHost {
       enabled: supportsColor(process.env, process.stdout.isTTY),
       palette: resolveColorScheme(options.config.colorScheme, process.env),
     })
-    this.transcript = new Transcript(createToolPresentationResolver(options.ctx, () => this.session.agent))
+    this.transcript = new TerminalTranscript(createToolPresentationResolver(options.ctx, () => this.session.agent))
     this.providerCount = options.ctx.llm.listProviders().length
     this.autoCompaction = options.ctx.get('compaction')?.autoCompactionEnabled ?? false
     this.viewport = options.config.screen === 'alternate' ? new TuiAltScreen(terminal, true, undefined, {

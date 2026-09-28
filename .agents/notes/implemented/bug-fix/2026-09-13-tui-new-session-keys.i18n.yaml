@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-13-tui-new-session-keys.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-13-tui-new-session-keys.md
-2026-09-13-tui-new-session-keys.md: 9f0eee36a1f817eed080ed57b9a0263aada6e2ef
-2026-09-13-tui-new-session-keys.zh.md: efdf7c55b0cc595998eddc742bdf4bb1d1009144
+/agent-note-keep-global-tui-key-bindings-across-a-session-replacement:
+  en: 20fd7c3032f08001
+  zh: 05782dd9f6a53d03
+/agent-note-keep-global-tui-key-bindings-across-a-session-replacement/problem:
+  en: 50b9463a8a5ef572
+  zh: a9ff1a8b9830eeb7
+/agent-note-keep-global-tui-key-bindings-across-a-session-replacement/decision:
+  en: fe3afed243bf13a2
+  zh: c90a5d661e58be1f
+/agent-note-keep-global-tui-key-bindings-across-a-session-replacement/alternatives-considered:
+  en: e9fb4d8f7fbc5a4a
+  zh: 14d93751f2715a0e
+/agent-note-keep-global-tui-key-bindings-across-a-session-replacement/consequences:
+  en: 00bc67d3e8a1bc94
+  zh: 7de7917f20277af3
+/agent-note-keep-global-tui-key-bindings-across-a-session-replacement/testing:
+  en: f8e029bea9d68e4f
+  zh: f7c401da2aaf45a2

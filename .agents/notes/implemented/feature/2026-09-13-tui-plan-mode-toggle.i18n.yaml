@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-13-tui-plan-mode-toggle.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-13-tui-plan-mode-toggle.md
-2026-09-13-tui-plan-mode-toggle.md: 121fb578e8c548cdc36ffb06ee4856fb22f81df2
-2026-09-13-tui-plan-mode-toggle.zh.md: 215165c0ba06702b458da733e0e8b7c210ada171
+/agent-note-tui-plan-mode-toggle:
+  en: 5b874a072f641052
+  zh: 1a1d58df2152593d
+/agent-note-tui-plan-mode-toggle/problem:
+  en: aa7b654d81c60f3c
+  zh: ea71b1a85596f25c
+/agent-note-tui-plan-mode-toggle/decision:
+  en: 3746d8aa3028a351
+  zh: 5de62745b10d4c12
+/agent-note-tui-plan-mode-toggle/alternatives-considered:
+  en: cc4aa30cb9d0d188
+  zh: f248559bf8bac561
+/agent-note-tui-plan-mode-toggle/consequences:
+  en: f50b60f90c4e50f1
+  zh: 74809c49c7ab1caf
+/agent-note-tui-plan-mode-toggle/testing:
+  en: abd08eba5111b614
+  zh: f910970084c36341

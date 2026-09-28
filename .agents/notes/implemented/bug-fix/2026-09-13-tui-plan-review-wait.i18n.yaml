@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-13-tui-plan-review-wait.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-13-tui-plan-review-wait.md
-2026-09-13-tui-plan-review-wait.md: 427db8759f327a92dde6406d392007ca29aa0db4
-2026-09-13-tui-plan-review-wait.zh.md: 65a0a88940387a0fd2047fe40292c993e5afa3e2
+/agent-note-keep-a-terminal-plan-review-waiting:
+  en: 0899b59eb645cecd
+  zh: 7c2bb65602828f15
+/agent-note-keep-a-terminal-plan-review-waiting/problem:
+  en: 8cd7f1b049003cc4
+  zh: a378178b0daef957
+/agent-note-keep-a-terminal-plan-review-waiting/decision:
+  en: 60cfd703f86409a9
+  zh: 51b0ee54cf83748e
+/agent-note-keep-a-terminal-plan-review-waiting/alternatives-considered:
+  en: 21ae85e2261ea35a
+  zh: 50a6535b2e5c6691
+/agent-note-keep-a-terminal-plan-review-waiting/consequences:
+  en: 7bb1505751ed8661
+  zh: 78a8cbe4d1454136
+/agent-note-keep-a-terminal-plan-review-waiting/testing:
+  en: 48018d17b4c272b7
+  zh: c3bdc38ffe12c0c0

@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-18-tui-resume-history.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-18-tui-resume-history.md
-2026-09-18-tui-resume-history.md: 111b714d0831cbf051fb81545fe34c6302df66c2
-2026-09-18-tui-resume-history.zh.md: 2c820b3cbb258ec2959d1462adda3e8b77fe404f
+/agent-note-tui-restores-the-stored-conversation-on-resume:
+  en: b67be72391f46caa
+  zh: 6a1d848f3cfb2808
+/agent-note-tui-restores-the-stored-conversation-on-resume/problem:
+  en: cc5d667a13fad98e
+  zh: 5d9c3abebb5dcae0
+/agent-note-tui-restores-the-stored-conversation-on-resume/decision:
+  en: b7d77472b4e8ba60
+  zh: 30a9cc99908089b3
+/agent-note-tui-restores-the-stored-conversation-on-resume/alternatives-considered:
+  en: d0724345f68712a3
+  zh: 65654e98292c1b2f
+/agent-note-tui-restores-the-stored-conversation-on-resume/consequences:
+  en: 5e86df7306cfa7f3
+  zh: 91ca254c7cc80706
+/agent-note-tui-restores-the-stored-conversation-on-resume/testing:
+  en: 0778c7de501f5c1e
+  zh: ae7092da93795b4b

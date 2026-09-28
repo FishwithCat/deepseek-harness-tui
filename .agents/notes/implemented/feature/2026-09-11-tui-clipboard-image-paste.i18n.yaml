@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-11-tui-clipboard-image-paste.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-11-tui-clipboard-image-paste.md
-2026-09-11-tui-clipboard-image-paste.md: 86b50e1922f7d9258fe56691ddc77cf614ae564f
-2026-09-11-tui-clipboard-image-paste.zh.md: 4d2f53935c28f6b9f5088e2b34c90627b1aba611
+/agent-note-tui-clipboard-image-paste:
+  en: 91148322de5facff
+  zh: f240b4230cf9b502
+/agent-note-tui-clipboard-image-paste/problem:
+  en: db9beef0bbca84d9
+  zh: 2ec676b1fae168e5
+/agent-note-tui-clipboard-image-paste/decision:
+  en: 41f7c00ca0854883
+  zh: a111b2da01563bc8
+/agent-note-tui-clipboard-image-paste/alternatives-considered:
+  en: 529b9564efa9fac5
+  zh: 57050893a92e655d
+/agent-note-tui-clipboard-image-paste/consequences:
+  en: fe54b4129a8ce977
+  zh: f5ff571d06c056ad
+/agent-note-tui-clipboard-image-paste/testing:
+  en: 1b718ddebfdecabb
+  zh: f71bd4c130ae33d0

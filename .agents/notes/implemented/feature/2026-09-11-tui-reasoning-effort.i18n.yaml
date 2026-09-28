@@ -1,6 +1,22 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-11-tui-reasoning-effort.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-11-tui-reasoning-effort.md
-2026-09-11-tui-reasoning-effort.md: c7f59c28531414f0ab663c924a4e266e60e8a62e
-2026-09-11-tui-reasoning-effort.zh.md: 379959f532d45ea4d1fd94eaed8af9843e787f93
+/agent-note-tui-reasoning-effort-switching:
+  en: 6e7485d061d8f786
+  zh: 6ae89e396542a9d6
+/agent-note-tui-reasoning-effort-switching/problem:
+  en: e6e6751ab8484e7a
+  zh: 2feb5960f3706d56
+/agent-note-tui-reasoning-effort-switching/decision:
+  en: e030ba2f923b9122
+  zh: da6b4f1ae364ed50
+/agent-note-tui-reasoning-effort-switching/alternatives-considered:
+  en: dffb559d82e85a3a
+  zh: 3407af582f2e90e7
+/agent-note-tui-reasoning-effort-switching/consequences:
+  en: 2a5f0d6c8ea2eea2
+  zh: 06d031605e79eff0
+/agent-note-tui-reasoning-effort-switching/testing:
+  en: 150c401c9fe4da0b
+  zh: 97723e03f9c038f2

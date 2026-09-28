@@ -1,6 +1,19 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for 2026-09-11-tui-prompt-rows.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-11-tui-prompt-rows.md
-2026-09-11-tui-prompt-rows.md: 2ed614cd28e110f329001e2b256e7b3d10cd0f94
-2026-09-11-tui-prompt-rows.zh.md: 4d13f526715b984bc5314140c4431e5ca1f02bc0
+/agent-note-render-modal-prompts-as-plain-rows-above-the-composer:
+  en: 306786176c35fba8
+  zh: 55402566c58104ad
+/agent-note-render-modal-prompts-as-plain-rows-above-the-composer/problem:
+  en: 67cc7ecad2a69fb0
+  zh: a3841feb697cd83c
+/agent-note-render-modal-prompts-as-plain-rows-above-the-composer/decision:
+  en: d507c443d85fe3af
+  zh: 14a64e05c8851585
+/agent-note-render-modal-prompts-as-plain-rows-above-the-composer/alternatives-considered:
+  en: 10a9b3386c6adf25
+  zh: 9a9cc62984a31f2c
+/agent-note-render-modal-prompts-as-plain-rows-above-the-composer/consequences:
+  en: bce6266b93326ee7
+  zh: d56bc39e2cb30ede

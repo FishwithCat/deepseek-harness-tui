@@ -1,6 +1,25 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/bundle/README.md
-README.md: 5f2443989417ab0ea4ed0a103816391faa1a9e3e
-README.zh.md: 7bbaf4a01c7eadf242dc430d586ebdc6e0df8d84
+/:
+  en: de4fb0291736852d
+  zh: 5529332ef61fee96
+/bundle-profile-plugin-bundles:
+  en: 976582e78790d02d
+  zh: d454446fdc2d839a
+/bundle-profile-plugin-bundles/summary:
+  en: e0243e1585e6c1ba
+  zh: ff0464c3984ca2e7
+/bundle-profile-plugin-bundles/table-of-contents:
+  en: 09848f4d056e4fc1
+  zh: 8df6139cff0288f6
+/bundle-profile-plugin-bundles/packages:
+  en: c6f6bfa0f6a868a6
+  zh: db49bc2e19dfee52
+/bundle-profile-plugin-bundles/related-documentation:
+  en: 29a969a46018d862
+  zh: bb0be22dd0273886
+/bundle-profile-plugin-bundles/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

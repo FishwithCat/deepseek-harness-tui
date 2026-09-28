@@ -1,6 +1,73 @@
-# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
-# side as of the last confirmed-consistent state. Both languages carry equal authority;
-# after editing either side, bring the other along and re-record with:
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/bundle/tui-app/README.md
-README.md: 714f3a19dd7801c9ca22ba94ecb9b26242b244a6
-README.zh.md: fababb00f1980b28ba0147ede2d2fd86ce1a8cac
+/:
+  en: 5ef521aafc9f2218
+  zh: 1c48c446b495c0c5
+/deepseek-ai-dsh-tui-app:
+  en: 6a23ca8f9a47405e
+  zh: b64330cf6abe3c84
+/deepseek-ai-dsh-tui-app/summary:
+  en: 1416b270288ead49
+  zh: 69855f68e5288b08
+/deepseek-ai-dsh-tui-app/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: 09388d293f9be9cb
+/deepseek-ai-dsh-tui-app/use-this-package:
+  en: 88c14b005e03bf78
+  zh: 0b9ad8bc5a690a3c
+/deepseek-ai-dsh-tui-app/use-this-package/composing-prompting-and-interrupting:
+  en: 4be88f6c4d4ec708
+  zh: 19f0df23b50d4140
+/deepseek-ai-dsh-tui-app/use-this-package/commands:
+  en: c976223c44e1c9c3
+  zh: 956df305eb545ef1
+/deepseek-ai-dsh-tui-app/use-this-package/settings:
+  en: 091f286d20d6c617
+  zh: 626a2a502fe56357
+/deepseek-ai-dsh-tui-app/understand-the-implementation:
+  en: d80d3ac0f04cdba3
+  zh: d8b5f7d9cde546d8
+/deepseek-ai-dsh-tui-app/understand-the-implementation/rendering:
+  en: 7ae0b392d1dd52bb
+  zh: 3a5b667c3793b065
+/deepseek-ai-dsh-tui-app/understand-the-implementation/interaction-seams:
+  en: 9c1e5950409e96bb
+  zh: 086b65518398daba
+/deepseek-ai-dsh-tui-app/understand-the-implementation/clipboard-images:
+  en: 56fdbc5555bed800
+  zh: 47631ee2be590508
+/deepseek-ai-dsh-tui-app/understand-the-implementation/patch-surface-over-base:
+  en: 896a91d157b9ca51
+  zh: 8f2d4882b5a6961a
+/deepseek-ai-dsh-tui-app/understand-the-implementation/source-map:
+  en: f7b833d88909f397
+  zh: 5ce6d7157f2bccde
+/deepseek-ai-dsh-tui-app/understand-the-implementation/invariant-ownership:
+  en: 8fbdb12bf8aa065a
+  zh: da9a97c3d180264c
+/deepseek-ai-dsh-tui-app/further-exploration:
+  en: a4ebde053416e03d
+  zh: 0f10762cd0f5d77a
+/deepseek-ai-dsh-tui-app/model-experience:
+  en: 215e7ba838619b7b
+  zh: a311da3843709f90
+/deepseek-ai-dsh-tui-app/model-experience/interactive-coding-session:
+  en: 75fef2974a28ed59
+  zh: 2a8e0a3bf5701745
+/deepseek-ai-dsh-tui-app/model-experience/interactive-coding-session/what-the-model-sees:
+  en: 9060ac1b5f2817fe
+  zh: 0fbf8213fdd0835a
+/deepseek-ai-dsh-tui-app/model-experience/interactive-coding-session/token-effect:
+  en: 73aee798528e097c
+  zh: 3e04f6a74db68b0d
+/deepseek-ai-dsh-tui-app/model-experience/interactive-coding-session/kv-cache-effect:
+  en: 78c2bcd048d61c91
+  zh: 5978525bf2e37c1b
+/deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work:
+  en: f0cd41f263449c7a
+  zh: a57b5247309cb386
+/deepseek-ai-dsh-tui-app/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: 3bb0c20c93f16f98

@@ -15,7 +15,7 @@ import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUs
 import type { AssistantStreamRecord, MessageSource, StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
-import { Transcript } from '../src/transcript.ts'
+import { TerminalTranscript } from '../src/transcript.ts'
 import type { ToolDiffCard, ToolPresentationResolver } from '../src/tool-view.ts'
 import { PROMPT_PANEL_CHROME_ROWS, DetailBody, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
 import type { TuiSessionStats, TuiStatus } from '../src/views.ts'
@@ -69,7 +69,7 @@ function chunkFrame(revision: number, index: number, chunk: StreamChunk): Assist
  * @returns the append-and-fold operation.
  */
 function folder(
-  transcript: Transcript,
+  transcript: TerminalTranscript,
   session: Awaited<ReturnType<typeof makeSession>>,
 ): (append: () => void) => boolean {
   return (append) => {
@@ -80,7 +80,7 @@ function folder(
   }
 }
 
-describe('Transcript', () => {
+describe('TerminalTranscript', () => {
   it('renders the human prompt, assistant text, and tool outcome in log order', async () => {
     const session = await makeSession()
     session.append('turn/start', { turn: 1 })
@@ -111,7 +111,7 @@ describe('Transcript', () => {
     session.append('step/end', { turn: 1, step: 1 })
     session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
 
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) expect(typeof transcript.applyEvent(event)).toBe('boolean')
 
     const entries = transcript.entries()
@@ -130,7 +130,7 @@ describe('Transcript', () => {
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
 
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     let folded = 0
     const foldNew = (): void => {
       const events = session.ownEvents()
@@ -183,7 +183,7 @@ describe('Transcript', () => {
     session.append('turn/start', { turn: 1 })
     session.append('assistant/attempt', { turn: 1, step: 1, stream })
 
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     expect(transcript.entries().at(-1)).toMatchObject({ kind: 'notice', level: 'error', text: 'provider exploded' })
 
@@ -201,7 +201,7 @@ describe('Transcript', () => {
       content: [{ type: 'text', text: 'hi' }],
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     expect(transcript.entries()).toHaveLength(1)
     transcript.reset()
@@ -244,7 +244,7 @@ describe('Transcript', () => {
       source: { kind: 'model-selection', form: 'notice', summary: 'plain/model → capable/model' },
     }), { surfaceOp: 'append' })
 
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) expect(typeof transcript.applyEvent(event)).toBe('boolean')
 
     expect(transcript.entries().map(entry => entry.kind)).toEqual(['notice'])
@@ -262,7 +262,7 @@ describe('Transcript', () => {
       content: [{ type: 'text', text: '' }],
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) expect(typeof transcript.applyEvent(event)).toBe('boolean')
     expect(transcript.entries()).toHaveLength(0)
   })
@@ -278,7 +278,7 @@ describe('Transcript', () => {
       ],
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     expect(transcript.entries().at(-1)).toMatchObject({
       kind: 'user',
@@ -294,20 +294,20 @@ describe('Transcript', () => {
       content: [{ type: 'image', attachment: imageRef() }],
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     expect(transcript.entries().at(-1)).toMatchObject({ kind: 'user', text: '', images: ['[Image #1]'] })
   })
 
   it('renders no live row while a started attempt has produced nothing', () => {
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('attempt'), revision: 1, turn: 1, step: 1 })
     expect(transcript.streaming).toBe(true)
     expect(transcript.entries()).toEqual([])
   })
 
   it('ignores the stream chunks the transcript does not render', () => {
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('attempt'), revision: 1, turn: 1, step: 1 })
     expect(transcript.applyFrame(chunkFrame(2, 0, { type: 'text-delta', index: 0, text: '' }))).toBe(false)
     expect(transcript.applyFrame(chunkFrame(3, 1, { type: 'reasoning-delta', index: 0, text: '' }))).toBe(false)
@@ -323,7 +323,7 @@ describe('Transcript', () => {
   })
 
   it('reports an abandoned stream and drops the live attempt', () => {
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('attempt'), revision: 1, turn: 1, step: 1 })
     transcript.applyFrame(chunkFrame(2, 0, { type: 'text-delta', index: 0, text: 'partial' }))
     transcript.applyFrame({ type: 'end', attemptId: LlmAttemptId('attempt'), revision: 3, index: 1, outcome: { kind: 'abandoned' } })
@@ -355,7 +355,7 @@ describe('Transcript', () => {
         isError: false,
       }),
     }, { surfaceOp: 'append' })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) expect(transcript.applyEvent(event)).toBe(false)
     expect(transcript.entries()).toEqual([])
   })
@@ -366,7 +366,7 @@ describe('Transcript', () => {
       { type: 'chunk', time: 0, chunk: { type: 'text-delta', index: 0, text: 'partial' } },
       { type: 'chunk', time: 1, chunk: { type: 'finish', reason: { kind: 'aborted', failure: { message: 'cancelled mid-stream', code: 'ABORTED' } } } },
     ]
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     const appendAndFold = folder(transcript, session)
     appendAndFold(() => { session.append('turn/start', { turn: 1 }) })
     appendAndFold(() => { session.append('step/start', { turn: 1, step: 1 }) })
@@ -388,7 +388,7 @@ describe('Transcript', () => {
 
   it('maps an errored and a max-token turn end to notices', async () => {
     const session = await makeSession()
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     const appendAndFold = folder(transcript, session)
     appendAndFold(() => { session.append('turn/start', { turn: 1 }) })
     expect(appendAndFold(() => {
@@ -412,7 +412,7 @@ describe('TranscriptView', () => {
       content: [{ type: 'text', text: 'a very long prompt '.repeat(12) }],
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
     for (const line of view.render(40)) {
@@ -430,7 +430,7 @@ describe('TranscriptView', () => {
       ],
       source: { kind: 'user' },
     }), { surfaceOp: 'append' })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
     expect(view.render(60).join('\n')).toContain('› [Image #1] what is this?')
@@ -451,7 +451,7 @@ describe('TranscriptView', () => {
         isError: false,
       }),
     }, { surfaceOp: 'append' })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
     const rendered = view.render(60).join('\n')
@@ -474,7 +474,7 @@ describe('TranscriptView', () => {
         isError: false,
       }),
     }, { surfaceOp: 'append' })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     const view = new TranscriptView(transcript, createTheme({ enabled: true, palette: 'dark' }))
     expect(view.render(60).join('\n')).toContain('\x1b[38;5;250mhi\x1b[0m')
@@ -492,7 +492,7 @@ describe('TranscriptView', () => {
       name: 'bash',
       arguments: JSON.stringify({ command }),
     })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
     const lines = view.render(60)
@@ -502,7 +502,7 @@ describe('TranscriptView', () => {
   })
 
   it('reuses its rendered lines and refreshes a grown live body', () => {
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('attempt'), revision: 1, turn: 1, step: 1 })
     transcript.applyFrame(chunkFrame(2, 0, { type: 'reasoning-delta', index: 0, text: 'weighing it' }))
     transcript.applyFrame(chunkFrame(3, 1, { type: 'text-delta', index: 0, text: 'Hel' }))
@@ -531,7 +531,7 @@ describe('TranscriptView', () => {
         source: { provider: 'p', model: 'm' },
       }),
     }, { surfaceOp: 'append' })
-    const transcript = new Transcript()
+    const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     const rendered = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60).join('\n')
     expect(rendered).toContain('half a sentence')
@@ -1004,7 +1004,7 @@ describe('PromptPanel', () => {
   })
 })
 
-describe('Transcript diff cards', () => {
+describe('TerminalTranscript diff cards', () => {
   /** The literal replacement the helper's `edit` call carries. */
   const EDIT_ARGS = '{"file_path":"a.ts","old_string":"old","new_string":"new"}'
 
@@ -1036,7 +1036,7 @@ describe('Transcript diff cards', () => {
   }
 
   /** Fold every event a session already holds. */
-  function fold(session: Awaited<ReturnType<typeof makeSession>>, transcript: Transcript): void {
+  function fold(session: Awaited<ReturnType<typeof makeSession>>, transcript: TerminalTranscript): void {
     for (const event of session.ownEvents()) transcript.applyEvent(event)
   }
 
@@ -1048,7 +1048,7 @@ describe('Transcript diff cards', () => {
   it('attaches the pending diff card its resolver declares', async () => {
     const session = await makeSession()
     appendEdit(session)
-    const transcript = new Transcript(fixed(
+    const transcript = new TerminalTranscript(fixed(
       { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
       undefined,
     ))
@@ -1064,7 +1064,7 @@ describe('Transcript diff cards', () => {
   it('replaces the pending card with the settled one', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'The file a.ts has been updated successfully.', isError: false })
-    const transcript = new Transcript(fixed(
+    const transcript = new TerminalTranscript(fixed(
       { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
       { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }] },
     ))
@@ -1078,7 +1078,7 @@ describe('Transcript diff cards', () => {
   it('keeps the pending card when the Tool declares no result view', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'Replaced.', isError: false })
-    const transcript = new Transcript(fixed(
+    const transcript = new TerminalTranscript(fixed(
       { title: 'str_replace_editor a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
       undefined,
     ))
@@ -1093,7 +1093,7 @@ describe('Transcript diff cards', () => {
   it('clears the card when the mutation failed', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'the file changed since it was read', isError: true })
-    const transcript = new Transcript(fixed(
+    const transcript = new TerminalTranscript(fixed(
       { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
       { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
     ))
@@ -1108,14 +1108,14 @@ describe('Transcript diff cards', () => {
   it('keeps raw rows without a resolver, and ignores another card', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'Replaced.', isError: false })
-    const raw = new Transcript()
+    const raw = new TerminalTranscript()
     fold(session, raw)
     const rawEntry = raw.entries()[0]
     expect(rawEntry).toMatchObject({ kind: 'tool' })
     expect(Object.hasOwn(rawEntry ?? {}, 'title')).toBe(false)
     expect(Object.hasOwn(rawEntry ?? {}, 'diffs')).toBe(false)
 
-    const other = new Transcript({ call: () => undefined, result: () => undefined })
+    const other = new TerminalTranscript({ call: () => undefined, result: () => undefined })
     fold(session, other)
     const otherEntry = other.entries()[0]
     expect(Object.hasOwn(otherEntry ?? {}, 'title')).toBe(false)
@@ -1125,7 +1125,7 @@ describe('Transcript diff cards', () => {
   it('drops a card whose hunk list is empty', async () => {
     const session = await makeSession()
     appendEdit(session)
-    const transcript = new Transcript(fixed({ title: 'Edit a.ts', diffs: [] }, undefined))
+    const transcript = new TerminalTranscript(fixed({ title: 'Edit a.ts', diffs: [] }, undefined))
     fold(session, transcript)
     const entry = transcript.entries()[0]
     expect(entry).toMatchObject({ title: 'Edit a.ts' })
@@ -1135,7 +1135,7 @@ describe('Transcript diff cards', () => {
   it('keeps the call-time heading when a settled card declares no title', async () => {
     const session = await makeSession()
     appendEdit(session, { text: 'Replaced.', isError: false })
-    const transcript = new Transcript({
+    const transcript = new TerminalTranscript({
       call: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
       result: () => ({ diffs: [{ path: 'a.ts', oldText: 'ctx', newText: 'ctx2' }] }),
     })
@@ -1153,7 +1153,7 @@ describe('Transcript diff cards', () => {
       isError: true,
       error: { name: 'FsError', code: 'FS_NOT_OBSERVED' },
     })
-    const transcript = new Transcript(fixed(
+    const transcript = new TerminalTranscript(fixed(
       { title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] },
       undefined,
     ))
@@ -1168,7 +1168,7 @@ describe('Transcript diff cards', () => {
     appendEdit(session, { text: 'Replaced.', isError: false, meta: { diffs: [] } })
     const resultSpy = vi.fn((): ToolDiffCard | undefined => undefined)
     const callSpy = vi.fn((): ToolDiffCard | undefined => undefined)
-    const transcript = new Transcript({ call: callSpy, result: resultSpy })
+    const transcript = new TerminalTranscript({ call: callSpy, result: resultSpy })
     fold(session, transcript)
     expect(callSpy).toHaveBeenCalledWith('edit', EDIT_ARGS)
     expect(resultSpy).toHaveBeenCalledWith('edit', EDIT_ARGS, {
@@ -1197,7 +1197,7 @@ describe('TranscriptView diff cards', () => {
       step: 1,
       message: createToolResultMessage({ callId, content: [{ type: 'text', text: result }], isError: false }),
     }, { surfaceOp: 'append' })
-    const transcript = new Transcript({
+    const transcript = new TerminalTranscript({
       call: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
       result: () => ({ title: 'Edit a.ts', diffs }),
     })
@@ -1264,7 +1264,7 @@ describe('TranscriptView diff cards', () => {
         isError: true,
       }),
     }, { surfaceOp: 'append' })
-    const transcript = new Transcript({
+    const transcript = new TerminalTranscript({
       call: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
       result: () => ({ title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'old', newText: 'new' }] }),
     })

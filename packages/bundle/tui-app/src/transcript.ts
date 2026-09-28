@@ -149,7 +149,7 @@ function noticeSummary(source: MessageSource): string | null {
  * session log; live rows come from `agent/assistant-stream` and are replaced by
  * their durable settlement.
  */
-export class Transcript {
+export class TerminalTranscript {
   private rows: TranscriptEntry[] = []
   private readonly toolByCallId = new Map<string, ToolEntry>()
   private nextId = 1
