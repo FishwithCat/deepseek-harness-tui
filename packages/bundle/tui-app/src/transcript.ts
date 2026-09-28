@@ -8,7 +8,7 @@
 
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { expandAssistantStream } from '@deepseek-ai/dsh-llm'
-import type { AssistantStreamRecord, ContentBlock, MessageSource, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord, ContentBlock, MessageSource, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { FileDiff } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
@@ -156,7 +156,6 @@ export class TerminalTranscript {
   private liveText = ''
   private liveReasoning = ''
   private attempt = false
-  private liveUsage: TokenUsage | undefined
   private changeCount = 0
 
   /**
@@ -168,11 +167,6 @@ export class TerminalTranscript {
   /** Monotone change counter; a view compares it to decide whether to rebuild. */
   get revision(): number {
     return this.changeCount
-  }
-
-  /** Token accounting reported by the most recent provider stream, when any. */
-  get usage(): TokenUsage | undefined {
-    return this.liveUsage
   }
 
   /** Whether an Assistant attempt is currently streaming. */
@@ -208,7 +202,6 @@ export class TerminalTranscript {
     this.liveText = ''
     this.liveReasoning = ''
     this.attempt = false
-    this.liveUsage = undefined
     this.changeCount += 1
   }
 
@@ -248,7 +241,6 @@ export class TerminalTranscript {
         this.attempt = true
         this.liveText = ''
         this.liveReasoning = ''
-        this.liveUsage = undefined
         return this.changed()
       case 'chunk':
         return this.applyChunk(frame.chunk)
@@ -275,8 +267,6 @@ export class TerminalTranscript {
         this.liveReasoning += chunk.text
         return this.changed()
       case 'usage':
-        this.liveUsage = chunk.usage
-        return this.changed()
       case 'block-start':
       case 'block-end':
       case 'tool-call-delta':

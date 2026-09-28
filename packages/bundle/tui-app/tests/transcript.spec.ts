@@ -146,8 +146,7 @@ describe('TerminalTranscript', () => {
     transcript.applyFrame(chunkFrame(2, 0, { type: 'reasoning-delta', index: 0, text: 'thinking' }))
     transcript.applyFrame(chunkFrame(3, 1, { type: 'text-delta', index: 0, text: 'Hel' }))
     transcript.applyFrame(chunkFrame(4, 2, { type: 'text-delta', index: 0, text: 'lo' }))
-    transcript.applyFrame(chunkFrame(5, 3, { type: 'usage', usage: { inputTokens: 3, outputTokens: 2 } }))
-    expect(transcript.usage).toEqual({ inputTokens: 3, outputTokens: 2 })
+    expect(transcript.applyFrame(chunkFrame(5, 3, { type: 'usage', usage: { inputTokens: 3, outputTokens: 2 } }))).toBe(false)
     expect(transcript.entries().map(entry => entry.kind)).toEqual(['user', 'reasoning', 'assistant'])
     expect(transcript.entries().at(-1)).toMatchObject({ kind: 'assistant', text: 'Hello' })
 
@@ -581,7 +580,6 @@ describe('StatusBar', () => {
       workspace: '~/Workspace/Nutkin',
       state: 'idle',
       model: 'deepseek-flash',
-      usage: { inputTokens: 1501, outputTokens: 3418 },
       context: { tokens, window, automatic },
     }
   }
@@ -609,11 +607,11 @@ describe('StatusBar', () => {
     expect(bar(base).render(60)[0]).not.toContain('pasting')
   })
 
-  it('pins the token accounting and occupancy under the identity line', () => {
+  it('pins the context occupancy under the identity line', () => {
     const status = populated(131_072, 262_144, true)
     const [head, stats] = bar(status).render(80)
     expect(head).toBe('~/Workspace/Nutkin  ○ idle' + ' '.repeat(80 - '~/Workspace/Nutkin  ○ idle'.length - 'deepseek-flash'.length) + 'deepseek-flash')
-    expect(stats).toBe('↑1501 ↓3418  50.0%/262k (auto)')
+    expect(stats).toBe('50.0%/262k (auto)')
   })
 
   it('marks automatic compaction only when the engine reports it', () => {
@@ -638,10 +636,10 @@ describe('StatusBar', () => {
     const [head, stats] = bar(populated(131_072, 262_144)).render(30)
     expect(head).toContain('~/Workspace/Nutkin  ○ idle')
     expect(head).not.toContain('deepseek')
-    expect(stats).toBe('↑1501 ↓3418  50.0%/262k')
+    expect(stats).toBe('50.0%/262k')
     const [narrowHead, narrowStats] = bar(populated(131_072, 262_144)).render(20)
     expect(narrowHead).toContain('~/Workspace/Nutki')
-    expect(narrowStats).toContain('↑1501 ↓3418')
+    expect(narrowStats).toContain('50.0%/262k')
     expect(visibleWidth(narrowHead ?? '')).toBeLessThanOrEqual(20)
     expect(visibleWidth(narrowStats ?? '')).toBeLessThanOrEqual(20)
   })
@@ -652,36 +650,37 @@ describe('StatusBar', () => {
       stats: { tokensPerSecond: 34.4, promptTokens: 1_000, outputTokens: 50, cacheReadTokens: 900 },
     }
     const [head, stats] = bar(status).render(80)
-    const left = '↑1501 ↓3418  50.0%/262k (auto)'
+    const left = '50.0%/262k (auto)'
     const right = '34 tok/s  1.1k tok  90% cache'
     expect(head).toContain('deepseek-flash')
     expect(stats).toBe(left + ' '.repeat(80 - left.length - right.length) + right)
   })
 
-  it('leaves the accounting line unpadded while no whole-log figure has data', () => {
+  it('leaves the occupancy line unpadded while no whole-log figure has data', () => {
     const withoutStats = bar(populated(131_072, 262_144)).render(80)[1]
-    expect(withoutStats).toBe('↑1501 ↓3418  50.0%/262k')
+    expect(withoutStats).toBe('50.0%/262k')
     const emptyStats = bar({
       ...populated(131_072, 262_144),
       stats: { promptTokens: 0, outputTokens: 0, cacheReadTokens: 0 },
     }).render(80)[1]
-    expect(emptyStats).toBe('↑1501 ↓3418  50.0%/262k')
+    expect(emptyStats).toBe('50.0%/262k')
     const totalsOnly = bar({
       ...populated(131_072, 262_144),
       stats: { promptTokens: 0, outputTokens: 12, cacheReadTokens: 0 },
     }).render(80)[1]
-    const left = '↑1501 ↓3418  50.0%/262k'
+    const left = '50.0%/262k'
     expect(totalsOnly).toBe(left + ' '.repeat(80 - left.length - '12 tok'.length) + '12 tok')
   })
 
-  it('yields the whole-log figures before the accounting on a narrow terminal', () => {
+  it('yields the whole-log figures before the occupancy on a narrow terminal', () => {
     const narrow = bar({
       ...populated(131_072, 262_144),
       stats: { tokensPerSecond: 34.4, promptTokens: 1_000, outputTokens: 50, cacheReadTokens: 900 },
-    }).render(30)[1] ?? ''
-    expect(narrow).toContain('↑1501 ↓3418')
+    }).render(20)[1] ?? ''
+    expect(narrow).toContain('50.0%/262k')
     expect(narrow).not.toContain('1.1k')
-    expect(visibleWidth(narrow)).toBeLessThanOrEqual(30)
+    expect(narrow).not.toContain('cache')
+    expect(visibleWidth(narrow)).toBeLessThanOrEqual(20)
   })
 })
 

@@ -8,7 +8,6 @@
 
 import { CURSOR_MARKER, Key, Markdown, isFocusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
 import type { Component, Editor, Focusable, MarkdownTheme, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
-import type { TokenUsage } from '@deepseek-ai/dsh-llm'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { markdownTheme } from './ansi.ts'
 import type { Styler, TuiTheme } from './ansi.ts'
@@ -546,8 +545,6 @@ export interface TuiStatus {
   plan?: boolean | undefined
   /** Whether a clipboard image read is in flight; the identity line reports the wait. */
   pasting?: boolean | undefined
-  /** Token accounting for the last provider call. */
-  usage?: TokenUsage | undefined
   /** Context occupancy, absent until the meter reports both a pressure and a capacity. */
   context?: TuiContextStatus | undefined
   /** Whole-log throughput and token totals; absent when the frame carries no measurement. */
@@ -584,15 +581,6 @@ function formatTokens(count: number): string {
  */
 export function modelLabel(provider: string, model: string, providerCount: number): string {
   return providerCount > 1 ? `(${provider}) ${model}` : model
-}
-
-/**
- * Format provider token accounting.
- * @param usage - the last call's usage.
- * @returns a compact `↑in ↓out` summary.
- */
-function formatUsage(usage: TokenUsage): string {
-  return `↑${String(usage.inputTokens)} ↓${String(usage.outputTokens)}`
 }
 
 /**
@@ -639,8 +627,8 @@ export function sessionStatsParts(stats: TuiSessionStats): string[] {
 
 /**
  * The pinned footer under the composer: the workspace and Agent state against
- * the routed model, then the token accounting and context occupancy with the
- * whole-log token figures at the bottom-right edge.
+ * the routed model, then the context occupancy with the whole-log token figures
+ * at the bottom-right edge.
  */
 export class StatusBar implements Component {
   private status: TuiStatus = {
@@ -672,9 +660,10 @@ export class StatusBar implements Component {
    */
   render(width: number): string[] {
     const right = this.statsRight()
+    const left = this.contextPart()
     return [
       this.pairLine(this.headText(), this.modelText(), width),
-      right === '' ? truncateToWidth(this.statsLeft(), width) : this.pairLine(this.statsLeft(), right, width),
+      right === '' ? truncateToWidth(left, width) : this.pairLine(left, right, width),
     ]
   }
 
@@ -712,14 +701,6 @@ export class StatusBar implements Component {
     return this.theme.dim(this.status.effort === undefined
       ? this.status.model
       : `${this.status.model} • ${this.status.effort}`)
-  }
-
-  private statsLeft(): string {
-    const parts: string[] = []
-    if (this.status.usage !== undefined) parts.push(this.theme.dim(formatUsage(this.status.usage)))
-    const context = this.contextPart()
-    if (context !== '') parts.push(context)
-    return parts.join(this.theme.dim('  '))
   }
 
   /** The bottom-right group: whole-log throughput, token total, and cache-hit share. */

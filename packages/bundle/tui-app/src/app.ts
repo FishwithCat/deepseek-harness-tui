@@ -799,7 +799,6 @@ export class TuiApp implements InteractionHost {
       state: session.running ? 'running' : 'idle',
       model: modelLabel(route.provider, route.model, this.providerCount),
       effort: route.reasoningEffort,
-      usage: this.transcript.usage,
       context: measured.context,
       stats: measured.stats,
       plan,
