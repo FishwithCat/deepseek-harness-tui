@@ -33,7 +33,8 @@ interface FakeDescendant extends Agent {
 
 /**
  * Minimal live Agent carrying the lineage, origin, and status the descendant
- * walk reads. Asserting the partial avoids adding a second `unknown` cast.
+ * walk reads. The base fake supplies the identity, so the partial adds only the
+ * fields the walk touches without an assertion.
  */
 function fakeDescendant(
   id: string,
@@ -41,8 +42,7 @@ function fakeDescendant(
   status: 'running' | 'idle',
   origin = 'subagent',
 ): FakeDescendant {
-  const agent = {
-    id: SessionId(id),
+  const agent = Object.assign(fakeParent(id), {
     status,
     cancelled: false,
     cancel: () => { agent.cancelled = true },
@@ -52,8 +52,8 @@ function fakeDescendant(
         origin,
       },
     },
-  }
-  return agent as FakeDescendant
+  })
+  return agent
 }
 
 const ALL_CAPS: SubagentCapabilities = { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true }
