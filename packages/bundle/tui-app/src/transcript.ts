@@ -145,6 +145,76 @@ function noticeSummary(source: MessageSource): string | null {
 }
 
 /**
+ * Whether a decoded JSON value is a non-null, non-array object.
+ * @param value - the decoded value.
+ * @returns true when named fields can be read from it.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Whether a decoded JSON value is an array, without widening its elements to `any`.
+ * @param value - the decoded value.
+ * @returns true when the value is an array.
+ */
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value)
+}
+
+/**
+ * Render the answer batch a late `user-question-reply` message carries.
+ *
+ * The timed call's own result recorded the timeout, so this message is the only
+ * record of what the user finally chose.
+ * @param blocks - the reply message content.
+ * @returns one `question → answer` line per answered question, or null when the text carries no readable batch.
+ */
+function lateReplyText(blocks: readonly ContentBlock[]): string | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(textOfBlocks(blocks))
+  } catch (error) {
+    // The durable text is the service's JSON batch; anything else is not one.
+    void error
+    return null
+  }
+  if (!isRecord(parsed) || !isUnknownArray(parsed.questions) || !isUnknownArray(parsed.answers)) return null
+  const questions = parsed.questions
+  const lines: string[] = []
+  for (const answer of parsed.answers) {
+    if (!isRecord(answer)) continue
+    const id = typeof answer.id === 'string' ? answer.id : ''
+    const selected = isUnknownArray(answer.selected)
+      ? answer.selected.filter((label): label is string => typeof label === 'string')
+      : []
+    const custom = typeof answer.custom === 'string' ? answer.custom : undefined
+    const value = selected.length > 0 ? selected.join(', ') : custom ?? '(skipped)'
+    const question = questions.find(item => isRecord(item) && item.id === id)
+    const label = isRecord(question) && typeof question.question === 'string' ? question.question : id
+    lines.push(`${label} → ${value}`)
+  }
+  return lines.length === 0 ? null : lines.join('\n')
+}
+
+/**
+ * Whether a settled `ask_user_question` result is the pending payload a timed
+ * call returns when its window closes.
+ * @param text - the tool result text.
+ * @returns true when the result records a continued question.
+ */
+function isPendingQuestionResult(text: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return isRecord(parsed) && parsed.pending === true
+  } catch (error) {
+    // A non-JSON result is an ordinary failure or answer, never the pending payload.
+    void error
+    return false
+  }
+}
+
+/**
  * The ordered transcript of one Agent session. Durable rows come from the
  * session log; live rows come from `agent/assistant-stream` and are replaced by
  * their durable settlement.
@@ -279,6 +349,12 @@ export class TerminalTranscript {
   }
 
   private applyUserMessage(message: SessionEvent<'user/message'>['data']): boolean {
+    if (message.source.kind === 'user-question-reply') {
+      const text = lateReplyText(message.content)
+      if (text === null) return false
+      this.rows.push({ kind: 'user', id: this.nextId++, text, images: [] })
+      return this.changed()
+    }
     if (message.source.kind !== 'user') {
       const summary = noticeSummary(message.source)
       if (summary === null) return false
@@ -356,6 +432,11 @@ export class TerminalTranscript {
           row.resultView = view
         }
       }
+    }
+    // A timed question that outlived its window stays answerable; the notice is
+    // what tells the user the `/questions` command can still finish it.
+    if (!isError && row.name === 'ask_user_question' && isPendingQuestionResult(row.result)) {
+      this.notice('info', 'question waiting — /questions answers it')
     }
     return this.changed()
   }

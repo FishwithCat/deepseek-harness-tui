@@ -32,6 +32,7 @@ export const LOCAL_COMMANDS: readonly LocalCommand[] = [
   { name: 'resume', description: 'Resume a stored session by id', takesInput: true },
   { name: 'model', description: 'Show or switch the model route', takesInput: true },
   { name: 'effort', description: 'Show or switch reasoning effort', takesInput: true },
+  { name: 'questions', description: 'Answer a question whose timer expired', takesInput: false },
   { name: 'quit', description: 'Exit the TUI', takesInput: false },
 ]
 

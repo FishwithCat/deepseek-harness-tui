@@ -704,12 +704,13 @@ export class PromptPanel implements Component, Focusable {
   focused = false
 
   /**
-   * @param title - the heading line.
+   * @param title - the heading line, or a provider evaluated on every render
+   * for a heading that changes while the panel is open, such as a countdown.
    * @param theme - the surface theme.
    * @param body - the control that handles keys.
    */
   constructor(
-    private readonly title: string,
+    private readonly title: string | (() => string),
     private readonly theme: TuiTheme,
     private readonly body: Component,
   ) {}
@@ -748,7 +749,8 @@ export class PromptPanel implements Component, Focusable {
    */
   render(width: number): string[] {
     const available = Math.max(1, width)
-    const lines = [this.theme.bold(this.title), '', ...this.body.render(available)]
+    const title = typeof this.title === 'function' ? this.title() : this.title
+    const lines = [this.theme.bold(title), '', ...this.body.render(available)]
     return lines.map(line => this.row(line, available))
   }
 

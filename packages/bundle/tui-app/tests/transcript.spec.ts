@@ -11,8 +11,10 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { CURSOR_MARKER, Editor, SelectList, TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui'
 import type { Component, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
-import { LlmAttemptId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { AssistantStreamRecord, MessageSource, StreamChunk, ToolCallId } from '@deepseek-ai/dsh-llm'
+import { LlmAttemptId, ToolCallId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { AssistantStreamRecord, MessageSource, StreamChunk } from '@deepseek-ai/dsh-llm'
+// Empty type import activates the `user-question-reply` message source this spec folds.
+import type {} from '@deepseek-ai/dsh-user-questions'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
@@ -418,6 +420,58 @@ describe('TerminalTranscript', () => {
       session.append('turn/end', { turn: 2, reason: { kind: 'max-tokens' } })
     })).toBe(true)
     expect(transcript.entries().at(-1)).toMatchObject({ kind: 'notice', level: 'info', text: 'the model reached its output limit' })
+  })
+})
+
+describe('TerminalTranscript timed questions', () => {
+  it('renders a late reply as the answers the user sent', async () => {
+    const session = await makeSession()
+    session.append('user/message', createUserMessage({
+      source: { kind: 'user-question-reply', callId: ToolCallId('call-late-1'), outcome: 'answered' },
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          kind: 'answer_to_pending_question',
+          tool: 'ask_user_question',
+          callId: 'call-late-1',
+          questions: [{ id: 'pick', question: 'Pick one', options: [{ label: 'Alpha' }, { label: 'Beta' }] }],
+          answers: [{ id: 'pick', selected: ['Beta'] }],
+        }),
+      }],
+    }), { surfaceOp: 'append' })
+
+    const transcript = new TerminalTranscript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+
+    expect(transcript.entries()).toMatchObject([{ kind: 'user', text: 'Pick one → Beta' }])
+  })
+
+  it('notes a timed question that outlived its window', async () => {
+    const session = await makeSession()
+    session.append('tool/call', {
+      turn: 1,
+      step: 1,
+      callId: ToolCallId('call-late-2'),
+      name: 'ask_user_question',
+      arguments: JSON.stringify({ questions: [{ id: 'pick', question: 'Pick one' }] }),
+    })
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: ToolCallId('call-late-2'),
+        content: [{ type: 'text', text: JSON.stringify({ pending: true, callId: 'call-late-2', message: 'pending' }) }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+
+    const transcript = new TerminalTranscript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+
+    expect(transcript.entries()).toMatchObject([
+      { kind: 'tool', name: 'ask_user_question', status: 'ok' },
+      { kind: 'notice', level: 'info', text: 'question waiting — /questions answers it' },
+    ])
   })
 })
 

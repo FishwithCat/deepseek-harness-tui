@@ -70,6 +70,7 @@ dsh
 | `/resume [id]` | 按 id 恢复已存储会话，或从选择器中挑选 |
 | `/model [provider/model]` | 从实时目录中选择模型，或直接切换 |
 | `/effort [id]` | 选择路由模型声明的推理强度，或直接切换 |
+| `/questions` | 回答前台等待窗口已关闭的问题；从仍在等待的调用中选择 |
 | `/quit` | 退出 |
 
 ### 设置
@@ -101,13 +102,15 @@ dsh
 
 应用应答 Agent 会暂停等待的两个接缝。`ctx.on('approval/request', …)` 针对本应用自己的 Agent 提供「允许一次／拒绝」并委托其他 Agent 的请求，因此同时挂载子 Agent 的组合仍由自己的应答者负责；被取消的提示解析为 `cancelled`，审批服务本就把它当作 fail-closed。`ctx.on('user-questions/request', …)` 把问题选项渲染为选择器，或在问题未声明选项时渲染自由文本输入；用户取消时以 `ASK_ABORTED` 让提问的工具失败，而 plan review 选择「继续规划」时以 `ASK_CANCELLED` 失败，plan 模式将其理解为用户收回了该 turn。问题的 `detail` 会以 markdown 渲染在该控件之上，视口大小取决于控件未占用的行数；带 detail 的提示会占据固定页脚与输入框之上的全部行，而没有 detail 的提示仍受选择器自身的高度上限约束，短列表因此不会占满高终端。详情溢出时，Up/Down、PageUp/PageDown 与滚轮滚动它，Left/Right 移动选择器，因此 plan review 会显示模型提交的计划，而不只是批准选项。同一时刻只有一个提示占用键盘。
 
+`ask_user_question` 以定时形式运行。应用从服务认领该调用的前台等待窗口，并在标题中倒数剩余秒数；用户未在窗口内回答——包括主动关闭——会把该工具结算为 pending 而非失败，因此问题仍可回答。`/questions` 列出本会话仍欠答案的每个调用，用与实时提问相同的提示逐题呈现，并把完成的答案批次交给服务；服务将其作为用户消息 steer 进 Agent，对话记录会把该消息显示为用户的回复。
+
 ### 剪贴板图片
 
 Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`](src/clipboard.ts)）：macOS 经 `osascript` 的 JavaScript 自动化运行时直接读取 `NSPasteboard`，Windows 与 WSL 用 PowerShell，Wayland 用 `wl-paste`，X11 用 `xclip`。读取器把字节落到临时文件，读取后即删除；它声明的媒体类型只是声明——附件服务会对照解码后的字节校验。页脚从按下按键到字节就绪期间显示 `pasting image…`，因为平台读取器是子进程，大尺寸剪贴板图片可能要将近一秒才能落地。字节以标记为键留在内存中。提交时若引用了标记，应用先解析精确路由模型声明的输入模态，再通过 `ctx.attachments.admitPromptContent(…)` 准入该批次，并把提示文本与其后已准入的图片块作为一条用户消息交给 Agent。被拒绝时——没有附件存储、模型排除图片输入或准入失败——应用恢复草稿，而不是发送残缺的提示。
 
 ### 基于 base 的补丁面
 
-补丁叠加在 `dsh-base` 之上，不添加任何 host、HTTP 或浏览器行。它重述其他界面设置的编码 persona，插入启动 provider 与应用本身，并把 base 的面向模型的行保留在 host 平面：本界面是单会话的，其 Agent 进程级组合这些行，而非按会话组合。启动 provider（[`src/startup.ts`](src/startup.ts)）注入 `ctx.cmdlineArgs`（[`dsh-cmdline`](../../boot/cmdline/README.zh.md)），解析 `--resume`、`--provider` 与 `--model`，并提供 `tuiStartup`；应用行注入该服务，因此 `--help` 与被拒绝的调用完全不会挂载终端界面。补丁还把 `session-log-deepseek` 设为 `enabled: false`，因此本 fork 让 Session 日志留在本机，而不会向官方 DeepSeek 请求附带上游的 `dsh_session_log` 后缀；需要该后缀的部署可通过 `--patch` 覆盖层或 profile 自带的 `cordis.patch.yml` 重新启用该行。
+补丁叠加在 `dsh-base` 之上，不添加任何 host、HTTP 或浏览器行。它重述其他界面设置的编码 persona，插入启动 provider 与应用本身，并把 base 的面向模型的行保留在 host 平面：本界面是单会话的，其 Agent 进程级组合这些行，而非按会话组合。启动 provider（[`src/startup.ts`](src/startup.ts)）注入 `ctx.cmdlineArgs`（[`dsh-cmdline`](../../boot/cmdline/README.zh.md)），解析 `--resume`、`--provider` 与 `--model`，并提供 `tuiStartup`；应用行注入该服务，因此 `--help` 与被拒绝的调用完全不会挂载终端界面。补丁还以 `mode: timed` 形式挂载 `tool-ask-user`，因为 base 层提供提问服务但不提供提问工具。补丁还把 `session-log-deepseek` 设为 `enabled: false`，因此本 fork 让 Session 日志留在本机，而不会向官方 DeepSeek 请求附带上游的 `dsh_session_log` 后缀；需要该后缀的部署可通过 `--patch` 覆盖层或 profile 自带的 `cordis.patch.yml` 重新启用该行。
 
 ### 源码索引
 
@@ -185,6 +188,7 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 - **「继续规划」会等待消息**——终端 review 没有自由文本反馈字段，因此选择「继续规划」会关闭 review 并把 turn 交还给用户，同时保持 plan 模式开启；调整内容就是用户的下一条提示，而不是随 review 带回的答案。
 - **提示高度在打开时固定**——面板只在打开时按终端尺寸计算一次，因此在 review 期间调整终端大小不会改变它；需要新高度时请关闭并重新打开该提示。
 - **图片只来自剪贴板**——输入框只附加从系统剪贴板读到的 PNG、JPEG、WebP 与 GIF 字节：macOS 经 `osascript` 读取 `NSPasteboard`，Windows 与 WSL 用 PowerShell，Wayland 用 `wl-paste`，X11 用 `xclip`。缺少这些读取器的主机会把粘贴报告为空剪贴板；没有文件选择器、拖放或非图片附件。
+- **迟到回复是后续消息**——定时工具已返回其 pending 结果，因此 `/questions` 把答案作为新的用户消息 steer 进 Agent；已记录的调用不会被恢复。
 - **工具输出会被折叠**——工具结果只显示前若干行加剩余行数；完整输出留在会话日志中，而不在屏幕上。
 - **卡片以文本渲染**——每种 Host 卡片都以终端行呈现：读取窗口不带语法高亮，generic 卡片的 `kind` 图标与 `locations` 跟随不会绘制，终端卡片回放的是已捕获输出而非实时会话。
 - **占用是估算值**——页脚百分比锚定最近一次 provider 报告的提示规模，并对表层此后的增减做启发式重新计价；它是给用户看的参考，不是计费或准入依据。

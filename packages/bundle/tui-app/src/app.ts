@@ -49,8 +49,11 @@ import type { ClipboardImage } from './clipboard.ts'
 import type { Config } from './config.ts'
 import { commandCatalog, executeCommand, listEffortChoices, listModelChoices, parseCommand, slashAutocomplete } from './commands.ts'
 import { imageMarker, parseImageMarkers } from './images.ts'
-import { installApprovalAnswerer, installQuestionAnswerer } from './interactions.ts'
-import type { InteractionHost } from './interactions.ts'
+import { answerQuestion, installApprovalAnswerer, installQuestionAnswerer } from './interactions.ts'
+import type { InteractionHost, InteractionTitle } from './interactions.ts'
+import type { AskUserQuestionAnswerItem, PendingUserQuestion } from '@deepseek-ai/dsh-user-questions'
+// Empty type import carries the optional question service `/questions` answers through.
+import type {} from '@deepseek-ai/dsh-user-questions'
 import { TuiSession } from './session.ts'
 import type { TuiSessionOptions } from './session.ts'
 import type { TuiStartupValues } from './startup.ts'
@@ -63,6 +66,8 @@ import { TerminalTranscript } from './transcript.ts'
 const SESSION_LIST_LIMIT = 20
 /** Selectable items shown at once in a prompt overlay. */
 const PROMPT_VISIBLE_ITEMS = 10
+/** Repaint interval for a prompt whose heading counts down; the heading reads whole seconds. */
+const PROMPT_TICK_MS = 1000
 /** Rows the alternate-screen layout pins under the transcript: the composer's three and the footer's two. */
 const PINNED_FOOTER_ROWS = 5
 /**
@@ -169,6 +174,8 @@ export class TuiApp implements InteractionHost {
   private stopped = false
   private promptActive = false
   private promptChain: Promise<unknown> = Promise.resolve()
+  /** Repaints a prompt whose heading changes while it is open, such as a timed countdown. */
+  private promptTick: ReturnType<typeof setInterval> | undefined
   /** Clipboard images the composer holds, by the marker number the draft shows. */
   private readonly pendingImages = new Map<number, PendingImage>()
   /** Clipboard reads in flight; the footer reports their wait until the last one settles. */
@@ -598,6 +605,9 @@ export class TuiApp implements InteractionHost {
       case 'effort':
         await this.effortCommand(input)
         return
+      case 'questions':
+        await this.questionsCommand()
+        return
       default:
         await this.registryCommand(name, line)
     }
@@ -766,6 +776,61 @@ export class TuiApp implements InteractionHost {
   }
 
   /**
+   * Answer one question whose foreground window already closed.
+   *
+   * The timed call's own result recorded the timeout, so a late answer travels
+   * as a steered user message through the service, which also records the
+   * settlement in the session projection.
+   */
+  private async questionsCommand(): Promise<void> {
+    const questions = this.options.ctx.get('userQuestions')
+    if (questions === undefined) {
+      this.notice('error', 'this deployment has no user-question service')
+      return
+    }
+    const continued = this.continuedQuestions()
+    if (continued.length === 0) {
+      this.notice('info', 'no questions are waiting')
+      return
+    }
+    const chosen = await this.choose('Answer which question?', continued.map(question => ({
+      value: question.callId,
+      label: questionLabel(question),
+      description: `${String(question.questions.length)} unanswered`,
+    })))
+    if (chosen === undefined) return
+    const pending = continued.find(question => question.callId === chosen.value)
+    if (pending === undefined) return
+    const answers: AskUserQuestionAnswerItem[] = []
+    for (const question of pending.questions) {
+      const answer = await answerQuestion(this, question, undefined)
+      if (answer === undefined) {
+        this.notice('info', 'left the question unanswered')
+        return
+      }
+      answers.push(answer)
+    }
+    try {
+      if (!questions.answer(this.agent, pending.callId, { answers })) {
+        this.notice('error', 'that question can no longer take an answer')
+        return
+      }
+      this.notice('info', 'queued the answer as a follow-up')
+    } catch (error) {
+      this.notice('error', error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  /**
+   * Questions this session can still take an answer for.
+   * @returns the continued calls in ask order; empty when no projection registry is mounted.
+   */
+  private continuedQuestions(): readonly PendingUserQuestion[] {
+    const state = this.options.ctx.get('sessionProjections')?.stateOf(this.session.session, 'userQuestions')
+    return (state?.questions.active ?? []).filter(question => question.state === 'continued')
+  }
+
+  /**
    * Apply one reasoning effort to the route in force.
    * @param effort - the selected effort, or undefined to send none and let the provider decide.
    */
@@ -821,7 +886,7 @@ export class TuiApp implements InteractionHost {
       pasting: this.pasteReads > 0,
     }
     this.statusBar.set(status)
-    this.composer.setHint(this.hints(busy, plan !== undefined))
+    this.composer.setHint(this.hints(busy, plan !== undefined, this.continuedQuestions().length > 0))
     this.tui.requestRender()
   }
 
@@ -882,8 +947,9 @@ export class TuiApp implements InteractionHost {
    * @param busy - whether the Agent or a live subagent descendant is working.
    * @param planAvailable - whether the deployment mounts plan mode.
    */
-  private hints(busy: boolean, planAvailable: boolean): string {
+  private hints(busy: boolean, planAvailable: boolean, questionWaiting: boolean): string {
     const parts: string[] = [this.session.running ? 'Enter steer' : 'Enter send']
+    if (questionWaiting) parts.push('/questions answer')
     if (planAvailable) parts.push('Shift+Tab plan')
     parts.push(`${this.altPaste ? 'Alt+V' : 'Ctrl+V'} image`)
     if (busy) parts.push('Esc/Ctrl+C cancel')
@@ -902,7 +968,7 @@ export class TuiApp implements InteractionHost {
 
   /**
    * Ask the user to choose one item through a modal list.
-   * @param title - the question shown above the list.
+   * @param title - the question shown above the list; a provider is re-evaluated on every repaint.
    * @param items - the selectable items.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
    * @param detail - markdown shown above the list; while it overflows, Up/Down
@@ -910,7 +976,7 @@ export class TuiApp implements InteractionHost {
    * gives the panel every row above the pinned footer instead of the picker's cap.
    * @returns the chosen item, or undefined when dismissed.
    */
-  choose(title: string, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined> {
+  choose(title: InteractionTitle, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined> {
     if (items.length === 0) return Promise.resolve(undefined)
     return this.enqueuePrompt(() => new Promise<SelectItem | undefined>((resolve) => {
       const detailed = detail !== undefined
@@ -944,14 +1010,14 @@ export class TuiApp implements InteractionHost {
 
   /**
    * Ask the user for one line of text through a modal input.
-   * @param title - the question shown above the input.
+   * @param title - the question shown above the input; a provider is re-evaluated on every repaint.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
    * @param detail - markdown shown above the input; Up/Down, PageUp/PageDown,
    * and the wheel scroll it while it overflows. A detail gives the panel every
    * row above the pinned footer instead of the picker's cap.
    * @returns the entered text, or undefined when dismissed.
    */
-  ask(title: string, signal?: AbortSignal, detail?: string): Promise<string | undefined> {
+  ask(title: InteractionTitle, signal?: AbortSignal, detail?: string): Promise<string | undefined> {
     return this.enqueuePrompt(() => new Promise<string | undefined>((resolve) => {
       const input = new Input()
       const detailed = detail !== undefined
@@ -984,13 +1050,13 @@ export class TuiApp implements InteractionHost {
    * The alternate-screen layout pins the composer and the footer, so the panel
    * is anchored directly above them and reads as the transcript's next lines;
    * the inline layout has no fixed footer position, so the panel is centered.
-   * @param title - the heading line.
+   * @param title - the heading line, or a provider re-evaluated on every repaint.
    * @param body - the component that owns input while the modal is up.
    * @param detailed - whether the body carries scrollable detail, which lets the
    * panel take every row above the pinned footer instead of the picker's cap.
    * @returns the overlay handle.
    */
-  private showPrompt(title: string, body: Component, detailed: boolean): OverlayHandle {
+  private showPrompt(title: InteractionTitle, body: Component, detailed: boolean): OverlayHandle {
     const place = this.viewport === undefined
       ? { anchor: 'center' as const }
       : { anchor: 'bottom-center' as const, margin: { bottom: PINNED_FOOTER_ROWS } }
@@ -999,6 +1065,9 @@ export class TuiApp implements InteractionHost {
       maxHeight: this.promptRows(detailed),
       ...place,
     })
+    if (typeof title === 'function') {
+      this.promptTick = setInterval(() => { this.tui.requestRender() }, PROMPT_TICK_MS)
+    }
     this.promptActive = true
     this.editor.disableSubmit = true
     return handle
@@ -1020,6 +1089,10 @@ export class TuiApp implements InteractionHost {
    * @param handle - the overlay handle returned by {@link showPrompt}.
    */
   private dismissPrompt(handle: OverlayHandle): void {
+    if (this.promptTick !== undefined) {
+      clearInterval(this.promptTick)
+      this.promptTick = undefined
+    }
     handle.hide()
     this.promptActive = false
     this.editor.disableSubmit = false
@@ -1079,4 +1152,15 @@ function shortId(id: string): string {
 function describeSession(header: { id: string; createdAt: number; cwd?: string }): string {
   const created = new Date(header.createdAt).toISOString().replace('T', ' ').slice(0, 16)
   return `${shortId(header.id)}  ${created}  ${header.cwd ?? '(no workspace)'}`
+}
+
+/**
+ * One-line label naming a question call waiting for a late reply.
+ * @param question - the pending call.
+ * @returns the first question's heading or text, or the call id when it carries none.
+ */
+function questionLabel(question: PendingUserQuestion): string {
+  const first = question.questions[0]
+  if (first === undefined) return question.callId
+  return first.header ?? first.question
 }

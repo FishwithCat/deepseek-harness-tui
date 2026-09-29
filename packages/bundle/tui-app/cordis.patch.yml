@@ -18,6 +18,15 @@
     enabled: false
 
 - insert:
+    # The model-facing question tool in its timed form: the app owns a bounded
+    # countdown, and a window that closes unanswered returns the tool's pending
+    # result so `/questions` can still submit the answer later. The base layer
+    # mounts the question service but not this tool.
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+      config:
+        mode: timed
+
     # Whole-log decode wall time and output tokens for the footer's throughput
     # figure (the sessionStats projection key); the projection registry itself
     # is a base-layer row.

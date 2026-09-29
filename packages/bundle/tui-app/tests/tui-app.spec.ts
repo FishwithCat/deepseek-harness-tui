@@ -1525,6 +1525,132 @@ describe('TuiApp question detail', () => {
   })
 })
 
+describe('TuiApp timed questions', () => {
+  /**
+   * Append the events that leave one timed `ask_user_question` call continued.
+   * @param agent - the session's Agent.
+   * @param callId - the call the pending result names.
+   */
+  function appendContinuedQuestion(agent: Agent, callId: ToolCallId): void {
+    agent.session.append('request/header', {
+      header: {
+        config: { provider: 'test-provider', model: 'test-model' },
+        tools: [{
+          name: 'ask_user_question',
+          description: 'Ask the user.',
+          parameters: {
+            type: 'object',
+            properties: { questions: { type: 'array' }, timeout: { type: 'integer' } },
+          },
+        }],
+      },
+      reason: 'initial',
+    })
+    agent.session.append('tool/call', {
+      turn: 1,
+      step: 1,
+      callId,
+      name: 'ask_user_question',
+      arguments: JSON.stringify({ questions: [{ id: 'pick', question: 'Pick one', options: [{ label: 'Alpha' }] }] }),
+    })
+    agent.session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId,
+        content: [{ type: 'text', text: JSON.stringify({ pending: true, callId, message: 'pending' }) }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+  }
+
+  it('answers a timed question inside its window', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.askTimed({
+      questions: [{ id: 'pick', question: 'Pick one', options: [{ label: 'Alpha' }, { label: 'Beta' }] }],
+      agent,
+    }, ToolCallId('call-timed-answer'), 5000)
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Pick one'))).toBe(true)
+    })
+    // The app owns the claimed window, so the heading counts the seconds left.
+    expect(screen(test.app).some(row => row.includes('left'))).toBe(true)
+
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'pick', selected: ['Alpha'] }] })
+    await test.app.stop(0)
+  })
+
+  it('settles an unanswered timed question as pending', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.askTimed({
+      questions: [{ id: 'pick', question: 'Pick one', options: [{ label: 'Alpha' }] }],
+      agent,
+    }, ToolCallId('call-timed-pending'), 40)
+    await expect(pending).resolves.toMatchObject({ pending: true, callId: 'call-timed-pending' })
+    await test.app.stop(0)
+  })
+
+  it('settles a dismissed timed question as pending', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.askTimed({
+      questions: [{ id: 'pick', question: 'Pick one', options: [{ label: 'Alpha' }] }],
+      agent,
+    }, ToolCallId('call-timed-dismiss'), 5000)
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true)
+    })
+    test.terminal.feed('\x1b')
+    await expect(pending).resolves.toMatchObject({ pending: true })
+    await test.app.stop(0)
+  })
+
+  it('cancels an open timed question when its turn aborts', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const turn = new AbortController()
+    const pending = test.ctx.userQuestions.askTimed({
+      questions: [{ id: 'pick', question: 'Pick one', options: [{ label: 'Alpha' }] }],
+      agent,
+      signal: turn.signal,
+    }, ToolCallId('call-timed-cancel'), 5000)
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true)
+    })
+    turn.abort()
+    await expect(pending).rejects.toMatchObject({ code: 'ASK_ABORTED' })
+    await test.app.stop(0)
+  })
+
+  it('answers a continued question through /questions', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    appendContinuedQuestion(agent, ToolCallId('call-late-1'))
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('question waiting'))).toBe(true)
+    })
+
+    test.terminal.feed('/questions')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Answer which question?'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(test.steered).toHaveLength(1)
+    })
+    expect(test.steered[0]?.source).toMatchObject({ kind: 'user-question-reply', callId: 'call-late-1' })
+    await test.app.stop(0)
+  })
+})
+
 describe('TuiApp image paste', () => {
   /** One staged clipboard image, exactly as a platform reader would return it. */
   function clipboardImage(): ClipboardImage {
