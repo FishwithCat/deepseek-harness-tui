@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseDshArgs } from '../src/args.ts'
 
-const parse = (argv: string[]) => parseDshArgs(argv, '1.2.3')
+const parse = (argv: string[], manageDesktopProfile = false) => parseDshArgs(argv, '1.2.3', manageDesktopProfile)
 
 /**
  * Capture the process exit code while muting Commander's output. The empty
@@ -9,14 +9,14 @@ const parse = (argv: string[]) => parseDshArgs(argv, '1.2.3')
  * this fork otherwise boots its terminal profile for an invocation that names
  * none, so every check here asserts a failure that only exists without it.
  */
-function exitCode(argv: string[]): number {
+function exitCode(argv: string[], manageDesktopProfile = false): number {
   const exit = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit') })
   vi.spyOn(process.stdout, 'write').mockReturnValue(true)
   vi.spyOn(process.stderr, 'write').mockReturnValue(true)
   const previousDefault = process.env.DSH_DEFAULT_PROFILE
   process.env.DSH_DEFAULT_PROFILE = ''
   try {
-    parse(argv)
+    parse(argv, manageDesktopProfile)
     throw new Error(`expected ${JSON.stringify(argv)} to exit`)
   } catch {
     return exit.mock.calls.at(-1)?.[0] as number
@@ -129,6 +129,20 @@ describe('parseDshArgs', () => {
     // Unknown pnpm flags forward verbatim.
     expect(parse(['plugin', '--profile', 'tui', 'add', '--save-dev', 'x']))
       .toEqual({ mode: 'plugin', profile: 'tui', args: ['add', '--save-dev', 'x'] })
+  })
+
+  it.each(['desktop', 'Desktop', 'DESKTOP'])('permits installed Desktop plugin commands for %s', (profile) => {
+    expect(parse(['plugin', '--profile', profile, 'add', 'example-plugin'], true))
+      .toEqual({ mode: 'plugin', profile: 'desktop', args: ['add', 'example-plugin'] })
+    expect(exitCode(['plugin', '--profile', profile, 'add', 'example-plugin'])).toBe(1)
+  })
+
+  it.each([
+    ['desktop'], ['--profile', 'Desktop'],
+    ['desktop', '--dump-config'], ['DESKTOP', '--dump-default-config'],
+    ['desktop', '--dump-config-schema'],
+  ])('keeps Desktop boot and inspection reserved in its installed CLI: %j', (...argv: string[]) => {
+    expect(exitCode(argv, true)).toBe(1)
   })
 
   it('routes profile and web config dumps', () => {
