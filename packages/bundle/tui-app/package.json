@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-tui-app",
   "description": "The dsh terminal application: an interactive full-screen TUI that drives one in-process Agent over dsh-base",
-  "version": "0.1.7-rc.2",
+  "version": "0.2.0-rc.1",
   "publishConfig": {
     "access": "public"
   },
