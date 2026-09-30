@@ -34,6 +34,20 @@ export interface InteractionHost {
    */
   choose(title: InteractionTitle, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined>
   /**
+   * Ask the user to check any number of items.
+   * @param title - the question shown above the list; a provider is re-evaluated on every repaint.
+   * @param items - the selectable items.
+   * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param detail - markdown shown above the list, scrollable with Up/Down, PageUp/PageDown, and the wheel.
+   * @returns the checked items in list order, or undefined when the user cancelled.
+   */
+  chooseMany(
+    title: InteractionTitle,
+    items: readonly SelectItem[],
+    signal?: AbortSignal,
+    detail?: string,
+  ): Promise<SelectItem[] | undefined>
+  /**
    * Ask the user for one line of text.
    * @param title - the question shown above the input; a provider is re-evaluated on every repaint.
    * @param signal - cancellation lifetime; aborting dismisses the prompt.
@@ -145,11 +159,12 @@ export function installApprovalAnswerer(ctx: Context, host: InteractionHost, own
 /**
  * Answer one structured question.
  *
- * A plan review is special: its non-approve choice is not an answer to send
- * back. The terminal has no separate "talk it over" action, so choosing Keep
- * planning means the user kept planning to speak instead — leaving the question
- * unanswered hands the turn back so the agent stays in plan mode and waits for
- * their adjustment rather than revising immediately.
+ * A multi-select question opens a checkable list and answers with every checked
+ * label. A plan review is special: its non-approve choice is not an answer to
+ * send back. The terminal has no separate "talk it over" action, so choosing
+ * Keep planning means the user kept planning to speak instead — leaving the
+ * question unanswered hands the turn back so the agent stays in plan mode and
+ * waits for their adjustment rather than revising immediately.
  * @param host - the terminal prompt surface.
  * @param question - the question to present.
  * @param signal - cancellation lifetime of the whole request.
@@ -176,8 +191,12 @@ export async function answerQuestion(
     label: option.label,
     ...(option.description === undefined ? {} : { description: option.description }),
   }))
-  const headingWithMode = question.multiSelect === true ? `${heading} (one choice per prompt)` : heading
-  const title = deadline === undefined ? headingWithMode : (): string => `${headingWithMode}  ·  ${remainingLabel(deadline)}`
+  const title = deadline === undefined ? heading : (): string => `${heading}  ·  ${remainingLabel(deadline)}`
+  if (question.multiSelect === true) {
+    const checked = await host.chooseMany(title, items, signal, question.detail)
+    if (checked === undefined) return undefined
+    return { id: question.id, selected: checked.map(item => item.value) }
+  }
   const chosen = await host.choose(title, items, signal, question.detail)
   if (chosen === undefined) return undefined
   if (question.intent?.kind === 'plan-review' && chosen.value !== question.intent.approve) return undefined

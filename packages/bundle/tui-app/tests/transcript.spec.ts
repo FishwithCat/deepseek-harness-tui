@@ -9,7 +9,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { CURSOR_MARKER, Editor, SelectList, TuiMainScreen, visibleWidth } from '@earendil-works/pi-tui'
-import type { Component, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
+import type { Component, SelectItem, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { LlmAttemptId, ToolCallId, createAssistantMessage, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord, MessageSource, StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -20,7 +20,7 @@ import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import { TerminalTranscript } from '../src/transcript.ts'
 import type { ToolPresentationResolver } from '../src/tool-view.ts'
-import { PROMPT_PANEL_CHROME_ROWS, DetailBody, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
+import { PROMPT_PANEL_CHROME_ROWS, DetailBody, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
 import type { TuiSessionStats, TuiStatus } from '../src/views.ts'
 import { createTheme, editorTheme, selectListTheme } from '../src/ansi.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
@@ -1002,6 +1002,99 @@ describe('DetailBody', () => {
     view.render(40)
     view.handleInput('\x1b[B')
     expect(body.handleInput).toHaveBeenCalledWith('\x1b[B')
+  })
+})
+
+describe('MultiSelectList', () => {
+  /**
+   * Build one checkable picker over three options.
+   * @returns the picker with Alpha highlighted.
+   */
+  function picker(): MultiSelectList {
+    return new MultiSelectList([
+      { value: 'alpha', label: 'Alpha' },
+      { value: 'beta', label: 'Beta', description: 'The second one.' },
+      { value: 'gamma', label: 'Gamma' },
+    ], 3, selectListTheme(createTheme({ enabled: false, palette: 'dark' })))
+  }
+
+  it('renders unchecked markers and the key hint, and confirms with no listener', () => {
+    const list = picker()
+    const rendered = list.render(60).join('\n')
+    expect(rendered).toContain('→ [ ] Alpha')
+    expect(rendered).toContain('  [ ] Beta')
+    expect(rendered).toContain('Space toggle · Enter confirm')
+    // Checked with no confirm listener, then cancelled with no cancel listener.
+    list.handleInput(' ')
+    list.handleInput('\r')
+    list.handleInput('\x1b')
+    expect(list.selectedItems().map(item => item.value)).toEqual(['alpha'])
+  })
+
+  it('checks and unchecks with Space and confirms the checked options in list order', () => {
+    const list = picker()
+    const confirmed = vi.fn<(items: SelectItem[]) => void>()
+    list.onConfirm = confirmed
+
+    list.handleInput(' ')
+    list.handleInput('\x1b[B')
+    list.handleInput(' ')
+    list.handleInput(' ')
+    list.handleInput('\x1b[B')
+    list.handleInput(' ')
+
+    expect(list.render(60).join('\n')).toContain('→ [x] Gamma')
+    expect(list.selectedItems().map(item => item.value)).toEqual(['alpha', 'gamma'])
+    list.handleInput('\r')
+    expect(confirmed).toHaveBeenCalledTimes(1)
+    const checked = confirmed.mock.calls[0]?.[0] ?? []
+    expect(checked.map(item => item.value)).toEqual(['alpha', 'gamma'])
+  })
+
+  it('ignores Enter while nothing is checked and delegates the movement keys', () => {
+    const list = picker()
+    const confirmed = vi.fn()
+    const cancelled = vi.fn()
+    const changed = vi.fn()
+    list.onConfirm = confirmed
+    list.onCancel = cancelled
+    list.onSelectionChange = changed
+
+    list.handleInput('\r')
+    expect(confirmed).not.toHaveBeenCalled()
+    list.handleInput('\x1b[B')
+    expect(changed).toHaveBeenCalledTimes(1)
+    list.handleInput('\x1b')
+    expect(cancelled).toHaveBeenCalledTimes(1)
+  })
+
+  it('toggles on a click and moves the highlight with the wheel', () => {
+    const list = picker()
+    list.render(60)
+    expect(list.handleMouse(mouseEvent('press', { button: 'left', y: 1 }))).toEqual({ handled: true, focus: true })
+    list.handleMouse(mouseEvent('click', { button: 'left', y: 1 }))
+    expect(list.selectedItems().map(item => item.value)).toEqual(['beta'])
+    expect(list.handleMouse(mouseEvent('wheel', { wheelDelta: 1 }))).toEqual({ handled: true, render: true })
+    list.render(60)
+    list.handleMouse(mouseEvent('click', { button: 'left', y: 0 }))
+    expect(list.selectedItems().map(item => item.value)).toEqual(['alpha', 'beta'])
+  })
+
+  it('moves its selection directly and drops the wrapped cache', () => {
+    const list = picker()
+    list.setSelectedIndex(1)
+    list.invalidate()
+    list.render(60)
+    list.handleInput(' ')
+    expect(list.selectedItems().map(item => item.value)).toEqual(['beta'])
+  })
+
+  it('draws no options and ignores Space and Escape on an empty list', () => {
+    const list = new MultiSelectList([], 3, selectListTheme(createTheme({ enabled: false, palette: 'dark' })))
+    expect(list.render(40).join('\n')).toContain('Space toggle · Enter confirm')
+    list.handleInput(' ')
+    list.handleInput('\x1b')
+    expect(list.selectedItems()).toEqual([])
   })
 })
 

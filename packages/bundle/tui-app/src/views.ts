@@ -6,8 +6,8 @@
  * @module @deepseek-ai/dsh-tui-app/views
  */
 
-import { CURSOR_MARKER, Key, Markdown, isFocusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
-import type { Component, Editor, Focusable, MarkdownTheme, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
+import { CURSOR_MARKER, Key, Markdown, SelectList, getKeybindings, isFocusable, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui'
+import type { Component, Editor, Focusable, MarkdownTheme, SelectItem, SelectListLayoutOptions, SelectListTheme, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { FileDiff, ReadFileLine, SearchResultView, WebResultView } from '@deepseek-ai/dsh-tools'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
@@ -527,6 +527,8 @@ export class TranscriptView implements Component {
 const PICKER_PANEL_MAX_ROWS = 18
 /** Rows a prompt spends outside its body: the title and the blank row under it. */
 export const PROMPT_PANEL_CHROME_ROWS = 2
+/** Rows a multi-select picker spends on its key hint below the list. */
+export const MULTI_SELECT_HINT_ROWS = 1
 
 /**
  * Row budget for one prompt panel on a terminal with `rows` rows left to it.
@@ -757,6 +759,122 @@ export class PromptPanel implements Component, Focusable {
   private row(text: string, available: number): string {
     const clipped = visibleWidth(text) > available ? truncateToWidth(text, available, '…') : text
     return clipped + ' '.repeat(Math.max(0, available - visibleWidth(clipped)))
+  }
+}
+
+/** Marker a checked multi-select row draws before its label. */
+const MULTI_SELECT_CHECKED = '[x] '
+/** Marker an unchecked multi-select row draws before its label. */
+const MULTI_SELECT_UNCHECKED = '[ ] '
+/** Columns both markers occupy, so a toggle swaps one for the other in place. */
+const MULTI_SELECT_MARKER_WIDTH = 4
+
+/**
+ * A modal picker whose options are checked with Space and submitted with Enter.
+ *
+ * The single-select picker confirms on the same key that moves, so a checkable
+ * list cannot reuse it unchanged: this owns the check state and wraps the picker
+ * for navigation, scrolling, and rendering. Every option it passes down is its
+ * own copy whose label carries the marker, so a toggle rewrites that label in
+ * place — the picker renders the objects it was given, so the marker follows the
+ * check state without a second rendering path. Enter submits the checked options
+ * in list order and is ignored while none is checked, so a stray confirm cannot
+ * answer with an empty selection; Escape still cancels.
+ */
+export class MultiSelectList implements Component {
+  /** Called with the checked options in list order when the user confirms. */
+  onConfirm?: (items: SelectItem[]) => void
+  /** Called when the user cancels the picker. */
+  onCancel?: () => void
+  /** Called whenever the highlighted option changes. */
+  onSelectionChange?: (item: SelectItem) => void
+
+  private readonly list: SelectList
+  private readonly items: SelectItem[]
+  private readonly theme: SelectListTheme
+
+  /**
+   * @param items - the options to check.
+   * @param maxVisible - most rows the picker shows before scrolling.
+   * @param theme - the picker theme shared with the single-select list.
+   * @param layout - the picker's column layout.
+   */
+  constructor(items: SelectItem[], maxVisible: number, theme: SelectListTheme, layout?: SelectListLayoutOptions) {
+    this.theme = theme
+    this.items = items.map(item => ({ ...item, label: MULTI_SELECT_UNCHECKED + item.label }))
+    this.list = new SelectList(this.items, maxVisible, theme, layout)
+    // A click confirms in the wrapped picker; in a checkable list it toggles.
+    this.list.onSelect = (item) => { this.toggle(item) }
+    this.list.onCancel = () => { this.onCancel?.() }
+    this.list.onSelectionChange = (item) => { this.onSelectionChange?.(item) }
+  }
+
+  /**
+   * Toggle the highlighted option on Space, confirm the checked ones on Enter,
+   * and hand every other key to the wrapped picker.
+   * @param data - raw key bytes.
+   */
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.space)) {
+      const item = this.list.getSelectedItem()
+      if (item !== null) this.toggle(item)
+      return
+    }
+    if (getKeybindings().matches(data, 'tui.select.confirm')) {
+      const checked = this.selectedItems()
+      if (checked.length > 0) this.onConfirm?.(checked)
+      return
+    }
+    this.list.handleInput(data)
+  }
+
+  /**
+   * Delegate the wheel and clicks to the wrapped picker, whose click handler
+   * toggles through `onSelect`.
+   * @param event - the normalized mouse event.
+   * @returns the wrapped picker's result.
+   */
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    return this.list.handleMouse(event)
+  }
+
+  /**
+   * Move the highlight onto one option.
+   * @param index - the option index; clamped to the list.
+   */
+  setSelectedIndex(index: number): void {
+    this.list.setSelectedIndex(index)
+  }
+
+  /** Drop the wrapped picker's cached render state. */
+  invalidate(): void {
+    this.list.invalidate()
+  }
+
+  /**
+   * Render the options with their check markers and the key hint.
+   * @param width - the viewport width in columns.
+   * @returns the picker lines, the hint last.
+   */
+  render(width: number): string[] {
+    return [
+      ...this.list.render(width),
+      this.theme.description('  Space toggle · Enter confirm'),
+    ]
+  }
+
+  /**
+   * The checked options.
+   * @returns the checked options in list order.
+   */
+  selectedItems(): SelectItem[] {
+    return this.items.filter(item => item.label.startsWith(MULTI_SELECT_CHECKED))
+  }
+
+  private toggle(item: SelectItem): void {
+    const checked = item.label.startsWith(MULTI_SELECT_CHECKED)
+    item.label = (checked ? MULTI_SELECT_UNCHECKED : MULTI_SELECT_CHECKED) + item.label.slice(MULTI_SELECT_MARKER_WIDTH)
+    this.list.invalidate()
   }
 }
 

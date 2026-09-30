@@ -58,7 +58,7 @@ import { TuiSession } from './session.ts'
 import type { TuiSessionOptions } from './session.ts'
 import type { TuiStartupValues } from './startup.ts'
 import { createToolPresentationResolver } from './tool-view.ts'
-import { DetailBody, PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
+import { DetailBody, MULTI_SELECT_HINT_ROWS, MultiSelectList, PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
 import type { TuiContextStatus, TuiSessionStats, TuiStatus } from './views.ts'
 import { TerminalTranscript } from './transcript.ts'
 
@@ -154,6 +154,14 @@ function isTeardown(error: unknown): boolean {
  */
 function resumeHint(sessionId: string): string {
   return `To resume this session:\n  dsh --resume ${sessionId}\n`
+}
+
+/** The picker surface a list prompt's modal plumbing drives. */
+interface PromptPicker extends Component {
+  /** Reported whenever the highlighted option changes. */
+  onSelectionChange?: (item: SelectItem) => void
+  /** Move the highlight onto one option. */
+  setSelectedIndex(index: number): void
 }
 
 /** The interactive application. */
@@ -978,14 +986,86 @@ export class TuiApp implements InteractionHost {
    */
   choose(title: InteractionTitle, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined> {
     if (items.length === 0) return Promise.resolve(undefined)
-    return this.enqueuePrompt(() => new Promise<SelectItem | undefined>((resolve) => {
+    return this.pickList<SelectList, SelectItem>(
+      title,
+      items,
+      signal,
+      detail,
+      0,
+      visible => new SelectList([...items], visible, selectListTheme(this.theme), PROMPT_LIST_LAYOUT),
+      (list, capacity, step) => detail === undefined ? list : new DetailBody(detail, list, this.theme, capacity, step),
+      (list, settle) => {
+        list.onSelect = (item) => { settle(item) }
+        list.onCancel = () => { settle(undefined) }
+      },
+    )
+  }
+
+  /**
+   * Ask the user to check any number of items through a modal list.
+   * @param title - the question shown above the list; a provider is re-evaluated on every repaint.
+   * @param items - the selectable items.
+   * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param detail - markdown shown above the list; while it overflows, Up/Down
+   * and the wheel scroll it and Left/Right move the list selection.
+   * @returns the checked items in list order, or undefined when dismissed.
+   */
+  chooseMany(
+    title: InteractionTitle,
+    items: readonly SelectItem[],
+    signal?: AbortSignal,
+    detail?: string,
+  ): Promise<SelectItem[] | undefined> {
+    if (items.length === 0) return Promise.resolve([])
+    return this.pickList<MultiSelectList, SelectItem[]>(
+      title,
+      items,
+      signal,
+      detail,
+      MULTI_SELECT_HINT_ROWS,
+      visible => new MultiSelectList([...items], visible, selectListTheme(this.theme), PROMPT_LIST_LAYOUT),
+      (list, capacity, step) => detail === undefined ? list : new DetailBody(detail, list, this.theme, capacity, step),
+      (list, settle) => {
+        list.onConfirm = (checked) => { settle(checked) }
+        list.onCancel = () => { settle(undefined) }
+      },
+    )
+  }
+
+  /**
+   * Open one modal list prompt and settle it through the caller's wiring.
+   *
+   * Both pickers share the panel budget, the selection a long detail moves with
+   * Left/Right, and the dismissal plumbing; they differ only in the control they
+   * build and the key that settles it, so those arrive as callbacks.
+   * @param title - the heading shown above the list.
+   * @param items - the selectable items, in display order.
+   * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param detail - markdown shown above the list; absent shows the list alone.
+   * @param reservedRows - body rows the picker spends outside its options, such as a key hint.
+   * @param createList - builds the picker control for the computed visible count.
+   * @param wrapBody - wraps the picker with the detail viewport when a detail is present.
+   * @param wire - installs the caller's confirmation and cancellation handlers.
+   * @returns the settled value, or undefined when the prompt was dismissed.
+   */
+  private pickList<L extends PromptPicker, T>(
+    title: InteractionTitle,
+    items: readonly SelectItem[],
+    signal: AbortSignal | undefined,
+    detail: string | undefined,
+    reservedRows: number,
+    createList: (visible: number) => L,
+    wrapBody: (list: L, capacity: number, step: (delta: -1 | 1) => void) => Component,
+    wire: (list: L, settle: (value: T | undefined) => void) => void,
+  ): Promise<T | undefined> {
+    return this.enqueuePrompt(() => new Promise<T | undefined>((resolve) => {
       const detailed = detail !== undefined
-      const capacity = this.promptRows(detailed) - PROMPT_PANEL_CHROME_ROWS
+      const capacity = this.promptRows(detailed) - PROMPT_PANEL_CHROME_ROWS - reservedRows
       // A list longer than the panel budget scrolls, and the scroll indicator
       // spends one of the body rows the panel has.
       const scrolling = items.length > capacity
       const visible = Math.max(1, Math.min(items.length, PROMPT_VISIBLE_ITEMS, capacity - (scrolling ? 1 : 0)))
-      const list = new SelectList([...items], visible, selectListTheme(this.theme), PROMPT_LIST_LAYOUT)
+      const list = createList(visible)
       // A long detail owns Up/Down, so the picker's selection needs a tracked
       // index for the Left/Right and Tab keys DetailBody hands over.
       let selected = 0
@@ -996,14 +1076,12 @@ export class TuiApp implements InteractionHost {
         selected = (selected + delta + items.length) % items.length
         list.setSelectedIndex(selected)
       }
-      const body: Component = detail === undefined ? list : new DetailBody(detail, list, this.theme, capacity, step)
-      const handle = this.showPrompt(title, body, detailed)
-      const settle = (item: SelectItem | undefined): void => {
+      const handle = this.showPrompt(title, wrapBody(list, capacity, step), detailed)
+      const settle = (value: T | undefined): void => {
         this.dismissPrompt(handle)
-        resolve(item)
+        resolve(value)
       }
-      list.onSelect = (item) => { settle(item) }
-      list.onCancel = () => { settle(undefined) }
+      wire(list, settle)
       signal?.addEventListener('abort', () => { settle(undefined) }, { once: true })
     }))
   }

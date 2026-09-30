@@ -1525,6 +1525,147 @@ describe('TuiApp question detail', () => {
   })
 })
 
+describe('TuiApp multi-select questions', () => {
+  it('checks several options and answers with them in list order', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{
+        id: 'multi',
+        question: 'Pick some',
+        multiSelect: true,
+        options: [
+          { label: 'Alpha' },
+          { label: 'Beta', description: 'The second one.' },
+          { label: 'Gamma' },
+        ],
+      }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ [ ] Alpha'))).toBe(true)
+    })
+    expect(screen(test.app).some(row => row.includes('Space toggle · Enter confirm'))).toBe(true)
+    expect(screen(test.app).join('\n')).not.toContain('one choice per prompt')
+
+    test.terminal.feed(' ')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ [x] Alpha'))).toBe(true)
+    })
+    // Beta is checked and then unchecked; Gamma stays checked only until the
+    // second Space, so the answer carries Alpha and Beta in list order.
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed(' ')
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed(' ')
+    test.terminal.feed(' ')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ [ ] Gamma'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'multi', selected: ['Alpha', 'Beta'] }] })
+    await test.app.stop(0)
+  })
+
+  it('keeps the prompt open when Enter confirms nothing checked', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{ id: 'multi', question: 'Pick some', multiSelect: true, options: [{ label: 'Alpha' }, { label: 'Beta' }] }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ [ ] Alpha'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    expect(screen(test.app).some(row => row.includes('→ [ ] Alpha'))).toBe(true)
+    test.terminal.feed(' ')
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'multi', selected: ['Alpha'] }] })
+    await test.app.stop(0)
+  })
+
+  it('scrolls a multi-select detail and moves the picker with Left/Right', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const detail = Array.from({ length: 40 }, (_, index) => `marker-${String(index + 1).padStart(2, '0')}`).join('\n\n')
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{
+        id: 'multi',
+        question: 'Pick some',
+        multiSelect: true,
+        detail,
+        options: [{ label: 'Alpha' }, { label: 'Beta' }],
+      }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('marker-01'))).toBe(true)
+    })
+    // The overflowing detail owns Up/Down; the first press scrolls it.
+    test.terminal.feed('\x1b[B')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('2–'))).toBe(true)
+    })
+    expect(screen(test.app).some(row => row.includes('→ [ ] Alpha'))).toBe(true)
+    // Left/Right move the picker while the detail owns the arrows.
+    test.terminal.feed('\x1b[C')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ [ ] Beta'))).toBe(true)
+    })
+    test.terminal.feed(' ')
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'multi', selected: ['Beta'] }] })
+    await test.app.stop(0)
+  })
+
+  it('fails a dismissed multi-select question with the seam abort code', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{ id: 'multi', question: 'Pick some', multiSelect: true, options: [{ label: 'Alpha' }] }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ [ ] Alpha'))).toBe(true)
+    })
+    test.terminal.feed('\x1b')
+    await expect(pending).rejects.toMatchObject({ code: 'ASK_ABORTED' })
+    await test.app.stop(0)
+  })
+
+  it('scrolls a multi-select picker longer than the panel budget', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    const items = Array.from({ length: 20 }, (_, index) => ({ value: `opt-${String(index)}`, label: `Option ${String(index)}` }))
+    const pending = test.app.chooseMany('Pick some', items)
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Pick some') })
+    const rows = screen(test.app)
+    expect(rows.join('\n')).toContain('(1/20)')
+    // Ten options, the scroll line, and the key hint share the capped panel.
+    expect(rows.filter(row => /Option \d/.test(row))).toHaveLength(10)
+    test.terminal.feed(' ')
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject([{ value: 'opt-0' }])
+    await test.app.stop(0)
+  })
+
+  it('answers an empty multi-select batch without opening a prompt', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    await expect(test.app.chooseMany('Pick some', [])).resolves.toEqual([])
+    await test.app.stop(0)
+  })
+
+  it('dismisses a multi-select prompt when its signal aborts', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    const controller = new AbortController()
+    const pending = test.app.chooseMany('Pick some', [{ value: 'a', label: 'Alpha' }], controller.signal)
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Pick some') })
+    controller.abort()
+    await expect(pending).resolves.toBeUndefined()
+    await test.app.stop(0)
+  })
+})
+
 describe('TuiApp timed questions', () => {
   /**
    * Append the events that leave one timed `ask_user_question` call continued.
