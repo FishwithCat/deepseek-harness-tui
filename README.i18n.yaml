@@ -2,39 +2,39 @@
 # section, a hash of its English and Chinese blocks outside code blocks and generated regions.
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write README.md
-/deepseek-harness:
-  en: f68c4f080ce55ff2
-  zh: 88a76d7f7f0b260e
-/deepseek-harness/developer-preview:
-  en: 4ef4d8a71ac143f0
+/deepseek-harness-tui:
+  en: 2b0285c143145486
+  zh: e6ebf93517681fcd
+/deepseek-harness-tui/developer-preview:
+  en: 1990ad7a69963f1f
   zh: 1bfc3149ba8e5543
-/deepseek-harness/run:
-  en: 4e0248e4c6474fc6
-  zh: 890dba93f601a82a
-/deepseek-harness/run/run-the-terminal-ui:
-  en: 0327f574377f5548
-  zh: e988a31d92f6cc12
-/deepseek-harness/run/run-from-npm:
-  en: bd3c4f9b473036ff
-  zh: e96efedcbef042c6
-/deepseek-harness/run/run-from-source:
-  en: 2915467d0c4fec6d
-  zh: 450cedacb77a334c
-/deepseek-harness/run/install-the-dsh-command-on-a-new-machine:
-  en: d346c84e3252285a
-  zh: 6430d32d109ecf83
-/deepseek-harness/community-and-support:
-  en: 20acf6451fdc869b
-  zh: d06246dd019ecef7
-/deepseek-harness/contributing:
+/deepseek-harness-tui/install-and-run:
+  en: 006d1bccd6a45d29
+  zh: 2b48bbebef414ea5
+/deepseek-harness-tui/install-and-run/run-from-source:
+  en: 6305884c7234b517
+  zh: 754c4824f37c45c7
+/deepseek-harness-tui/install-and-run/flags:
+  en: e4f88a3ea05a5558
+  zh: 8579211170d55e56
+/deepseek-harness-tui/what-the-terminal-ui-offers:
+  en: 09c25f125cf5248d
+  zh: 4e54ff3954a2e2cf
+/deepseek-harness-tui/keyboard-shortcuts:
+  en: 4054e51c06799e7c
+  zh: 4840aba923c56af2
+/deepseek-harness-tui/commands:
+  en: b4259cb40f767705
+  zh: 781546bbd7e49e1d
+/deepseek-harness-tui/settings:
+  en: 5f95abbb841d4051
+  zh: 64a6e1e05b3c3f3b
+/deepseek-harness-tui/development:
+  en: 41f7b7c92400e1fc
+  zh: aed8d06f35bbc962
+/deepseek-harness-tui/contributing:
   en: cabc2d3e9f8898bd
-  zh: 83b6d238bae29ce3
-/deepseek-harness/development:
-  en: 803ca2b11b497bed
-  zh: 8b4071eb0e7783ef
-/deepseek-harness/citation:
-  en: 6704e9e5a8d49a91
-  zh: 85c9cdd8d56f8e9d
-/deepseek-harness/license:
+  zh: 426e1c1f76e8fa19
+/deepseek-harness-tui/license:
   en: 926995344fc1c72b
   zh: c92fab5abf85932f
