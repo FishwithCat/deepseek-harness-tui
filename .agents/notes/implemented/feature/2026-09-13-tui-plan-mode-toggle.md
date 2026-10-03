@@ -6,7 +6,7 @@ English | [中文](2026-09-13-tui-plan-mode-toggle.zh.md)
 
 ## Problem
 
-The [fork terminal surface](../architecture/2026-09-11-fork-terminal-surface.md) could switch the model route and the reasoning effort, but had no gesture for the session's collaboration mode. Plan mode is [logged per-agent collaboration state](../simplification/2026-07-22-plan-specific-collaboration-state.md) that adds the `plan:policy` prompt section and gates `exit_plan_mode`; the terminal could only reach it by typing `/plan` and `/plan off`, while the browser composer chip leaves it with one press. A user working in the terminal had no equivalent key.
+The [fork terminal surface](../architecture/2026-09-11-fork-terminal-surface.md) could switch the model route and the reasoning effort, but had no gesture for the session's collaboration mode. Plan mode is [logged per-agent collaboration state](../../archived/simplification/2026-07-22-plan-specific-collaboration-state.md) that adds the `plan:policy` prompt section and gates `exit_plan_mode`; the terminal could only reach it by typing `/plan` and `/plan off`, while the browser composer chip leaves it with one press. A user working in the terminal had no equivalent key.
 
 ## Decision
 

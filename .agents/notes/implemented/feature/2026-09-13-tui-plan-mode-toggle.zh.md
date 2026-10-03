@@ -6,7 +6,7 @@ Status: implemented
 
 ## 问题
 
-[fork 终端界面](../architecture/2026-09-11-fork-terminal-surface.zh.md)可以切换模型路由与推理强度，却没有针对会话协作模式的手势。plan 模式是[按 Agent 记录的协作状态](../simplification/2026-07-22-plan-specific-collaboration-state.zh.md)，它会加入 `plan:policy` 提示段落并约束 `exit_plan_mode`；终端此前只能通过输入 `/plan` 与 `/plan off` 触达它，而浏览器端输入框的 chip 一次点击即可退出。在终端工作的用户没有对应的按键。
+[fork 终端界面](../architecture/2026-09-11-fork-terminal-surface.zh.md)可以切换模型路由与推理强度，却没有针对会话协作模式的手势。plan 模式是[按 Agent 记录的协作状态](../../archived/simplification/2026-07-22-plan-specific-collaboration-state.md)，它会加入 `plan:policy` 提示段落并约束 `exit_plan_mode`；终端此前只能通过输入 `/plan` 与 `/plan off` 触达它，而浏览器端输入框的 chip 一次点击即可退出。在终端工作的用户没有对应的按键。
 
 ## 决策
 
