@@ -9,7 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { z as zod } from 'zod'
 import type { ZodType } from 'zod'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type GenericCallView } from '@deepseek-ai/dsh-tools'
 import type { TodoItem } from './types.ts'
 // Type-only: resolves the required ctx.sessionProjections service declaration.
 import type {} from '@deepseek-ai/dsh-session-projection'
@@ -24,6 +24,13 @@ export const inject = ['tools', 'sessionProjections']
 
 /** The valid {@link TodoItem} statuses, as a runtime set for input narrowing. */
 const STATUSES = ['pending', 'in_progress', 'completed'] as const
+
+/** Checklist glyph for one {@link TodoItem} status; the terminal card draws one per task. */
+const STATUS_MARK: Record<TodoItem['status'], string> = {
+  pending: '☐',
+  in_progress: '◐',
+  completed: '☑',
+}
 
 /** Model-facing todo tool configuration. */
 export interface Config {
@@ -107,6 +114,29 @@ const todosProjectionSchema: ZodType<TodoItem[] | null> = zod.union([
   })),
   zod.null(),
 ])
+
+/**
+ * The terminal card for one whole-list update: the completed/total count in the
+ * title and one status-marked line per task in model order. The title keeps the
+ * count visible when a long list folds, and an empty list keeps the bare title so
+ * the row falls back to the model-facing counts sentence.
+ * @param todos - the schema-checked task list from the call arguments.
+ * @returns the generic card the terminal surface draws.
+ */
+function presentTodoList(todos: readonly TodoItem[]): GenericCallView {
+  const done = todos.filter(todo => todo.status === 'completed').length
+  return {
+    card: 'generic',
+    title: todos.length === 0 ? 'Update todo list' : `Update todo list (${String(done)}/${String(todos.length)} done)`,
+    kind: 'other',
+    ...todos.length === 0 ? {} : {
+      content: [{
+        type: 'text',
+        text: todos.map(todo => `${STATUS_MARK[todo.status]} ${todo.content}`).join('\n'),
+      }],
+    },
+  }
+}
 
 /**
  * Register the `todo_write` tool on `ctx.tools` and the `todos` unit on
@@ -207,6 +237,6 @@ export function apply(ctx: Context, config: Config): void {
         },
       })
     },
-    presentCall: args => ({ card: 'generic', title: 'Update todo list', kind: 'other', rawInput: args.todos }),
+    presentCall: args => presentTodoList(args.todos),
   }))
 }

@@ -1548,6 +1548,20 @@ describe('TranscriptView tool cards', () => {
     expect(plain).toContain('plain body')
   })
 
+  it('renders a todo checklist body in a generic card without the argument JSON', async () => {
+    const rendered = await render({
+      card: 'generic',
+      title: 'Update todo list (1/3 done)',
+      kind: 'other',
+      content: [{ type: 'text', text: '☑ spec\n◐ render\n☐ tests' }],
+    }, undefined)
+    expect(rendered).toContain('Update todo list (1/3 done)')
+    expect(rendered).toContain('☑ spec')
+    expect(rendered).toContain('◐ render')
+    expect(rendered).toContain('☐ tests')
+    expect(rendered).not.toContain('{"content"')
+  })
+
   it('falls back to the raw result when a generic card carries no content', async () => {
     const empty = await render({ card: 'generic', title: 'Run' }, { card: 'generic', content: [] })
     expect(empty).toContain('raw result text')

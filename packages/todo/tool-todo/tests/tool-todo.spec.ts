@@ -204,11 +204,27 @@ describe('dsh-tool-todo', () => {
     expect(text(result)).toContain('owning agent session')
   })
 
-  it('presents the call with a stable title and the list as raw input', async () => {
+  it('presents the call as a status-marked checklist with the done count in the title', async () => {
     const ctx = await setup(true)
     const def = ctx.tools.get('todo_write')!
-    const todos = [{ content: 'a', status: 'pending' }]
-    expect(def.presentCall?.({ todos })).toEqual({ card: 'generic', title: 'Update todo list', kind: 'other', rawInput: todos })
+    expect(def.presentCall?.({
+      todos: [
+        { content: 'spec', status: 'completed' },
+        { content: 'render', status: 'in_progress' },
+        { content: 'tests', status: 'pending' },
+      ],
+    })).toEqual({
+      card: 'generic',
+      title: 'Update todo list (1/3 done)',
+      kind: 'other',
+      content: [{ type: 'text', text: '☑ spec\n◐ render\n☐ tests' }],
+    })
+  })
+
+  it('keeps the bare title for an empty list', async () => {
+    const ctx = await setup(true)
+    const def = ctx.tools.get('todo_write')!
+    expect(def.presentCall?.({ todos: [] })).toEqual({ card: 'generic', title: 'Update todo list', kind: 'other' })
   })
 
   it('unregisters the tool when its contributing fiber is disposed (HMR-safety)', async () => {
