@@ -717,6 +717,25 @@ describe('TuiApp', () => {
     await test.app.stop(0)
   })
 
+  it('ignores a mouse click on a picker and still confirms the keyboard selection', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    const pending = test.app.choose('Select a model', [
+      { value: 'a', label: 'Alpha' },
+      { value: 'b', label: 'Beta' },
+    ])
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('Select a model'))).toBe(true) })
+    const rows = screen(test.app)
+    const title = rows.findIndex(row => row.trim() === 'Select a model')
+    const option = rows.findIndex((row, index) => index > title && row.includes('Beta'))
+    const x = rows[option]!.indexOf('Beta') + 1
+    // A press and release on the Beta row settles nothing.
+    test.terminal.feed(`\x1b[<0;${x};${option + 1}M`)
+    test.terminal.feed(`\x1b[<0;${x};${option + 1}m`)
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ value: 'a' })
+    await test.app.stop(0)
+  })
+
   it('mounts the alternate-screen layout without a prompt', async () => {
     const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
     expect(test.terminal.output).toContain('\x1b[?1049h')

@@ -725,8 +725,8 @@ export class PromptPanel implements Component, Focusable {
 
   /**
    * Forward a mouse event past the panel's chrome to the wrapped control, so a
-   * scrolling body reaches its own viewport and a picker receives clicks at the
-   * rows it rendered. Events on the title or blank row belong to no control.
+   * scrolling body reaches its own viewport at the rows it rendered. Events on
+   * the title or blank row belong to no control.
    * @param event - the normalized mouse event, in panel coordinates.
    * @returns the body's result, when it handled the event.
    */
@@ -762,6 +762,78 @@ export class PromptPanel implements Component, Focusable {
   }
 }
 
+/**
+ * A single-select picker that answers only keyboard input.
+ *
+ * `SelectList` confirms a left click on a row and moves the highlight on the
+ * wheel; a stray click in the terminal would settle a prompt the user only meant
+ * to focus. This wrapper exposes no mouse handler, so the arrow keys move the
+ * highlight and Enter or Escape are the only ways to settle the list. It
+ * forwards the wrapped picker's own key handling, selection callbacks, and
+ * render state.
+ */
+export class KeyboardSelectList implements Component {
+  /** Called with the highlighted option when the user confirms. */
+  onSelect?: (item: SelectItem) => void
+  /** Called when the user cancels. */
+  onCancel?: () => void
+  /** Called whenever the highlighted option changes. */
+  onSelectionChange?: (item: SelectItem) => void
+
+  private readonly list: SelectList
+
+  /**
+   * @param items - the options to show.
+   * @param maxVisible - most rows the picker shows before scrolling.
+   * @param theme - the picker theme.
+   * @param layout - the picker's column layout.
+   */
+  constructor(items: SelectItem[], maxVisible: number, theme: SelectListTheme, layout?: SelectListLayoutOptions) {
+    this.list = new SelectList(items, maxVisible, theme, layout)
+    this.list.onSelect = (item) => { this.onSelect?.(item) }
+    this.list.onCancel = () => { this.onCancel?.() }
+    this.list.onSelectionChange = (item) => { this.onSelectionChange?.(item) }
+  }
+
+  /**
+   * Forward keyboard input to the wrapped picker.
+   * @param data - raw key bytes.
+   */
+  handleInput(data: string): void {
+    this.list.handleInput(data)
+  }
+
+  /**
+   * Move the highlight onto one option.
+   * @param index - the option index; clamped to the list.
+   */
+  setSelectedIndex(index: number): void {
+    this.list.setSelectedIndex(index)
+  }
+
+  /**
+   * The highlighted option.
+   * @returns the highlighted option, or null when the list shows none.
+   */
+  getSelectedItem(): SelectItem | null {
+    return this.list.getSelectedItem()
+  }
+
+  /** Drop the wrapped picker's cached render state. */
+  invalidate(): void {
+    this.list.invalidate()
+  }
+
+  /**
+   * Render the wrapped picker's options.
+   * @param width - the viewport width in columns.
+   * @returns the picker lines.
+   */
+  render(width: number): string[] {
+    return this.list.render(width)
+  }
+}
+
 /** Marker a checked multi-select row draws before its label. */
 const MULTI_SELECT_CHECKED = '[x] '
 /** Marker an unchecked multi-select row draws before its label. */
@@ -789,7 +861,7 @@ export class MultiSelectList implements Component {
   /** Called whenever the highlighted option changes. */
   onSelectionChange?: (item: SelectItem) => void
 
-  private readonly list: SelectList
+  private readonly list: KeyboardSelectList
   private readonly items: SelectItem[]
   private readonly theme: SelectListTheme
 
@@ -802,9 +874,7 @@ export class MultiSelectList implements Component {
   constructor(items: SelectItem[], maxVisible: number, theme: SelectListTheme, layout?: SelectListLayoutOptions) {
     this.theme = theme
     this.items = items.map(item => ({ ...item, label: MULTI_SELECT_UNCHECKED + item.label }))
-    this.list = new SelectList(this.items, maxVisible, theme, layout)
-    // A click confirms in the wrapped picker; in a checkable list it toggles.
-    this.list.onSelect = (item) => { this.toggle(item) }
+    this.list = new KeyboardSelectList(this.items, maxVisible, theme, layout)
     this.list.onCancel = () => { this.onCancel?.() }
     this.list.onSelectionChange = (item) => { this.onSelectionChange?.(item) }
   }
@@ -826,16 +896,6 @@ export class MultiSelectList implements Component {
       return
     }
     this.list.handleInput(data)
-  }
-
-  /**
-   * Delegate the wheel and clicks to the wrapped picker, whose click handler
-   * toggles through `onSelect`.
-   * @param event - the normalized mouse event.
-   * @returns the wrapped picker's result.
-   */
-  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    return this.list.handleMouse(event)
   }
 
   /**

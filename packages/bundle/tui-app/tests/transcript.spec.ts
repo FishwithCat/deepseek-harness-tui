@@ -20,7 +20,7 @@ import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import { TerminalTranscript } from '../src/transcript.ts'
 import type { ToolPresentationResolver } from '../src/tool-view.ts'
-import { PROMPT_PANEL_CHROME_ROWS, DetailBody, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
+import { PROMPT_PANEL_CHROME_ROWS, DetailBody, KeyboardSelectList, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
 import type { TuiSessionStats, TuiStatus } from '../src/views.ts'
 import { createTheme, editorTheme, selectListTheme } from '../src/ansi.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
@@ -1005,6 +1005,49 @@ describe('DetailBody', () => {
   })
 })
 
+describe('KeyboardSelectList', () => {
+  /**
+   * Build one keyboard-only picker over three options.
+   * @returns the picker with Alpha highlighted.
+   */
+  function picker(): KeyboardSelectList {
+    return new KeyboardSelectList([
+      { value: 'alpha', label: 'Alpha' },
+      { value: 'beta', label: 'Beta', description: 'The second one.' },
+      { value: 'gamma', label: 'Gamma' },
+    ], 3, selectListTheme(createTheme({ enabled: false, palette: 'dark' })))
+  }
+
+  it('settles on Enter and Escape and reports the highlight through its callbacks', () => {
+    const list = picker()
+    const selected = vi.fn()
+    const cancelled = vi.fn()
+    const changed = vi.fn()
+    list.onSelect = selected
+    list.onCancel = cancelled
+    list.onSelectionChange = changed
+
+    list.handleInput('\x1b[B')
+    expect(changed).toHaveBeenCalledTimes(1)
+    list.handleInput('\r')
+    expect(selected.mock.calls[0]?.[0]).toMatchObject({ value: 'beta' })
+    list.handleInput('\x1b')
+    expect(cancelled).toHaveBeenCalledTimes(1)
+  })
+
+  it('exposes no mouse handler and keeps render state on the wrapped picker', () => {
+    const list = picker()
+    const component: Component = list
+    list.render(60)
+    expect('handleMouse' in component).toBe(false)
+
+    list.setSelectedIndex(2)
+    expect(list.getSelectedItem()).toMatchObject({ value: 'gamma' })
+    list.invalidate()
+    expect(list.render(60).join('\n')).toContain('→ Gamma')
+  })
+})
+
 describe('MultiSelectList', () => {
   /**
    * Build one checkable picker over three options.
@@ -1068,16 +1111,15 @@ describe('MultiSelectList', () => {
     expect(cancelled).toHaveBeenCalledTimes(1)
   })
 
-  it('toggles on a click and moves the highlight with the wheel', () => {
+  it('answers only the keyboard and exposes no mouse handler', () => {
     const list = picker()
+    const component: Component = list
     list.render(60)
-    expect(list.handleMouse(mouseEvent('press', { button: 'left', y: 1 }))).toEqual({ handled: true, focus: true })
-    list.handleMouse(mouseEvent('click', { button: 'left', y: 1 }))
+    expect('handleMouse' in component).toBe(false)
+    // A keyboard move and toggle still settle the check state.
+    list.handleInput('\x1b[B')
+    list.handleInput(' ')
     expect(list.selectedItems().map(item => item.value)).toEqual(['beta'])
-    expect(list.handleMouse(mouseEvent('wheel', { wheelDelta: 1 }))).toEqual({ handled: true, render: true })
-    list.render(60)
-    list.handleMouse(mouseEvent('click', { button: 'left', y: 0 }))
-    expect(list.selectedItems().map(item => item.value)).toEqual(['alpha', 'beta'])
   })
 
   it('moves its selection directly and drops the wrapped cache', () => {

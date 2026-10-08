@@ -14,7 +14,6 @@ import {
   Key,
   ProcessTerminal,
   ScrollView,
-  SelectList,
   TuiAltScreen,
   TuiMainScreen,
   VStack,
@@ -58,7 +57,7 @@ import { TuiSession } from './session.ts'
 import type { TuiSessionOptions } from './session.ts'
 import type { TuiStartupValues } from './startup.ts'
 import { createToolPresentationResolver } from './tool-view.ts'
-import { DetailBody, MULTI_SELECT_HINT_ROWS, MultiSelectList, PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
+import { DetailBody, KeyboardSelectList, MULTI_SELECT_HINT_ROWS, MultiSelectList, PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
 import type { TuiContextStatus, TuiSessionStats, TuiStatus } from './views.ts'
 import { TerminalTranscript } from './transcript.ts'
 
@@ -986,13 +985,13 @@ export class TuiApp implements InteractionHost {
    */
   choose(title: InteractionTitle, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined> {
     if (items.length === 0) return Promise.resolve(undefined)
-    return this.pickList<SelectList, SelectItem>(
+    return this.pickList<KeyboardSelectList, SelectItem>(
       title,
       items,
       signal,
       detail,
       0,
-      visible => new SelectList([...items], visible, selectListTheme(this.theme), PROMPT_LIST_LAYOUT),
+      visible => new KeyboardSelectList([...items], visible, selectListTheme(this.theme), PROMPT_LIST_LAYOUT),
       (list, capacity, step) => detail === undefined ? list : new DetailBody(detail, list, this.theme, capacity, step),
       (list, settle) => {
         list.onSelect = (item) => { settle(item) }
