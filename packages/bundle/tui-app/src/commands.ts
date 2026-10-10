@@ -12,7 +12,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CommandExecution } from '@deepseek-ai/dsh-commands'
 import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-commands'
-import type {} from '@deepseek-ai/dsh-skill'
+import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 
 /** One local command the composer handles without the registry. */
 export interface LocalCommand {
@@ -44,7 +44,10 @@ export const LOCAL_COMMANDS: readonly LocalCommand[] = [
 export function parseCommand(line: string): { name: string; input: string } | undefined {
   const match = /^\/([a-z][a-z0-9_-]*)(?:[ \t]+([\s\S]*))?$/.exec(line)
   if (match === null) return undefined
-  return { name: match[1] ?? '', input: match[2] ?? '' }
+  const name = match[1]
+  /* v8 ignore next -- the first capture is required whenever the regular expression matches */
+  if (name === undefined) return undefined
+  return { name, input: match[2] ?? '' }
 }
 
 /**
@@ -79,10 +82,10 @@ export function commandCatalog(ctx: Context, agent: Agent): SelectItem[] {
  * @param ctx - context carrying the optional command and skill registries.
  * @param agent - the Agent whose scoped catalogs apply.
  * @param cwd - workspace used for skill discovery.
- * @returns the editor provider; each request reads the current catalogs and honors cancellation.
+ * @returns the editor provider; each request reads the current catalogs and
+ *   honors cancellation, and completion preserves the token the user typed.
  */
 export function slashAutocomplete(ctx: Context, agent: Agent, cwd: string): AutocompleteProvider {
-  const completion = new CombinedAutocompleteProvider([], cwd)
   return {
     triggerCharacters: ['/'],
     async getSuggestions(lines, cursorLine, cursorCol, options) {
@@ -90,7 +93,8 @@ export function slashAutocomplete(ctx: Context, agent: Agent, cwd: string): Auto
       if (cursorLine !== 0 || !/^\/[a-z0-9_-]*$/i.test(before)) return null
       const prefix = before.slice(1).toLowerCase()
       const commands = commandCatalog(ctx, agent).map(item => ({ ...item, name: item.value.slice(1) }))
-      const skills = await ctx.get('skills')?.list({ cwd, scope: agent, signal: options.signal }) ?? []
+      const skills = await skillSummaries(ctx, agent, cwd, options.signal)
+      if (skills === undefined) return null
       const seen = new Set<string>()
       const candidates = [...commands, ...skills.filter(skill => skill.invocation.userInvocable)]
         .filter((item) => {
@@ -101,7 +105,53 @@ export function slashAutocomplete(ctx: Context, agent: Agent, cwd: string): Auto
       return new CombinedAutocompleteProvider(candidates, cwd)
         .getSuggestions(lines, cursorLine, cursorCol, { signal: options.signal })
     },
-    applyCompletion: completion.applyCompletion.bind(completion),
+    applyCompletion(lines, cursorLine, cursorCol, item) {
+      const line = lines[0] ?? ''
+      const before = line.slice(0, cursorCol)
+      // This provider only offers leading slash names, so any other cursor
+      // position leaves the line alone.
+      if (cursorLine !== 0 || !/^\/[a-z0-9_-]*$/i.test(before)) return { lines, cursorLine, cursorCol }
+      // The editor stores the prefix its open list was built from and refreshes
+      // it asynchronously, so the list can lag the token now under the cursor.
+      // An item that does not extend that token belongs to the stale list, and
+      // completing it would rewrite the line into something the user never
+      // typed; the typed token wins instead.
+      const typed = before.slice(1).toLowerCase()
+      if (!item.value.toLowerCase().startsWith(typed)) return { lines, cursorLine, cursorCol }
+      const completed = `/${item.value} `
+      const next = [...lines]
+      next[0] = `${completed}${line.slice(cursorCol)}`
+      return { lines: next, cursorLine: 0, cursorCol: completed.length }
+    },
+  }
+}
+
+/**
+ * Read the skill summaries behind one completion request.
+ *
+ * Discovery rejects with the abort reason when a keystroke cancels it mid-scan.
+ * A cancelled request must resolve instead: the editor has no rejection path,
+ * so that rejection would reach the process-level fail-loud handler and end the
+ * app rather than only closing the menu.
+ * @param ctx - context carrying the optional skill registry.
+ * @param agent - the Agent whose scoped catalogs apply.
+ * @param cwd - workspace used for skill discovery.
+ * @param signal - cancellation lifetime of the completion request.
+ * @returns the summaries, or undefined when the request was cancelled.
+ */
+async function skillSummaries(
+  ctx: Context,
+  agent: Agent,
+  cwd: string,
+  signal: AbortSignal,
+): Promise<readonly SkillSummary[] | undefined> {
+  const skills = ctx.get('skills')
+  if (skills === undefined) return []
+  try {
+    return await skills.list({ cwd, scope: agent, signal })
+  } catch (error) {
+    if (signal.aborted) return undefined
+    throw error
   }
 }
 

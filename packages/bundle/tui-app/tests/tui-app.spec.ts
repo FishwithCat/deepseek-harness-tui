@@ -22,7 +22,7 @@ import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import SkillRegistry from '@deepseek-ai/dsh-skill'
+import SkillRegistry, { type SkillCandidate } from '@deepseek-ai/dsh-skill'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { SubagentRunId } from '@deepseek-ai/dsh-subagent'
 import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
@@ -39,7 +39,7 @@ import type { ClipboardImage } from '../src/clipboard.ts'
 import { apply, inject, name, TUI_STARTUP_SERVICE } from '../src/index.ts'
 import type { Config } from '../src/config.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
-import { slashAutocomplete } from '../src/commands.ts'
+import { commandCatalog, executeCommand, listModelChoices, parseCommand, slashAutocomplete } from '../src/commands.ts'
 
 /** A two-by-two PNG; the mounted attachment store decodes and admits real bytes. */
 const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVQImWP4z8DwH4QZYAwAR8oH+Xm0fdIAAAAASUVORK5CYII='
@@ -424,6 +424,116 @@ describe('TuiApp', () => {
     await test.app.stop(0)
   })
 
+  it('abandons a slash completion request cancelled during skill discovery', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    await test.ctx.plugin(SkillRegistry)
+    test.ctx.skills.registerProvider(() => ({
+      name: 'slow',
+      list: () => new Promise<readonly SkillCandidate[]>(() => {}),
+      get: () => Promise.resolve(undefined),
+    }))
+    const provider = slashAutocomplete(test.ctx, owned(test), process.cwd())
+    const controller = new AbortController()
+    const pending = provider.getSuggestions(['/gr'], 0, 3, { signal: controller.signal })
+    controller.abort()
+    await expect(pending).resolves.toBeNull()
+    await test.app.stop(0)
+  })
+
+  it('surfaces a skill catalog failure that is not a cancellation', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    await test.ctx.plugin(SkillRegistry)
+    const candidate: SkillCandidate = {
+      name: 'broken-skill',
+      description: '',
+      invocation: { modelInvocable: true, userInvocable: true },
+      source: 'runtime',
+      provider: 'broken',
+      rank: 0,
+      locator: undefined,
+    }
+    test.ctx.skills.registerProvider(() => ({
+      name: 'broken',
+      list: () => Promise.resolve([candidate]),
+      get: () => Promise.resolve(undefined),
+    }))
+    const provider = slashAutocomplete(test.ctx, owned(test), process.cwd())
+    await expect(provider.getSuggestions(['/br'], 0, 3, { signal: new AbortController().signal }))
+      .rejects.toThrow('without a description')
+    await test.app.stop(0)
+  })
+
+  it('keeps the typed slash token when the suggestion list lags behind it', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    await test.ctx.plugin(SkillRegistry)
+    const provider = slashAutocomplete(test.ctx, owned(test), process.cwd())
+    const stale = provider.applyCompletion(
+      ['/grill-me'], 0, 9, { value: 'help', label: 'help' }, '/',
+    )
+    expect(stale.lines).toEqual(['/grill-me'])
+    expect(stale.cursorCol).toBe(9)
+    const current = provider.applyCompletion(
+      ['/gri'], 0, 4, { value: 'grill-me', label: 'grill-me' }, '/gri',
+    )
+    expect(current.lines).toEqual(['/grill-me '])
+    expect(current.cursorCol).toBe(10)
+    const untouched = provider.applyCompletion(
+      ['/tmp/file'], 0, 9, { value: 'file', label: 'file' }, '/tmp',
+    )
+    expect(untouched.lines).toEqual(['/tmp/file'])
+    expect(await provider.getSuggestions([], 0, 0, { signal: new AbortController().signal })).toBeNull()
+    expect(provider.applyCompletion([], 0, 0, { value: 'grill-me', label: 'grill-me' }, '').lines).toEqual([])
+    await test.app.stop(0)
+  })
+
+  it('parses a slash line with and without trailing input', () => {
+    expect(parseCommand('/help')).toEqual({ name: 'help', input: '' })
+    expect(parseCommand('/resume abc def')).toEqual({ name: 'resume', input: 'abc def' })
+    expect(parseCommand('/Help')).toBeUndefined()
+  })
+
+  it('reports no execution when the deployment mounts no command registry', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    expect(await executeCommand(test.ctx, owned(test), '/help', new AbortController().signal)).toBeUndefined()
+    await test.app.stop(0)
+  })
+
+  it('advertises a registered command input hint in the catalog', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    await test.ctx.plugin(CommandRuntime)
+    test.ctx.commands.register({
+      name: 'deploy',
+      description: 'Deploy the workspace',
+      input: { hint: 'target environment' },
+      handler: () => ({ kind: 'success' as const }),
+    })
+    expect(commandCatalog(test.ctx, owned(test)).find(item => item.value === '/deploy')?.description)
+      .toBe('Deploy the workspace target environment')
+    await test.app.stop(0)
+  })
+
+  it('submits the typed skill gesture while the menu still shows an older list', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    await test.ctx.plugin(SkillRegistry)
+    test.ctx.skills.register({ name: 'grill-me', description: 'Interview the user relentlessly', source: 'runtime', content: 'Ask one question at a time.' })
+    test.terminal.feed('/')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('List available commands') })
+    test.terminal.feed('grill-me')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(test.submitted).toHaveLength(1) })
+    expect(test.submitted[0]?.content).toEqual([{ type: 'text', text: '/grill-me' }])
+    await test.app.stop(0)
+  })
+
+  it('omits a provider whose model discovery fails', async () => {
+    const test = await bench({ afterPrompt: () => {} }, {
+      models: [{ provider: 'test-provider', id: 'test-model', name: 'Test Model' }],
+    })
+    vi.spyOn(test.ctx.llm, 'listModels').mockRejectedValueOnce(new Error('catalog unavailable'))
+    expect(await listModelChoices(test.ctx)).toEqual([])
+    await test.app.stop(0)
+  })
+
   it('submits a composer line to the Agent and renders the durable reply', async () => {
     const test = await bench({
       afterPrompt(session, message) {
@@ -466,6 +576,8 @@ describe('TuiApp', () => {
     await test.ctx.plugin(CommandRuntime)
     const handler = vi.fn(() => ({ kind: 'success' as const, text: 'command handled' }))
     test.ctx.commands.register({ name: 'ponytail', description: 'A deployment command', handler })
+    expect(commandCatalog(test.ctx, owned(test)).find(item => item.value === '/ponytail')?.description)
+      .toBe('A deployment command')
     test.terminal.feed('/ponytail full')
     test.terminal.feed('\r')
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('command handled') })
