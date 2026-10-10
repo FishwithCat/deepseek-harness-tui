@@ -12,7 +12,7 @@ Status: implemented
 
 **Escape 中断正在运行的 turn；Ctrl+C 保留其双重作用。** `registerKeys` 在焦点输入框之前运行的 input listener 中匹配 `Key.escape`，并调用与 Ctrl+C 相同的取消，该取消被提取为 `interrupt()`。只有当会话有进行中的工作时 Escape 才被消费：会话空闲时它把按键交还输入框且绝不退出，因此这一手势本身无法结束会话。Ctrl+C 保持不变——工作时取消，空闲时退出。
 
-**会话的存活 subagent 随其 turn 一同停止。** `TuiSession.busy` 取 Agent 自身状态或经 `SubagentRuntime.runningDescendantIds()` 读取到的正在运行 subagent 后代二者之一；`cancel()` 通过 `SubagentRuntime.interruptDescendants()` 停止其中每一个。该停止同时取消驻留的可继续子级与后台一次性运行，因此终端无需单独的任务控制。因此，即使启动它的父 turn 已经结束，只要后台 child 仍在工作，界面就会报告 `running` 并提供取消按键。steering 仍只取决于 Agent 自身的 turn：Agent 空闲但 subagent 运行时，仍接受普通提示。未挂载 subagent 服务的组合只停止 Agent。
+**会话的存活 subagent 随其 turn 一同停止。** `TuiSession` 通过 `subagent/start` / `subagent/end` 生命周期对跟踪正在进行的本地 activation，因此只要驻留的可继续子级或进行中的一次性 child 仍在工作，`busy` 就报告 `running`，即使启动它的父 turn 已经结束。`cancel()` 先中止 Agent，再通过 `SubagentRuntime.interrupt(id, { kind: 'ancestor', agent })` 中断每一个被跟踪的 child——与 `interrupt_agent` 工具相同的授权。外部执行不拥有本地 child，不属于本界面停止的范围；未挂载 subagent 服务的组合只停止 Agent。steering 仍只取决于 Agent 自身的 turn：Agent 空闲但 subagent 运行时，仍接受普通提示。
 
 **模态提示拥有 Escape。** 只要有模态提示存在，该绑定就交还按键，与 Ctrl+C、Shift+Tab 完全一致（[plan 模式切换](2026-09-13-tui-plan-mode-toggle.zh.md)），因此 Escape 仍然用于关闭选择器或问题，而不会中断提出该问题的 turn。备用屏幕的 viewport 先于应用注册其 input listener，因此打开的对话记录搜索保留 Escape 用于关闭自身；只有搜索关闭后，同一个按键才会中断。
 
@@ -28,12 +28,14 @@ Status: implemented
 
 **在 Escape 只中断 turn 时让委派 subagent 继续运行。** 延续管理器有意让已接受的后台 child 在调用方取消后继续存活，因此这只是 Agent 原语自身的行为。它没有被采用，因为终端界面没有其他控件来报告或停止这些 child：停止会话的用户会继续为看不见的委派工作付费，而后来的提示还可能与仍在写入同一工作区的 child 竞争。
 
-**通过 drain 释放后代 Activation 来停止它们。** `drainContinuableDescendants()` 会在该 Agent 离开注册表之前关闭其下可继续子级的准入。它没有被采用，因为逐 turn 的中断必须让会话仍能再次委派。
+**通过 drain 后代 Activation 来停止它们。** `drainDescendants()` 会在该 Agent 离开注册表之前关闭其下 subagent 的准入。它没有被采用，因为逐 turn 的中断必须让会话仍能再次委派。
+
+**从服务读回正在运行的后代。** 已被移除的 `runningDescendantIds()` 会同步遍历实时 Agent 注册表，而 `listDescendants()` 现在改从持久化目录异步回答同一问题。它没有被采用，因为 `busy` 在每次重绘时都会读取：逐帧读取目录会让页脚与 Session query 耦合，而生命周期对已经准确报告了已启动且尚未结算的 activation。
 
 ## 后果
 
-终端用户可以用惯用按键停止正在运行的 turn 以及它启动的委派工作，且不会意外结束会话。界面新增一个提取出的辅助方法与一条提示文案，从 subagent 服务读取正在运行的后代，并用一次调用停止它们。subagent seam 新增同步的后代读取与后代停止；其逐 child 的 `interrupt()` 路径保持不变。会话事件、提示段落与请求都不变：取消路径正是 Ctrl+C 已经记录的那一条，因此回放会重建同一行 `[cancelled]`。
+终端用户可以用惯用按键停止正在运行的 turn 以及它启动的委派工作，且不会意外结束会话。界面新增一个提取出的辅助方法与一条提示文案，跟踪生命周期对，并通过公开的 `interrupt()` 停止每一个 child。subagent seam 保留其逐 child 的 `interrupt()` 路径；终端不读取包私有的后代状态，也不新增服务 API。会话事件、提示段落与请求都不变：取消路径正是 Ctrl+C 已经记录的那一条，因此回放会重建同一行 `[cancelled]`。
 
 ## 测试
 
-`tests/tui-app.spec.ts` 断言 Escape 取消正在运行的 turn、播报通知且不退出；空闲时按 Escape 既不取消也不退出；焦点模态提示会因 Escape 关闭而不会中断 turn；以及在备用屏幕中，打开的对话记录搜索会先于应用消费 Escape，随后再按 Escape 才中断。它还断言：在 Agent 自身空闲时，Escape 与 Ctrl+C 会停止正在运行的 subagent（Ctrl+C 不退出）；在只有 subagent 工作时，页脚报告 `running` 并提供取消按键；以及最后一个 subagent 结算后页脚恢复空闲。`packages/subagent/subagent/tests/service.spec.ts` 断言后代读取只返回任意深度的、来源为 subagent 的正在运行后代，跳过空闲子级、fork 与无关联树，并在没有 Agent 注册表时返回空，同时断言后代停止恰好取消这些 child 并返回计数。该界面没有 recorded-session 快照，因此由包测试承担验收。
+`tests/tui-app.spec.ts` 断言 Escape 取消正在运行的 turn、播报通知且不退出；空闲时按 Escape 既不取消也不退出；焦点模态提示会因 Escape 关闭而不会中断 turn；以及在备用屏幕中，打开的对话记录搜索会先于应用消费 Escape，随后再按 Escape 才中断。它还断言：在 Agent 自身空闲时，Escape 与 Ctrl+C 会中断只有 `subagent/start` 而没有 `subagent/end` 的 subagent（Ctrl+C 不退出）；在只有 subagent 工作时，页脚报告 `running` 并提供取消按键；以及 subagent 结算后页脚恢复空闲。脚本化的 subagent 服务记录被中断的 child id，因此测试在没有已移除的服务读取的情况下覆盖 ancestor 授权停止。该界面没有 recorded-session 快照，因此由包测试承担验收。

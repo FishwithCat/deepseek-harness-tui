@@ -35,6 +35,8 @@ import type {} from '@deepseek-ai/dsh-plan-mode'
 import type {} from '@deepseek-ai/dsh-session-projection'
 // Empty type import carries the optional subagent activity and stop the session owns.
 import type {} from '@deepseek-ai/dsh-subagent'
+// Empty type import carries the optional effective working directory the footer reads.
+import type {} from '@deepseek-ai/dsh-working-directory'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ContextPressureProjection, TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
@@ -883,7 +885,7 @@ export class TuiApp implements InteractionHost {
     const measured = this.measurement(session.session)
     const busy = session.busy
     const status: TuiStatus = {
-      workspace: this.options.cwd.replace(homedir(), '~'),
+      workspace: this.workspaceLabel(),
       state: busy ? 'running' : 'idle',
       model: modelLabel(route.provider, route.model, this.providerCount),
       effort: route.reasoningEffort,
@@ -895,6 +897,17 @@ export class TuiApp implements InteractionHost {
     this.statusBar.set(status)
     this.composer.setHint(this.hints(busy, plan !== undefined, this.continuedQuestions().length > 0))
     this.tui.requestRender()
+  }
+
+  /**
+   * The footer's workspace label. The model can change the Session's effective
+   * directory during a turn, so this reads the working-directory service on
+   * every refresh and falls back to the launch directory when it is unmounted.
+   * @returns the display path with the home directory abbreviated.
+   */
+  private workspaceLabel(): string {
+    const directory = this.options.ctx.get('workingDirectory')?.get(this.session.session) ?? this.options.cwd
+    return directory.replace(homedir(), '~')
   }
 
   /**

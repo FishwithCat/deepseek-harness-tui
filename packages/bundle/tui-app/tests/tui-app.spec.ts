@@ -122,8 +122,10 @@ interface Fixture {
   cancelled(): number
   /** Flip the scripted Agent's lifecycle status. */
   setRunning(value: boolean): void
-  /** Live subagent descendants the scripted session reports, mutable per test. */
-  subagents: SessionId[]
+  /** Publish a local subagent activation so the session counts it as running. */
+  startSubagent(id: SessionId): void
+  /** Settle a started subagent activation. */
+  endSubagent(id: SessionId): void
   /** Descendant ids the surface asked the subagent service to interrupt. */
   interruptedSubagents: SessionId[]
 }
@@ -260,19 +262,23 @@ async function bench(
     },
   })
   ctx.provide('appExit', (code: number) => { exits.push(code) })
-  const subagents: SessionId[] = []
   const interruptedSubagents: SessionId[] = []
+  const subagentRuns = new Map<SessionId, SubagentRunId>()
+  const startSubagent = (id: SessionId): void => {
+    const runId = SubagentRunId(`run-${String(id)}`)
+    subagentRuns.set(id, runId)
+    ctx.emit('subagent/start', { runId, provider: 'spawn', id, local: true })
+  }
+  const endSubagent = (id: SessionId): void => {
+    const runId = subagentRuns.get(id) ?? SubagentRunId(`run-${String(id)}`)
+    subagentRuns.delete(id)
+    ctx.emit('subagent/end', { runId, provider: 'spawn', id, local: true, stopReason: 'aborted' })
+  }
   if (options.subagents === true) {
-    // The surface reads liveness from the service on every refresh and stops
-    // every listed descendant through one `interruptDescendants` call.
+    // The surface tracks running delegated work from the lifecycle pair and
+    // stops each tracked child under the root Agent's ancestor authority.
     ctx.provide('subagents', {
-      runningDescendantIds: () => [...subagents],
-      interruptDescendants: () => {
-        const stopped = [...subagents]
-        interruptedSubagents.push(...stopped)
-        subagents.length = 0
-        return stopped.length
-      },
+      interrupt: (id: SessionId) => { interruptedSubagents.push(id) },
     } as never)
   }
   // Only the service's presence is under test for the exit hint; a `stored`
@@ -318,7 +324,8 @@ async function bench(
     steered,
     cancelled: () => observed.cancelled,
     setRunning: (value: boolean) => { observed.running = value },
-    subagents,
+    startSubagent,
+    endSubagent,
     interruptedSubagents,
   }
 }
@@ -642,7 +649,7 @@ describe('TuiApp', () => {
 
   it('interrupts a running subagent on Escape while the Agent itself is idle', async () => {
     const test = await bench({ afterPrompt: () => {} }, { subagents: true })
-    test.subagents.push(SessionId('child-1'))
+    test.startSubagent(SessionId('child-1'))
 
     test.terminal.feed('\x1b')
 
@@ -654,7 +661,7 @@ describe('TuiApp', () => {
 
   it('interrupts subagents on Ctrl+C instead of exiting while the Agent is idle', async () => {
     const test = await bench({ afterPrompt: () => {} }, { subagents: true })
-    test.subagents.push(SessionId('child-1'))
+    test.startSubagent(SessionId('child-1'))
 
     test.terminal.feed('\x03')
 
@@ -665,13 +672,7 @@ describe('TuiApp', () => {
 
   it('reports a running session and offers cancel while only a subagent works', async () => {
     const test = await bench({ afterPrompt: () => {} }, { subagents: true })
-    test.subagents.push(SessionId('child-1'))
-    test.ctx.emit('subagent/start', {
-      runId: SubagentRunId('run-child-1'),
-      provider: 'spawn',
-      id: SessionId('child-1'),
-      local: true,
-    })
+    test.startSubagent(SessionId('child-1'))
 
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Esc/Ctrl+C cancel') })
     expect(plain(test.terminal.output)).toContain('running')
@@ -680,25 +681,12 @@ describe('TuiApp', () => {
 
   it('returns the footer to idle when the last subagent settles', async () => {
     const test = await bench({ afterPrompt: () => {} }, { subagents: true, screen: 'alternate' })
-    test.subagents.push(SessionId('child-1'))
-    test.ctx.emit('subagent/start', {
-      runId: SubagentRunId('run-child-1'),
-      provider: 'spawn',
-      id: SessionId('child-1'),
-      local: true,
-    })
+    test.startSubagent(SessionId('child-1'))
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('Esc/Ctrl+C cancel'))).toBe(true)
     })
 
-    test.subagents.length = 0
-    test.ctx.emit('subagent/end', {
-      runId: SubagentRunId('run-child-1'),
-      provider: 'spawn',
-      id: SessionId('child-1'),
-      local: true,
-      stopReason: 'aborted',
-    })
+    test.endSubagent(SessionId('child-1'))
 
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('Esc/Ctrl+C cancel'))).toBe(false)
@@ -1438,14 +1426,14 @@ describe('TuiApp question detail', () => {
     })
     test.terminal.feed('\r')
 
-    // Keep planning hands the turn back: the tool result tells the model to
-    // stay in plan mode and wait for the user's next message instead of
-    // revising the plan immediately.
-    await expect(execution).resolves.toMatchObject({ isError: true })
+    // Keep planning hands the turn back: a dismissed review is an
+    // unsuccessful approval rather than a failed tool, so the turn concludes
+    // and the user's next message starts the following request.
+    await expect(execution).resolves.toMatchObject({ isError: false })
     const result = await execution
     expect(result.content).toEqual([{
       type: 'text',
-      text: 'Error: The user dismissed the plan review to speak instead; stay in plan mode, stop here, and wait for their message.',
+      text: 'The user dismissed the plan review to reply in their own words; plan mode remains active.',
     }])
     await test.app.stop(0)
   })

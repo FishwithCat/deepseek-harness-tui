@@ -9,14 +9,14 @@
   en: 7add978df3fd3615
   zh: 923a7b930d7b6fcb
 /agent-note-tui-escape-interrupt/decision:
-  en: a9c96091c0b79a90
-  zh: 1336d6700b7fbfb3
+  en: d1c0a15c87172537
+  zh: db20e62ff0061211
 /agent-note-tui-escape-interrupt/alternatives-considered:
-  en: 30d27cd7b449656d
-  zh: 6d4b081d3f12513c
+  en: f72d2ad3490ab057
+  zh: 4b03758eb86c727a
 /agent-note-tui-escape-interrupt/consequences:
-  en: 065014b4fd6791ab
-  zh: cb52eca6bb25dced
+  en: 73220b5a446b3861
+  zh: c8d4aa430b2fb8c7
 /agent-note-tui-escape-interrupt/testing:
-  en: 250634088431e394
-  zh: ce584b5b492afb72
+  en: 92aca18f535638d6
+  zh: ab4fd1b0442094df

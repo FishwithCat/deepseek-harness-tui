@@ -43,6 +43,10 @@ function initialSelection(ctx: Context, options: TuiSessionOptions): ModelSelect
 /** One live interactive session and the Agent behind it. */
 export class TuiSession {
   private readonly selection: ModelSelectionRef
+  /** Child session ids whose current local activation has not settled yet. */
+  private readonly runningSubagents = new Set<SessionId>()
+  /** Retires this session's subagent lifecycle subscriptions. */
+  private readonly subagentSubscriptions: (() => void)[]
 
   private constructor(
     private readonly ctx: Context,
@@ -50,6 +54,16 @@ export class TuiSession {
     selection: ModelSelectionRef,
   ) {
     this.selection = selection
+    // The subagent lifecycle pair brackets a local activation, so the set holds
+    // exactly the delegated work in flight; an idle resident child is absent
+    // between its turns. External executions own no local child and are not
+    // this surface's to stop.
+    this.subagentSubscriptions = [
+      ctx.on('subagent/start', ({ id, local }) => {
+        if (local) this.runningSubagents.add(id)
+      }),
+      ctx.on('subagent/end', ({ id }) => { this.runningSubagents.delete(id) }),
+    ]
   }
 
   /**
@@ -134,11 +148,11 @@ export class TuiSession {
   }
 
   /**
-   * Whether any live subagent descendant of this session is inside a turn.
-   * @returns true when the subagent service lists at least one running descendant.
+   * Whether any local subagent activation of this session is still running.
+   * @returns true while at least one `subagent/start` lacks its `subagent/end`.
    */
   hasRunningSubagents(): boolean {
-    return (this.ctx.get('subagents')?.runningDescendantIds(this.agent).length ?? 0) > 0
+    return this.runningSubagents.size > 0
   }
 
   /**
@@ -166,14 +180,22 @@ export class TuiSession {
 
   /**
    * Abort the active turn, drop pending input, and interrupt every running
-   * subagent descendant; a user interrupt owns the cause. The subagent service
-   * stops resident continuable children and one-shot runs alike, logging a
-   * child that refuses its cancel without keeping its siblings running. A
-   * composition without the subagent service stops only this Agent.
+   * subagent descendant under this Agent's ancestor authority; a user interrupt
+   * owns the cause. A composition without the subagent service stops only this
+   * Agent, and one child whose interrupt is rejected is logged without keeping
+   * its siblings running.
    */
   cancel(): void {
     this.agent.cancel({ kind: 'user' })
-    this.ctx.get('subagents')?.interruptDescendants(this.agent)
+    const subagents = this.ctx.get('subagents')
+    if (subagents === undefined) return
+    for (const childId of [...this.runningSubagents]) {
+      try {
+        subagents.interrupt(childId, { kind: 'ancestor', agent: this.agent })
+      } catch (error: unknown) {
+        this.ctx.logger.warn(`subagent: interrupting "${childId}" for its cancelled root failed: ${String(error)}`)
+      }
+    }
   }
 
   /**
@@ -191,6 +213,7 @@ export class TuiSession {
 
   /** Stop the Agent, unregister it, and unwind its scoped world. */
   async dispose(): Promise<void> {
+    for (const dispose of this.subagentSubscriptions) dispose()
     await this.handle.dispose()
   }
 }
