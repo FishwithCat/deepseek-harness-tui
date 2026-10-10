@@ -33,7 +33,7 @@ import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import UserApprovalService from '@deepseek-ai/dsh-user-approval'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
-import { TuiApp, internals, reservesCtrlV } from '../src/app.ts'
+import { TuiApp, internals, reservesCtrlV, wheelScroll } from '../src/app.ts'
 import { copyClipboardText } from '../src/clipboard.ts'
 import type { ClipboardImage } from '../src/clipboard.ts'
 import { apply, inject, name, TUI_STARTUP_SERVICE } from '../src/index.ts'
@@ -354,6 +354,24 @@ function appendAnsweredTurn(session: Agent['session'], message: UserMessage, rep
   }, { surfaceOp: 'append' })
   session.append('step/end', { turn, step: 1 })
   session.append('turn/end', { turn, reason: { kind: 'completed' } })
+}
+
+/**
+ * Append `turns` numbered answered turns, giving the transcript a scrollback.
+ *
+ * Each prompt and reply carries its index, so a test can tell which rows a
+ * scroll position shows.
+ * @param session - the session to append to.
+ * @param turns - how many turns to append.
+ */
+function appendScrollback(session: Agent['session'], turns: number): void {
+  for (let index = 1; index <= turns; index += 1) {
+    const suffix = String(index).padStart(2, '0')
+    appendAnsweredTurn(session, createUserMessage({
+      content: [{ type: 'text', text: `PROMPT-${suffix}` }],
+      source: { kind: 'user' },
+    }), `REPLY-${suffix}`)
+  }
 }
 
 /**
@@ -1735,6 +1753,68 @@ describe('TuiApp question detail', () => {
     await test.app.stop(0)
   })
 
+  it('pages the transcript with the wheel while a question waits', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    appendScrollback(owned(test).session, 20)
+    const pending = test.app.choose('Select a model', [
+      { value: 'a', label: 'Alpha' },
+      { value: 'b', label: 'Beta' },
+    ])
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true) })
+    expect(screen(test.app).some(row => row.includes('PROMPT-01'))).toBe(false)
+    const option = screen(test.app).findIndex(row => row.includes('→ Alpha')) + 1
+    // A wheel over the picker pages the history behind it; the highlight stays put.
+    for (let notch = 0; notch < 60; notch += 1) test.terminal.feed(`\x1b[<64;5;${String(option)}M`)
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('PROMPT-01'))).toBe(true) })
+    expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true)
+    for (let notch = 0; notch < 60; notch += 1) test.terminal.feed(`\x1b[<65;5;${String(option)}M`)
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('PROMPT-01'))).toBe(false)
+      expect(screen(test.app).some(row => row.includes('PROMPT-19'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ kind: 'answer', value: { value: 'a' } })
+    await test.app.stop(0)
+  })
+
+  it('pages the transcript with the wheel over a question whose detail fits', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    appendScrollback(agent.session, 20)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{
+        id: 'short',
+        question: 'Pick one',
+        detail: 'Context: one line.',
+        options: [{ label: 'Alpha' }, { label: 'Beta' }],
+      }],
+      agent,
+    })
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true) })
+    const option = screen(test.app).findIndex(row => row.includes('→ Alpha')) + 1
+    for (let notch = 0; notch < 60; notch += 1) test.terminal.feed(`\x1b[<64;5;${String(option)}M`)
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('PROMPT-01'))).toBe(true) })
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'short', selected: ['Alpha'] }] })
+    await test.app.stop(0)
+  })
+
+  it('pages the transcript with the wheel from the history above a question', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    appendScrollback(owned(test).session, 20)
+    const pending = test.app.choose('Select a model', [
+      { value: 'a', label: 'Alpha' },
+      { value: 'b', label: 'Beta' },
+    ])
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true) })
+    // The pointer sits outside the panel, over the transcript the wheel pages.
+    for (let notch = 0; notch < 60; notch += 1) test.terminal.feed('\x1b[<64;5;1M')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('PROMPT-01'))).toBe(true) })
+    test.terminal.feed('\x03')
+    await expect(pending).resolves.toMatchObject({ kind: 'cancel' })
+    await test.app.stop(0)
+  })
+
   it('fails a cancelled question with the seam abort code', async () => {
     const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
     const agent = owned(test)
@@ -2395,5 +2475,28 @@ describe('reservesCtrlV', () => {
     expect(reservesCtrlV('darwin', {})).toBe(false)
     expect(reservesCtrlV('win32', {})).toBe(true)
     expect(reservesCtrlV('linux', { WSL_DISTRO_NAME: 'Ubuntu' })).toBe(true)
+  })
+})
+
+describe('wheelScroll', () => {
+  it('decodes an SGR wheel notch as one line, signed by direction', () => {
+    expect(wheelScroll('\x1b[<64;10;5M')).toBe(-1)
+    expect(wheelScroll('\x1b[<65;10;5M')).toBe(1)
+  })
+
+  it('decodes the legacy wheel encoding', () => {
+    expect(wheelScroll(`\x1b[M${String.fromCharCode(64 + 32)}!!`)).toBe(-1)
+  })
+
+  it('multiplies an Alt-modified notch', () => {
+    expect(wheelScroll('\x1b[<72;10;5M')).toBe(-5)
+    expect(wheelScroll('\x1b[<73;10;5M')).toBe(5)
+  })
+
+  it('ignores input that is not a vertical wheel event', () => {
+    expect(wheelScroll('\x1b[<0;10;5M')).toBeUndefined()
+    expect(wheelScroll('\x1b[<66;10;5M')).toBeUndefined()
+    expect(wheelScroll(`\x1b[M${String.fromCharCode(32)}!!`)).toBeUndefined()
+    expect(wheelScroll('x')).toBeUndefined()
   })
 })

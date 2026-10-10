@@ -646,12 +646,14 @@ export class DetailBody implements Component {
   }
 
   /**
-   * Scroll the detail with the wheel, or hand the mouse event to the control.
+   * Scroll the overflowing detail with the wheel, or hand the mouse event to
+   * the control. While the detail fits it leaves the wheel to the caller, so a
+   * prompt that has nothing to scroll passes it to the transcript instead.
    * @param event - the normalized mouse event.
    * @returns the control's result, or `handled` for a consumed wheel event.
    */
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    if (event.type === 'wheel' && event.wheelDelta !== undefined) {
+    if (event.type === 'wheel' && event.wheelDelta !== undefined && this.content > this.viewport) {
       this.scrollTo(this.scrollTop + event.wheelDelta)
       return { handled: true }
     }

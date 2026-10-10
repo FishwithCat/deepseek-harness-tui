@@ -389,6 +389,17 @@ export class TuiApp implements InteractionHost {
       // after the press for one keystroke. The renderer drops that release only
       // after this listener chain, so a binding that did not would run twice.
       if (isKeyRelease(data)) return undefined
+      // A focused prompt makes the renderer defer the viewport wheel to the
+      // overlay, and an overlay body with nothing to scroll leaves it unhandled.
+      // Scroll the transcript here so the wheel pages the execution history
+      // instead of being dropped while a question waits.
+      if (this.promptActive && this.viewport !== undefined) {
+        const lines = wheelScroll(data)
+        if (lines !== undefined) {
+          this.viewport.scrollBy(lines)
+          return { consume: true }
+        }
+      }
       if (matchesKey(data, Key.super('c')) && this.viewport !== undefined) {
         void this.viewport.copyActiveSelectionToClipboard()
         return { consume: true }
@@ -1261,6 +1272,38 @@ function splitRoute(value: string): [string | undefined, string | undefined] {
  */
 export function reservesCtrlV(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): boolean {
   return platform === 'win32' || env.WSL_DISTRO_NAME !== undefined
+}
+
+/** Lines one wheel notch scrolls, matching pi-tui's alternate-screen default. */
+const WHEEL_SCROLL_LINES = 1
+/** Multiplier an Alt-modified wheel notch applies, matching pi-tui's alternate-screen default. */
+const ALT_WHEEL_SCROLL_MULTIPLIER = 5
+
+/**
+ * Decode a mouse-wheel input sequence into the lines it scrolls.
+ *
+ * The alternate-screen renderer handles a wheel over its own scroll views; a
+ * focused prompt makes it defer the rest, so the surface needs its own reading
+ * of the two wheel encodings it accepts. The SGR form is `CSI < button ; column
+ * ; row M`; the legacy form is `CSI M` followed by button, column, and row
+ * bytes offset by 32. A wheel reports bit 6, a direction of 0 or 1, and bit 3
+ * for the Alt modifier.
+ * @param data - raw terminal input.
+ * @returns the signed scroll distance, negative upward, or undefined when the
+ * input is not a wheel event.
+ */
+export function wheelScroll(data: string): number | undefined {
+  const sgr = /^\x1b\[<(\d+);\d+;\d+[Mm]$/.exec(data)
+  const button = sgr !== null
+    ? Number.parseInt(sgr[1] as string, 10)
+    : data.length === 6 && data.startsWith('\x1b[M')
+      ? data.charCodeAt(3) - 32
+      : undefined
+  if (button === undefined || (button & 64) === 0) return undefined
+  const direction = button & 3
+  if (direction > 1) return undefined
+  const lines = (button & 8) === 0 ? WHEEL_SCROLL_LINES : WHEEL_SCROLL_LINES * ALT_WHEEL_SCROLL_MULTIPLIER
+  return direction === 0 ? -lines : lines
 }
 
 /**

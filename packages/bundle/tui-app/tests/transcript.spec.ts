@@ -997,15 +997,17 @@ describe('DetailBody', () => {
     expect(step.mock.calls).toEqual([[1], [1], [-1], [-1]])
   })
 
-  it('hands every key to the control while the detail fits', () => {
+  it('hands every key and the wheel to the control while the detail fits', () => {
     const body = control()
     const view = new DetailBody('one short line', body, createTheme({ enabled: false, palette: 'dark' }), 12, () => {})
     view.render(40)
 
     view.handleInput('\x1b[B')
     expect(body.handleInput).toHaveBeenCalledWith('\x1b[B')
-    // The wheel is always the detail's: it consumes the event even at a bound.
-    expect(view.handleMouse(wheel(-3))).toEqual({ handled: true })
+    // A detail that fits leaves the wheel unhandled, so a prompt passes it on
+    // to the transcript instead of swallowing it.
+    expect(view.handleMouse(wheel(-3))).toBeUndefined()
+    expect(body.handleMouse).toHaveBeenCalledWith(wheel(-3))
     expect(view.render(40).join('\n')).toContain('one short line')
   })
 
