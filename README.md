@@ -51,7 +51,7 @@ pnpm dsh
 - **Full-screen transcript.** PageUp/PageDown, the mouse wheel, and terminal search scroll the transcript without leaving the app; the status bar reports when the view has scrolled away from the newest row.
 - **Plan mode.** Shift+Tab toggles plan mode for the session's Agent. When the agent finishes planning it presents the plan as markdown above the Approve / Keep planning choice.
 - **Clipboard images.** Ctrl+V (Alt+V on Windows and WSL) attaches the image on the system clipboard to the draft, and the composer shows every held image as an `[Image #1]` marker.
-- **Approvals and questions.** Approval prompts offer Allow once / Reject, and `ask_user_question` renders as a picker — checkable when the question sets `multiSelect` — or a free-text input.
+- **Approvals and questions.** Approval prompts offer Allow once / Reject, and `ask_user_question` renders as a picker — checkable when the question sets `multiSelect` — or a free-text input. A question's options end with `Other…`, which opens the free-text input instead; `Esc` skips the question and moves to the next one, while `Ctrl+C` cancels the whole ask.
 - **Sessions.** Exit prints a `dsh --resume <session-id>` command, and `/sessions` and `/resume` browse and restore stored conversations.
 
 ## Keyboard shortcuts
@@ -59,10 +59,10 @@ pnpm dsh
 | Key | Action |
 |---|---|
 | `Enter` | Submit the prompt, or steer the running turn |
-| `Esc` | Interrupt the running turn and the session's live subagents |
+| `Esc` | Interrupt the running turn and the session's live subagents; at a prompt, skip the question |
 | `Shift+Tab` | Toggle plan mode |
 | `Ctrl+V` | Attach the image on the system clipboard to the draft (`Alt+V` on Windows and WSL) |
-| `Ctrl+C` | Cancel the running turn and live subagents; with neither working, exit |
+| `Ctrl+C` | Cancel the running turn and live subagents; at a prompt, cancel the whole ask; with neither working, exit |
 | `Ctrl+D` | Exit |
 | `PageUp` / `PageDown` | Scroll the transcript, or a question's overflowing detail |
 | `Up` / `Down` | Scroll a question's overflowing detail; otherwise move its picker |

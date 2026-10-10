@@ -47,7 +47,7 @@ Program-only SDK bindings:
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
 interface ToolArgsMap {
-  /** Ask the user a concise question when you need confirmation, a choice, or missing information before proceeding. */
+  /** Ask the user a concise question when you need confirmation, a choice, or missing information before proceeding. A submitted skipped question is an answer item with empty selected and no custom. */
   ask_user_question: {
     /** Questions to ask the user before continuing. */
     questions: ({

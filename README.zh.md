@@ -53,7 +53,7 @@ pnpm dsh
 - **全屏对话记录。** PageUp/PageDown、鼠标滚轮与终端搜索可在不退出应用的情况下滚动对话记录；当视图滚离最新一行时，状态栏会给出提示。
 - **计划模式。** Shift+Tab 切换会话 Agent 的计划模式。当 agent 完成规划后，它会以 markdown 形式在 Approve / Keep planning 选项之上展示该计划。
 - **剪贴板图片。** Ctrl+V（Windows 与 WSL 为 Alt+V）把系统剪贴板中的图片附加到草稿，输入框会把每张持有的图片显示为 `[Image #1]` 标记。
-- **审批与提问。** 审批提示提供 Allow once / Reject，`ask_user_question` 则渲染为选择器（当问题设置 `multiSelect` 时可勾选）或自由文本输入。
+- **审批与提问。** 审批提示提供 Allow once / Reject，`ask_user_question` 则渲染为选择器（当问题设置 `multiSelect` 时可勾选）或自由文本输入。选项列表末尾的 `Other…` 会改为打开自由文本输入；`Esc` 跳过当前问题并进入下一题，`Ctrl+C` 取消整批提问。
 - **会话。** 退出时会打印一条 `dsh --resume <session-id>` 命令，`/sessions` 与 `/resume` 用于浏览和恢复已存储的对话。
 
 ## 键盘快捷键
@@ -61,10 +61,10 @@ pnpm dsh
 | 按键 | 操作 |
 |---|---|
 | `Enter` | 提交提示，或引导运行中的 turn |
-| `Esc` | 中断运行中的 turn 与会话的存活 subagent |
+| `Esc` | 中断运行中的 turn 与会话的存活 subagent；在提示中则跳过当前问题 |
 | `Shift+Tab` | 切换计划模式 |
 | `Ctrl+V` | 把系统剪贴板中的图片附加到草稿（Windows 与 WSL 为 `Alt+V`） |
-| `Ctrl+C` | 取消运行中的 turn 与存活 subagent；两者都不在运行时退出 |
+| `Ctrl+C` | 取消运行中的 turn 与存活 subagent；在提示中则取消整批提问；都不在运行时退出 |
 | `Ctrl+D` | 退出 |
 | `PageUp` / `PageDown` | 滚动对话记录，或滚动问题中溢出的详情 |
 | `Up` / `Down` | 滚动问题中溢出的详情；否则移动其选择器 |

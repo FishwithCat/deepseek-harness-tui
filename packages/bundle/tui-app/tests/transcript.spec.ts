@@ -20,7 +20,7 @@ import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
 import { TerminalTranscript } from '../src/transcript.ts'
 import type { ToolPresentationResolver } from '../src/tool-view.ts'
-import { PROMPT_PANEL_CHROME_ROWS, DetailBody, KeyboardSelectList, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
+import { PROMPT_PANEL_CHROME_ROWS, PROMPT_TITLE_MAX_ROWS, DetailBody, KeyboardSelectList, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
 import type { TuiSessionStats, TuiStatus } from '../src/views.ts'
 import { createTheme, editorTheme, selectListTheme } from '../src/ansi.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
@@ -1185,6 +1185,49 @@ describe('PromptPanel', () => {
     for (const width of [12, 24, 76, 120]) {
       for (const line of view.render(width)) expect(visibleWidth(line)).toBe(width)
     }
+  })
+
+  it('wraps a long question into the heading budget and ellipsizes the rest', () => {
+    const theme = createTheme({ enabled: false, palette: 'dark' })
+    const body: Component = { render: () => [], invalidate: () => {} }
+    const question = 'Which of these several long candidate answers should the agent carry out first, and why?'
+    const view = new PromptPanel({ header: 'Choose', question }, theme, body)
+    const lines = view.render(40)
+    expect(lines[0]?.trim()).toBe('Choose')
+    // The header leaves two question rows, and the second one carries the ellipsis.
+    expect(lines[PROMPT_TITLE_MAX_ROWS - 1]?.includes('…')).toBe(true)
+    expect(lines[PROMPT_TITLE_MAX_ROWS]).toBe(' '.repeat(40))
+    for (const line of lines) expect(visibleWidth(line)).toBe(40)
+  })
+
+  it('pins a countdown to the first heading row and clips it when it cannot share', () => {
+    const theme = createTheme({ enabled: false, palette: 'dark' })
+    const body: Component = { render: () => [], invalidate: () => {} }
+    const roomy = new PromptPanel({ question: 'Ready?', trailing: '120s left' }, theme, body)
+    expect(roomy.render(40)[0]?.trimEnd()).toBe('Ready?  120s left')
+    const narrow = new PromptPanel({ question: 'Ready?', trailing: '120s left' }, theme, body)
+    const line = narrow.render(8)[0] ?? ''
+    expect(visibleWidth(line)).toBe(8)
+    expect(line).toContain('…')
+  })
+
+  it('owns Escape as a skip only while it has a handler', () => {
+    const theme = createTheme({ enabled: false, palette: 'dark' })
+    const handleInput = vi.fn()
+    const body: Component = { render: () => [], invalidate: () => {}, handleInput }
+    new PromptPanel('title', theme, body).handleInput('\x1b')
+    expect(handleInput).toHaveBeenCalledWith('\x1b')
+
+    const skipping = new PromptPanel('title', theme, body)
+    const onSkip = vi.fn()
+    skipping.onSkip = onSkip
+    skipping.handleInput('\x1b')
+    expect(onSkip).toHaveBeenCalledTimes(1)
+    expect(handleInput).toHaveBeenCalledTimes(1)
+    // Every other key still reaches the body.
+    skipping.handleInput('a')
+    expect(onSkip).toHaveBeenCalledTimes(1)
+    expect(handleInput).toHaveBeenCalledTimes(2)
   })
 
   it('budgets panel rows around its chrome, capping only a detail-less picker', () => {

@@ -728,14 +728,20 @@ describe('TuiApp', () => {
     await test.app.stop(0)
   })
 
-  it('lets a focused prompt own Escape instead of interrupting the running turn', async () => {
+  it('lets a focused prompt own Escape as a skip and Ctrl+C as a cancel instead of interrupting the running turn', async () => {
     const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
     test.setRunning(true)
     const pending = test.app.choose('Select a model', [{ value: 'a', label: 'A' }])
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Select a model') })
 
     test.terminal.feed('\x1b')
-    await expect(pending).resolves.toBeUndefined()
+    await expect(pending).resolves.toEqual({ kind: 'skip' })
+    expect(test.cancelled()).toBe(0)
+
+    const cancelling = test.app.choose('Select a model', [{ value: 'a', label: 'A' }])
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Select a model') })
+    test.terminal.feed('\x03')
+    await expect(cancelling).resolves.toEqual({ kind: 'cancel' })
     expect(test.cancelled()).toBe(0)
     await test.app.stop(0)
   })
@@ -832,7 +838,7 @@ describe('TuiApp', () => {
     test.terminal.feed(`\x1b[<0;${x};${option + 1}M`)
     test.terminal.feed(`\x1b[<0;${x};${option + 1}m`)
     test.terminal.feed('\r')
-    await expect(pending).resolves.toMatchObject({ value: 'a' })
+    await expect(pending).resolves.toMatchObject({ kind: 'answer', value: { value: 'a' } })
     await test.app.stop(0)
   })
 
@@ -1037,7 +1043,7 @@ describe('TuiApp', () => {
     expect(rows[composer - 1]).toMatch(/^─+$/)
     expect(rows[title + 3]).toBe(rows[composer - 1])
     test.terminal.feed('\r')
-    await expect(pending).resolves.toMatchObject({ value: 'deepseek-official/deepseek-flash' })
+    await expect(pending).resolves.toMatchObject({ kind: 'answer', value: { value: 'deepseek-official/deepseek-flash' } })
     await test.app.stop(0)
   })
 
@@ -1052,7 +1058,7 @@ describe('TuiApp', () => {
     expect(rendered).toContain(`→ ${route}`)
     expect(rendered).toContain('DeepSeek-V4-Flash-Vision-Exp')
     test.terminal.feed('\r')
-    await expect(pending).resolves.toMatchObject({ value: route })
+    await expect(pending).resolves.toMatchObject({ kind: 'answer', value: { value: route } })
     await test.app.stop(0)
   })
 
@@ -1077,7 +1083,7 @@ describe('TuiApp', () => {
     expect(rows[lastModel + 1]).toContain('(1/20)')
     expect(rows[lastModel + 2]).toBe(rows[composer - 1])
     test.terminal.feed('\r')
-    await expect(pending).resolves.toMatchObject({ value: 'model-0' })
+    await expect(pending).resolves.toMatchObject({ kind: 'answer', value: { value: 'model-0' } })
     await test.app.stop(0)
   })
 
@@ -1347,7 +1353,7 @@ describe('TuiApp plan mode', () => {
     expect(plain(test.terminal.output)).not.toContain('plan mode on')
 
     test.terminal.feed('\x1b')
-    await expect(pending).resolves.toBeUndefined()
+    await expect(pending).resolves.toEqual({ kind: 'skip' })
     await test.app.stop(0)
   })
 
@@ -1459,10 +1465,10 @@ describe('TuiApp prompt routing', () => {
     await vi.waitFor(() => { expect(test.terminal.output).toContain('first?') })
     test.terminal.feed('typed')
     test.terminal.feed('\r')
-    await expect(first).resolves.toBe('typed')
+    await expect(first).resolves.toEqual({ kind: 'answer', value: 'typed' })
     await vi.waitFor(() => { expect(test.terminal.output).toContain('second?') })
     test.terminal.feed('\r')
-    await expect(second).resolves.toMatchObject({ value: 'ok' })
+    await expect(second).resolves.toMatchObject({ kind: 'answer', value: { value: 'ok' } })
     await test.app.stop(0)
   })
 })
@@ -1493,6 +1499,123 @@ describe('TuiApp question detail', () => {
     await test.app.stop(0)
   })
 
+  it('skips a plan review on Escape and hands the turn back', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    test.ctx.planMode.set(agent, true)
+    const execution = test.ctx.tools.execute({
+      callId: ToolCallId('call-exit-skip'),
+      name: 'exit_plan_mode',
+      arguments: { plan: '# Widget migration\n\nMove the widget.' },
+      signal: new AbortController().signal,
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Approve'))).toBe(true)
+    })
+    test.terminal.feed('\x1b')
+    await expect(execution).resolves.toMatchObject({ isError: false, value: { approved: false } })
+    await test.app.stop(0)
+  })
+
+  it('sends the plan review feedback typed in the Other row', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    test.ctx.planMode.set(agent, true)
+    const execution = test.ctx.tools.execute({
+      callId: ToolCallId('call-exit-other'),
+      name: 'exit_plan_mode',
+      arguments: { plan: '# Widget migration\n\nMove the widget.' },
+      signal: new AbortController().signal,
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Approve'))).toBe(true)
+    })
+    // Approve, Keep planning, then the appended Other row.
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed('\x1b[B')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Other…'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      // The plan renders between the heading and the input it replaced the list with.
+      const frame = screen(test.app)
+      const heading = frame.findIndex(row => row.includes('Approve this plan'))
+      const composer = frame.findIndex(row => row.includes('Enter send'))
+      const input = frame.findIndex((row, index) => index > heading && index < composer && row.startsWith('> '))
+      expect(input).toBeGreaterThan(heading)
+    })
+    test.terminal.feed('shrink it')
+    test.terminal.feed('\r')
+    await expect(execution).resolves.toMatchObject({ isError: true })
+    expect(JSON.stringify((await execution).content)).toContain('shrink it')
+    await test.app.stop(0)
+  })
+
+  it('hands the turn back when the plan review note is skipped', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    test.ctx.planMode.set(agent, true)
+    const execution = test.ctx.tools.execute({
+      callId: ToolCallId('call-exit-note-skip'),
+      name: 'exit_plan_mode',
+      arguments: { plan: '# Widget migration\n\nMove the widget.' },
+      signal: new AbortController().signal,
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Approve'))).toBe(true)
+    })
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed('\x1b[B')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Other…'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      const frame = screen(test.app)
+      const heading = frame.findIndex(row => row.includes('Approve this plan'))
+      const composer = frame.findIndex(row => row.includes('Enter send'))
+      expect(frame.findIndex((row, index) => index > heading && index < composer && row.startsWith('> '))).toBeGreaterThan(heading)
+    })
+    test.terminal.feed('\x1b')
+    await expect(execution).resolves.toMatchObject({ isError: false, value: { approved: false } })
+    await test.app.stop(0)
+  })
+
+  it('hands the turn back when the plan review note is empty', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    test.ctx.planMode.set(agent, true)
+    const execution = test.ctx.tools.execute({
+      callId: ToolCallId('call-exit-note-empty'),
+      name: 'exit_plan_mode',
+      arguments: { plan: '# Widget migration\n\nMove the widget.' },
+      signal: new AbortController().signal,
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Approve'))).toBe(true)
+    })
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed('\x1b[B')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Other…'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      const frame = screen(test.app)
+      const heading = frame.findIndex(row => row.includes('Approve this plan'))
+      const composer = frame.findIndex(row => row.includes('Enter send'))
+      expect(frame.findIndex((row, index) => index > heading && index < composer && row.startsWith('> '))).toBeGreaterThan(heading)
+    })
+    test.terminal.feed('\r')
+    await expect(execution).resolves.toMatchObject({ isError: false, value: { approved: false } })
+    await test.app.stop(0)
+  })
+
   it('scrolls a plan with the arrows and keeps planning without sending the model back', async () => {
     const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
     const agent = owned(test)
@@ -1514,7 +1637,7 @@ describe('TuiApp question detail', () => {
     // A detail takes the rows above the pinned footer rather than the 18-row
     // picker cap, so a tall terminal shows a tall plan.
     await vi.waitFor(() => {
-      expect(screen(test.app).some(row => row.includes('1–18/'))).toBe(true)
+      expect(screen(test.app).some(row => row.includes('1–16/'))).toBe(true)
     })
     const frame = screen(test.app)
     const title = frame.findIndex(row => row.includes('Approve this plan'))
@@ -1612,7 +1735,7 @@ describe('TuiApp question detail', () => {
     await test.app.stop(0)
   })
 
-  it('fails a dismissed question with the seam abort code', async () => {
+  it('fails a cancelled question with the seam abort code', async () => {
     const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
     const agent = owned(test)
     const pending = test.ctx.userQuestions.ask({
@@ -1622,8 +1745,66 @@ describe('TuiApp question detail', () => {
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true)
     })
-    test.terminal.feed('\x1b')
+    test.terminal.feed('\x03')
     await expect(pending).rejects.toMatchObject({ code: 'ASK_ABORTED' })
+    await test.app.stop(0)
+  })
+
+  it('skips a question on Escape and advances the batch', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [
+        { id: 'first', question: 'Pick one', options: [{ label: 'Alpha' }] },
+        { id: 'second', question: 'Pick another', options: [{ label: 'Beta' }] },
+      ],
+      agent,
+    })
+    await vi.waitFor(() => {
+      const frame = screen(test.app)
+      expect(frame.some(row => row.trim() === '1/2')).toBe(true)
+      expect(frame.some(row => row.trim() === 'Pick one')).toBe(true)
+    })
+    test.terminal.feed('\x1b')
+    await vi.waitFor(() => {
+      const frame = screen(test.app)
+      expect(frame.some(row => row.trim() === '2/2')).toBe(true)
+      expect(frame.some(row => row.trim() === 'Pick another')).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({
+      answers: [{ id: 'first', selected: [] }, { id: 'second', selected: ['Beta'] }],
+    })
+    await test.app.stop(0)
+  })
+
+  it('answers a question with free text typed in the Other row', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{ id: 'free', question: 'Pick one', options: [{ label: 'Alpha' }] }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true)
+    })
+    // Alpha carries the highlight, so the appended row is one press below it.
+    test.terminal.feed('\x1b[B')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Other…'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    // Choosing Other… replaces the option list with the free-text input.
+    await vi.waitFor(() => {
+      const frame = screen(test.app)
+      const heading = frame.findIndex(row => row.trim() === 'Pick one')
+      expect(frame[heading + 2]?.startsWith('> ')).toBe(true)
+    })
+    test.terminal.feed('neither')
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({
+      answers: [{ id: 'free', selected: [], custom: 'neither' }],
+    })
     await test.app.stop(0)
   })
 
@@ -1640,6 +1821,37 @@ describe('TuiApp question detail', () => {
     test.terminal.feed('because')
     test.terminal.feed('\r')
     await expect(pending).resolves.toMatchObject({ answers: [{ id: 'free', selected: [], custom: 'because' }] })
+    await test.app.stop(0)
+  })
+
+  it('skips a free-text question on Escape and cancels it on Ctrl+C', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const skipped = test.ctx.userQuestions.ask({ questions: [{ id: 'free', question: 'Why?' }], agent })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Why?'))).toBe(true)
+    })
+    test.terminal.feed('\x1b')
+    await expect(skipped).resolves.toMatchObject({ answers: [{ id: 'free', selected: [] }] })
+
+    const cancelled = test.ctx.userQuestions.ask({ questions: [{ id: 'free', question: 'Why?' }], agent })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Why?'))).toBe(true)
+    })
+    test.terminal.feed('\x03')
+    await expect(cancelled).rejects.toMatchObject({ code: 'ASK_ABORTED' })
+    await test.app.stop(0)
+  })
+
+  it('submits an empty free-text answer as an empty selection', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({ questions: [{ id: 'free', question: 'Why?' }], agent })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('Why?'))).toBe(true)
+    })
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'free', selected: [] }] })
     await test.app.stop(0)
   })
 })
@@ -1704,6 +1916,75 @@ describe('TuiApp multi-select questions', () => {
     await test.app.stop(0)
   })
 
+  it('skips a multi-select question on Escape', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{ id: 'multi', question: 'Pick some', multiSelect: true, options: [{ label: 'Alpha' }, { label: 'Beta' }] }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ [ ] Alpha'))).toBe(true)
+    })
+    test.terminal.feed('\x1b')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'multi', selected: [] }] })
+    await test.app.stop(0)
+  })
+
+  it('adds free text to a multi-select answer through the Other row', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{ id: 'multi', question: 'Pick some', multiSelect: true, options: [{ label: 'Alpha' }, { label: 'Beta' }] }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ [ ] Alpha'))).toBe(true)
+    })
+    // Check Alpha, move onto the appended Other row, and check it too.
+    test.terminal.feed(' ')
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed(' ')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      const frame = screen(test.app)
+      const heading = frame.findIndex(row => row.trim() === 'Pick some')
+      expect(frame[heading + 2]?.startsWith('> ')).toBe(true)
+    })
+    test.terminal.feed('plus')
+    test.terminal.feed('\r')
+    await expect(pending).resolves.toMatchObject({
+      answers: [{ id: 'multi', selected: ['Alpha'], custom: 'plus' }],
+    })
+    await test.app.stop(0)
+  })
+
+  it('keeps the checked options when the Other note is skipped', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.ask({
+      questions: [{ id: 'multi', question: 'Pick some', multiSelect: true, options: [{ label: 'Alpha' }, { label: 'Beta' }] }],
+      agent,
+    })
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ [ ] Alpha'))).toBe(true)
+    })
+    test.terminal.feed(' ')
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed(' ')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      const frame = screen(test.app)
+      const heading = frame.findIndex(row => row.trim() === 'Pick some')
+      expect(frame[heading + 2]?.startsWith('> ')).toBe(true)
+    })
+    test.terminal.feed('\x1b')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'multi', selected: ['Alpha'] }] })
+    await test.app.stop(0)
+  })
+
   it('scrolls a multi-select detail and moves the picker with Left/Right', async () => {
     const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
     const agent = owned(test)
@@ -1738,7 +2019,7 @@ describe('TuiApp multi-select questions', () => {
     await test.app.stop(0)
   })
 
-  it('fails a dismissed multi-select question with the seam abort code', async () => {
+  it('cancels a multi-select question with the seam abort code', async () => {
     const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
     const agent = owned(test)
     const pending = test.ctx.userQuestions.ask({
@@ -1748,7 +2029,7 @@ describe('TuiApp multi-select questions', () => {
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('→ [ ] Alpha'))).toBe(true)
     })
-    test.terminal.feed('\x1b')
+    test.terminal.feed('\x03')
     await expect(pending).rejects.toMatchObject({ code: 'ASK_ABORTED' })
     await test.app.stop(0)
   })
@@ -1764,23 +2045,54 @@ describe('TuiApp multi-select questions', () => {
     expect(rows.filter(row => /Option \d/.test(row))).toHaveLength(10)
     test.terminal.feed(' ')
     test.terminal.feed('\r')
-    await expect(pending).resolves.toMatchObject([{ value: 'opt-0' }])
+    await expect(pending).resolves.toMatchObject({ kind: 'answer', value: [{ value: 'opt-0' }] })
     await test.app.stop(0)
   })
 
   it('answers an empty multi-select batch without opening a prompt', async () => {
     const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
-    await expect(test.app.chooseMany('Pick some', [])).resolves.toEqual([])
+    await expect(test.app.chooseMany('Pick some', [])).resolves.toEqual({ kind: 'answer', value: [] })
     await test.app.stop(0)
   })
 
-  it('dismisses a multi-select prompt when its signal aborts', async () => {
+  it('settles an empty single-select batch without opening a prompt', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    await expect(test.app.choose('Pick one', [])).resolves.toEqual({ kind: 'cancel' })
+    await test.app.stop(0)
+  })
+
+  it('settles a text prompt on Escape, Ctrl+C, and an aborted signal', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    const inputRow = (title: string): boolean => {
+      const frame = screen(test.app)
+      const heading = frame.findIndex(row => row.trim() === title)
+      return heading >= 0 && frame[heading + 2]?.startsWith('> ') === true
+    }
+    const skipping = test.app.ask('Type first')
+    await vi.waitFor(() => { expect(inputRow('Type first')).toBe(true) })
+    test.terminal.feed('\x1b')
+    await expect(skipping).resolves.toEqual({ kind: 'skip' })
+
+    const cancelling = test.app.ask('Type second')
+    await vi.waitFor(() => { expect(inputRow('Type second')).toBe(true) })
+    test.terminal.feed('\x03')
+    await expect(cancelling).resolves.toEqual({ kind: 'cancel' })
+
+    const controller = new AbortController()
+    const aborted = test.app.ask('Type third', controller.signal)
+    await vi.waitFor(() => { expect(inputRow('Type third')).toBe(true) })
+    controller.abort()
+    await expect(aborted).resolves.toEqual({ kind: 'cancel' })
+    await test.app.stop(0)
+  })
+
+  it('cancels a multi-select prompt when its signal aborts', async () => {
     const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
     const controller = new AbortController()
     const pending = test.app.chooseMany('Pick some', [{ value: 'a', label: 'Alpha' }], controller.signal)
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Pick some') })
     controller.abort()
-    await expect(pending).resolves.toBeUndefined()
+    await expect(pending).resolves.toEqual({ kind: 'cancel' })
     await test.app.stop(0)
   })
 })
@@ -1853,7 +2165,22 @@ describe('TuiApp timed questions', () => {
     await test.app.stop(0)
   })
 
-  it('settles a dismissed timed question as pending', async () => {
+  it('settles a skipped timed question with an empty selection', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
+    const agent = owned(test)
+    const pending = test.ctx.userQuestions.askTimed({
+      questions: [{ id: 'pick', question: 'Pick one', options: [{ label: 'Alpha' }] }],
+      agent,
+    }, ToolCallId('call-timed-skip'), 5000)
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true)
+    })
+    test.terminal.feed('\x1b')
+    await expect(pending).resolves.toMatchObject({ answers: [{ id: 'pick', selected: [] }] })
+    await test.app.stop(0)
+  })
+
+  it('settles a cancelled timed question as pending', async () => {
     const test = await bench({ afterPrompt: () => {} }, { questions: true, screen: 'alternate' })
     const agent = owned(test)
     const pending = test.ctx.userQuestions.askTimed({
@@ -1863,7 +2190,7 @@ describe('TuiApp timed questions', () => {
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('→ Alpha'))).toBe(true)
     })
-    test.terminal.feed('\x1b')
+    test.terminal.feed('\x03')
     await expect(pending).resolves.toMatchObject({ pending: true })
     await test.app.stop(0)
   })

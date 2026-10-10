@@ -51,7 +51,7 @@ import type { Config } from './config.ts'
 import { commandCatalog, executeCommand, listEffortChoices, listModelChoices, parseCommand, slashAutocomplete } from './commands.ts'
 import { imageMarker, parseImageMarkers } from './images.ts'
 import { answerQuestion, installApprovalAnswerer, installQuestionAnswerer } from './interactions.ts'
-import type { InteractionHost, InteractionTitle } from './interactions.ts'
+import type { InteractionHost, InteractionTitle, PromptOutcome } from './interactions.ts'
 import type { AskUserQuestionAnswerItem, PendingUserQuestion } from '@deepseek-ai/dsh-user-questions'
 // Empty type import carries the optional question service `/questions` answers through.
 import type {} from '@deepseek-ai/dsh-user-questions'
@@ -59,8 +59,8 @@ import { TuiSession } from './session.ts'
 import type { TuiSessionOptions } from './session.ts'
 import type { TuiStartupValues } from './startup.ts'
 import { createToolPresentationResolver } from './tool-view.ts'
-import { DetailBody, KeyboardSelectList, MULTI_SELECT_HINT_ROWS, MultiSelectList, PlaceholderEditor, PROMPT_PANEL_CHROME_ROWS, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows } from './views.ts'
-import type { TuiContextStatus, TuiSessionStats, TuiStatus } from './views.ts'
+import { DetailBody, KeyboardSelectList, MULTI_SELECT_HINT_ROWS, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptHeadingRows, promptPanelRows } from './views.ts'
+import type { PromptTitle, TuiContextStatus, TuiSessionStats, TuiStatus } from './views.ts'
 import { TerminalTranscript } from './transcript.ts'
 
 /** Longest stored-session list rendered by `/sessions`. */
@@ -163,6 +163,25 @@ interface PromptPicker extends Component {
   onSelectionChange?: (item: SelectItem) => void
   /** Move the highlight onto one option. */
   setSelectedIndex(index: number): void
+}
+
+/** The two outcomes a picker's own controls settle; the panel settles Escape's skip. */
+interface PromptSettler<T> {
+  /**
+   * Settle with the value the user confirmed.
+   * @param value - the confirmed value.
+   */
+  answer(value: T): void
+  /** Settle as cancelled, leaving the whole request. */
+  cancel(): void
+}
+
+/** One shown prompt: the overlay to close and the panel whose skip the caller wires. */
+interface ShownPrompt {
+  /** Overlay handle returned by the renderer. */
+  readonly handle: OverlayHandle
+  /** Panel drawing the heading and forwarding keys. */
+  readonly panel: PromptPanel
 }
 
 /** The interactive application. */
@@ -706,9 +725,9 @@ export class TuiApp implements InteractionHost {
       description: describeSession(snapshot.header),
     }))
     const chosen = await this.choose('Resume which session?', items)
-    if (chosen === undefined) return
-    await this.replaceSession(() => TuiSession.resume(this.options.ctx, chosen.value, this.sessionOptions()))
-    this.notice('info', `resumed ${chosen.value}`)
+    if (chosen.kind !== 'answer') return
+    await this.replaceSession(() => TuiSession.resume(this.options.ctx, chosen.value.value, this.sessionOptions()))
+    this.notice('info', `resumed ${chosen.value.value}`)
   }
 
   /**
@@ -729,8 +748,8 @@ export class TuiApp implements InteractionHost {
         description: choice.description,
       }))
       const chosen = await this.choose('Select a model', items)
-      if (chosen === undefined) return
-      this.applyRoute(chosen.value)
+      if (chosen.kind !== 'answer') return
+      this.applyRoute(chosen.value.value)
       return
     }
     this.applyRoute(trimmed)
@@ -780,8 +799,8 @@ export class TuiApp implements InteractionHost {
       label: choice.label,
       description: choice.description,
     })))
-    if (chosen === undefined) return
-    this.applyEffort(chosen.value === '' ? undefined : ReasoningEffortId(chosen.value))
+    if (chosen.kind !== 'answer') return
+    this.applyEffort(chosen.value.value === '' ? undefined : ReasoningEffortId(chosen.value.value))
   }
 
   /**
@@ -807,12 +826,13 @@ export class TuiApp implements InteractionHost {
       label: questionLabel(question),
       description: `${String(question.questions.length)} unanswered`,
     })))
-    if (chosen === undefined) return
-    const pending = continued.find(question => question.callId === chosen.value)
+    if (chosen.kind !== 'answer') return
+    const pending = continued.find(question => question.callId === chosen.value.value)
     if (pending === undefined) return
     const answers: AskUserQuestionAnswerItem[] = []
-    for (const question of pending.questions) {
-      const answer = await answerQuestion(this, question, undefined)
+    const total = pending.questions.length
+    for (const [index, question] of pending.questions.entries()) {
+      const answer = await answerQuestion(this, question, { position: { index, total } })
       if (answer === undefined) {
         this.notice('info', 'left the question unanswered')
         return
@@ -990,14 +1010,14 @@ export class TuiApp implements InteractionHost {
    * Ask the user to choose one item through a modal list.
    * @param title - the question shown above the list; a provider is re-evaluated on every repaint.
    * @param items - the selectable items.
-   * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param signal - cancellation lifetime; aborting cancels the prompt.
    * @param detail - markdown shown above the list; while it overflows, Up/Down
    * and the wheel scroll it and Left/Right move the list selection. A detail
    * gives the panel every row above the pinned footer instead of the picker's cap.
-   * @returns the chosen item, or undefined when dismissed.
+   * @returns how the prompt settled: the chosen item, Escape's skip, or Ctrl+C's cancel.
    */
-  choose(title: InteractionTitle, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined> {
-    if (items.length === 0) return Promise.resolve(undefined)
+  choose(title: InteractionTitle, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<PromptOutcome<SelectItem>> {
+    if (items.length === 0) return Promise.resolve({ kind: 'cancel' })
     return this.pickList<KeyboardSelectList, SelectItem>(
       title,
       items,
@@ -1007,8 +1027,8 @@ export class TuiApp implements InteractionHost {
       visible => new KeyboardSelectList([...items], visible, selectListTheme(this.theme), PROMPT_LIST_LAYOUT),
       (list, capacity, step) => detail === undefined ? list : new DetailBody(detail, list, this.theme, capacity, step),
       (list, settle) => {
-        list.onSelect = (item) => { settle(item) }
-        list.onCancel = () => { settle(undefined) }
+        list.onSelect = (item) => { settle.answer(item) }
+        list.onCancel = () => { settle.cancel() }
       },
     )
   }
@@ -1017,18 +1037,19 @@ export class TuiApp implements InteractionHost {
    * Ask the user to check any number of items through a modal list.
    * @param title - the question shown above the list; a provider is re-evaluated on every repaint.
    * @param items - the selectable items.
-   * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param signal - cancellation lifetime; aborting cancels the prompt.
    * @param detail - markdown shown above the list; while it overflows, Up/Down
    * and the wheel scroll it and Left/Right move the list selection.
-   * @returns the checked items in list order, or undefined when dismissed.
+   * @returns how the prompt settled: the checked items in list order, Escape's
+   * skip, or Ctrl+C's cancel.
    */
   chooseMany(
     title: InteractionTitle,
     items: readonly SelectItem[],
     signal?: AbortSignal,
     detail?: string,
-  ): Promise<SelectItem[] | undefined> {
-    if (items.length === 0) return Promise.resolve([])
+  ): Promise<PromptOutcome<SelectItem[]>> {
+    if (items.length === 0) return Promise.resolve({ kind: 'answer', value: [] })
     return this.pickList<MultiSelectList, SelectItem[]>(
       title,
       items,
@@ -1038,8 +1059,8 @@ export class TuiApp implements InteractionHost {
       visible => new MultiSelectList([...items], visible, selectListTheme(this.theme), PROMPT_LIST_LAYOUT),
       (list, capacity, step) => detail === undefined ? list : new DetailBody(detail, list, this.theme, capacity, step),
       (list, settle) => {
-        list.onConfirm = (checked) => { settle(checked) }
-        list.onCancel = () => { settle(undefined) }
+        list.onConfirm = (checked) => { settle.answer(checked) }
+        list.onCancel = () => { settle.cancel() }
       },
     )
   }
@@ -1049,16 +1070,17 @@ export class TuiApp implements InteractionHost {
    *
    * Both pickers share the panel budget, the selection a long detail moves with
    * Left/Right, and the dismissal plumbing; they differ only in the control they
-   * build and the key that settles it, so those arrive as callbacks.
+   * build and the key that settles it, so those arrive as callbacks. Escape is
+   * the panel's own skip, so the wiring only supplies the control's two outcomes.
    * @param title - the heading shown above the list.
    * @param items - the selectable items, in display order.
-   * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param signal - cancellation lifetime; aborting cancels the prompt.
    * @param detail - markdown shown above the list; absent shows the list alone.
    * @param reservedRows - body rows the picker spends outside its options, such as a key hint.
    * @param createList - builds the picker control for the computed visible count.
    * @param wrapBody - wraps the picker with the detail viewport when a detail is present.
-   * @param wire - installs the caller's confirmation and cancellation handlers.
-   * @returns the settled value, or undefined when the prompt was dismissed.
+   * @param wire - installs the caller's answer and cancel handlers.
+   * @returns how the prompt settled.
    */
   private pickList<L extends PromptPicker, T>(
     title: InteractionTitle,
@@ -1068,11 +1090,11 @@ export class TuiApp implements InteractionHost {
     reservedRows: number,
     createList: (visible: number) => L,
     wrapBody: (list: L, capacity: number, step: (delta: -1 | 1) => void) => Component,
-    wire: (list: L, settle: (value: T | undefined) => void) => void,
-  ): Promise<T | undefined> {
-    return this.enqueuePrompt(() => new Promise<T | undefined>((resolve) => {
+    wire: (list: L, settle: PromptSettler<T>) => void,
+  ): Promise<PromptOutcome<T>> {
+    return this.enqueuePrompt(() => new Promise<PromptOutcome<T>>((resolve) => {
       const detailed = detail !== undefined
-      const capacity = this.promptRows(detailed) - PROMPT_PANEL_CHROME_ROWS - reservedRows
+      const capacity = this.promptRows(detailed) - this.headingRows(title) - 1 - reservedRows
       // A list longer than the panel budget scrolls, and the scroll indicator
       // spends one of the body rows the panel has.
       const scrolling = items.length > capacity
@@ -1088,38 +1110,43 @@ export class TuiApp implements InteractionHost {
         selected = (selected + delta + items.length) % items.length
         list.setSelectedIndex(selected)
       }
-      const handle = this.showPrompt(title, wrapBody(list, capacity, step), detailed)
-      const settle = (value: T | undefined): void => {
-        this.dismissPrompt(handle)
-        resolve(value)
+      const prompt = this.showPrompt(title, wrapBody(list, capacity, step), detailed)
+      const settle = (outcome: PromptOutcome<T>): void => {
+        this.dismissPrompt(prompt.handle)
+        resolve(outcome)
       }
-      wire(list, settle)
-      signal?.addEventListener('abort', () => { settle(undefined) }, { once: true })
+      prompt.panel.onSkip = () => { settle({ kind: 'skip' }) }
+      wire(list, {
+        answer: (value) => { settle({ kind: 'answer', value }) },
+        cancel: () => { settle({ kind: 'cancel' }) },
+      })
+      signal?.addEventListener('abort', () => { settle({ kind: 'cancel' }) }, { once: true })
     }))
   }
 
   /**
    * Ask the user for one line of text through a modal input.
    * @param title - the question shown above the input; a provider is re-evaluated on every repaint.
-   * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param signal - cancellation lifetime; aborting cancels the prompt.
    * @param detail - markdown shown above the input; Up/Down, PageUp/PageDown,
    * and the wheel scroll it while it overflows. A detail gives the panel every
    * row above the pinned footer instead of the picker's cap.
-   * @returns the entered text, or undefined when dismissed.
+   * @returns how the prompt settled: the entered text, Escape's skip, or Ctrl+C's cancel.
    */
-  ask(title: InteractionTitle, signal?: AbortSignal, detail?: string): Promise<string | undefined> {
-    return this.enqueuePrompt(() => new Promise<string | undefined>((resolve) => {
+  ask(title: InteractionTitle, signal?: AbortSignal, detail?: string): Promise<PromptOutcome<string>> {
+    return this.enqueuePrompt(() => new Promise<PromptOutcome<string>>((resolve) => {
       const input = new Input()
       const detailed = detail !== undefined
-      const capacity = this.promptRows(detailed) - PROMPT_PANEL_CHROME_ROWS
-      const handle = this.showPrompt(title, detail === undefined ? input : new DetailBody(detail, input, this.theme, capacity), detailed)
-      const settle = (value: string | undefined): void => {
-        this.dismissPrompt(handle)
-        resolve(value)
+      const capacity = this.promptRows(detailed) - this.headingRows(title) - 1
+      const prompt = this.showPrompt(title, detail === undefined ? input : new DetailBody(detail, input, this.theme, capacity), detailed)
+      const settle = (outcome: PromptOutcome<string>): void => {
+        this.dismissPrompt(prompt.handle)
+        resolve(outcome)
       }
-      input.onSubmit = (value) => { settle(value) }
-      input.onEscape = () => { settle(undefined) }
-      signal?.addEventListener('abort', () => { settle(undefined) }, { once: true })
+      prompt.panel.onSkip = () => { settle({ kind: 'skip' }) }
+      input.onSubmit = (value) => { settle({ kind: 'answer', value }) }
+      input.onEscape = () => { settle({ kind: 'cancel' }) }
+      signal?.addEventListener('abort', () => { settle({ kind: 'cancel' }) }, { once: true })
     }))
   }
 
@@ -1140,17 +1167,18 @@ export class TuiApp implements InteractionHost {
    * The alternate-screen layout pins the composer and the footer, so the panel
    * is anchored directly above them and reads as the transcript's next lines;
    * the inline layout has no fixed footer position, so the panel is centered.
-   * @param title - the heading line, or a provider re-evaluated on every repaint.
+   * @param title - the heading, or a provider re-evaluated on every repaint.
    * @param body - the component that owns input while the modal is up.
    * @param detailed - whether the body carries scrollable detail, which lets the
    * panel take every row above the pinned footer instead of the picker's cap.
-   * @returns the overlay handle.
+   * @returns the overlay handle and the panel that draws the heading.
    */
-  private showPrompt(title: InteractionTitle, body: Component, detailed: boolean): OverlayHandle {
+  private showPrompt(title: PromptTitle, body: Component, detailed: boolean): ShownPrompt {
     const place = this.viewport === undefined
       ? { anchor: 'center' as const }
       : { anchor: 'bottom-center' as const, margin: { bottom: PINNED_FOOTER_ROWS } }
-    const handle = this.tui.showOverlay(new PromptPanel(title, this.theme, body), {
+    const panel = new PromptPanel(title, this.theme, body)
+    const handle = this.tui.showOverlay(panel, {
       width: '100%',
       maxHeight: this.promptRows(detailed),
       ...place,
@@ -1160,7 +1188,7 @@ export class TuiApp implements InteractionHost {
     }
     this.promptActive = true
     this.editor.disableSubmit = true
-    return handle
+    return { handle, panel }
   }
 
   /**
@@ -1172,6 +1200,16 @@ export class TuiApp implements InteractionHost {
   private promptRows(detailed: boolean): number {
     const reserved = this.viewport === undefined ? 0 : PINNED_FOOTER_ROWS
     return promptPanelRows(this.tui.terminal.rows - reserved, detailed)
+  }
+
+  /**
+   * Rows one prompt's heading takes from its panel budget.
+   * @param title - the heading to measure.
+   * @returns the heading's rows at the current viewport width.
+   */
+  private headingRows(title: InteractionTitle): number {
+    const value = typeof title === 'function' ? title() : title
+    return promptHeadingRows(value, this.tui.terminal.columns)
   }
 
   /**

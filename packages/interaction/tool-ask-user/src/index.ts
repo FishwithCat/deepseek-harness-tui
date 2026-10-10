@@ -28,7 +28,9 @@ export const Config: z<Config> = z.object({
 export const name = 'tool-ask-user'
 export const inject = ['tools', 'userQuestions']
 
-const description = 'Ask the user a concise question when you need confirmation, a choice, or missing information before proceeding.'
+const description = 'Ask the user a concise question when you need confirmation, a choice, or missing '
+  + 'information before proceeding. A submitted skipped question is an answer item with empty selected '
+  + 'and no custom.'
 
 export function apply(ctx: Context, config: Config = {}): void {
   if (config.mode === 'timed') {
@@ -81,13 +83,17 @@ export function apply(ctx: Context, config: Config = {}): void {
           answers: {
             type: 'array',
             required: true,
+            description: 'Submitted answer batch with one item per question. A skipped question has empty selected and no custom.',
             items: {
               type: 'object',
               additionalProperties: false,
               properties: {
                 id: { type: 'string', required: true },
-                selected: { type: 'array', required: true, items: { type: 'string' } },
-                custom: { type: 'string' },
+                selected: {
+                  type: 'array', required: true, items: { type: 'string' },
+                  description: 'Selected option labels. Empty with no custom means the user explicitly skipped this question.',
+                },
+                custom: { type: 'string', description: 'Optional free-form answer; omitted for a skipped question.' },
               },
             },
           },

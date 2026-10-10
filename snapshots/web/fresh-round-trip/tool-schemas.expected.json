@@ -2,7 +2,7 @@
   "initial": [
     {
       "name": "ask_user_question",
-      "description": "Ask the user a concise question when you need confirmation, a choice, or missing information before proceeding.",
+      "description": "Ask the user a concise question when you need confirmation, a choice, or missing information before proceeding. A submitted skipped question is an answer item with empty selected and no custom.",
       "parameters": {
         "type": "object",
         "properties": {

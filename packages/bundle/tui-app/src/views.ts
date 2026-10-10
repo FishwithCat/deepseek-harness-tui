@@ -525,8 +525,10 @@ export class TranscriptView implements Component {
 
 /** Tallest detail-less prompt panel, so a long picker does not fill a tall terminal. */
 const PICKER_PANEL_MAX_ROWS = 18
-/** Rows a prompt spends outside its body: the title and the blank row under it. */
-export const PROMPT_PANEL_CHROME_ROWS = 2
+/** Most rows a prompt heading occupies; a longer question keeps its first rows and ends with an ellipsis. */
+export const PROMPT_TITLE_MAX_ROWS = 3
+/** Rows a prompt spends outside its body at most: the wrapped heading and the blank row under it. */
+export const PROMPT_PANEL_CHROME_ROWS = PROMPT_TITLE_MAX_ROWS + 1
 /** Rows a multi-select picker spends on its key hint below the list. */
 export const MULTI_SELECT_HINT_ROWS = 1
 
@@ -690,9 +692,68 @@ function clampScroll(top: number, content: number, viewport: number): number {
 }
 
 /**
- * A modal panel: a title, a blank row, and the control that handles keys. The
+ * A prompt heading. Its header and trailing text stay on the first row — a
+ * header labeling the question, a trailing countdown at the right edge — while
+ * the question itself wraps across the heading rows.
+ */
+export interface PromptHeading {
+  /** Dim label above the question, such as the question's header or its batch position. */
+  readonly header?: string | undefined
+  /** The question presented to the user, wrapped across the heading rows. */
+  readonly question: string
+  /** Text pinned to the right of the first heading row, such as a timed window's countdown. */
+  readonly trailing?: string | undefined
+}
+
+/** A prompt heading: a plain line, a structured heading, or a provider of either re-evaluated each repaint. */
+export type PromptTitle = string | PromptHeading | (() => string | PromptHeading)
+
+/**
+ * Wrap a heading into its rows.
+ *
+ * The header keeps its own row and the question takes the rest, ending in an
+ * ellipsis once it exceeds them.
+ * @param value - the heading to wrap.
+ * @param width - the available columns.
+ * @returns the header row, when the heading carries one, and the question's rows.
+ */
+function wrapHeading(value: string | PromptHeading, width: number): { readonly header?: string; readonly question: readonly string[] } {
+  const header = typeof value === 'string' ? undefined : value.header
+  const question = typeof value === 'string' ? value : value.question
+  const budget = Math.max(1, PROMPT_TITLE_MAX_ROWS - (header === undefined ? 0 : 1))
+  const wrapped = wrapTextWithAnsi(singleLine(question), width)
+  const kept = wrapped.length <= budget
+    ? wrapped
+    : [...wrapped.slice(0, budget - 1), `${truncateToWidth(wrapped[budget - 1] as string, width - 1, '')}…`]
+  return {
+    ...header === undefined ? {} : { header: singleLine(header) },
+    question: kept,
+  }
+}
+
+/**
+ * Rows a prompt heading occupies at one width.
+ *
+ * A prompt reserves its body budget from this before the first paint, so the
+ * body never overflows the rows the heading's wrapping left it.
+ * @param value - the headed value to measure.
+ * @param width - the available columns.
+ * @returns the number of rows the panel draws for the heading.
+ */
+export function promptHeadingRows(value: string | PromptHeading, width: number): number {
+  const wrapped = wrapHeading(value, width)
+  return (wrapped.header === undefined ? 0 : 1) + wrapped.question.length
+}
+
+/**
+ * A modal panel: a heading, a blank row, and the control that handles keys. The
  * renderer focuses the component passed to `showOverlay`, and a bare container
  * does not forward keys, so the panel is the focused component.
+ *
+ * Escape is intercepted here instead of by the control: the control binds it
+ * together with Ctrl+C to one cancel action, so a prompt that offers a skip
+ * could not otherwise tell the two apart. Ctrl+C keeps its own meaning and
+ * reaches the control's cancel binding.
  *
  * The panel reads as ordinary output rather than a dialog: no border, left
  * aligned like a transcript row. Every row is padded to the width the caller
@@ -704,38 +765,51 @@ function clampScroll(top: number, content: number, viewport: number): number {
 export class PromptPanel implements Component, Focusable {
   /** Set by the renderer when this panel owns the keyboard. */
   focused = false
+  /** Called when the user presses Escape to move past the prompt without answering. */
+  onSkip?: () => void
+
+  /** Heading rows the last render drew, so a mouse event keeps the control's own coordinates. */
+  private headingRows = 1
 
   /**
-   * @param title - the heading line, or a provider evaluated on every render
-   * for a heading that changes while the panel is open, such as a countdown.
+   * @param title - the heading, or a provider evaluated on every render for a
+   * heading that changes while the panel is open, such as a countdown.
    * @param theme - the surface theme.
    * @param body - the control that handles keys.
    */
   constructor(
-    private readonly title: string | (() => string),
+    private readonly title: PromptTitle,
     private readonly theme: TuiTheme,
     private readonly body: Component,
   ) {}
 
-  /** Forward keyboard input to the wrapped control. */
+  /**
+   * Answer Escape as a skip and hand every other key to the wrapped control.
+   * @param data - raw key bytes.
+   */
   handleInput(data: string): void {
     if (isFocusable(this.body)) this.body.focused = true
+    if (this.onSkip !== undefined && matchesKey(data, Key.escape)) {
+      this.onSkip()
+      return
+    }
     this.body.handleInput?.(data)
   }
 
   /**
    * Forward a mouse event past the panel's chrome to the wrapped control, so a
    * scrolling body reaches its own viewport at the rows it rendered. Events on
-   * the title or blank row belong to no control.
+   * the heading or blank row belong to no control.
    * @param event - the normalized mouse event, in panel coordinates.
    * @returns the body's result, when it handled the event.
    */
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    if (event.y < PROMPT_PANEL_CHROME_ROWS) return undefined
+    const chrome = this.headingRows + 1
+    if (event.y < chrome) return undefined
     return this.body.handleMouse?.({
       ...event,
-      y: event.y - PROMPT_PANEL_CHROME_ROWS,
-      height: Math.max(0, event.height - PROMPT_PANEL_CHROME_ROWS),
+      y: event.y - chrome,
+      height: Math.max(0, event.height - chrome),
     })
   }
 
@@ -745,15 +819,46 @@ export class PromptPanel implements Component, Focusable {
   }
 
   /**
-   * Render the title and body, filling every row the overlay covers.
+   * Render the heading and body, filling every row the overlay covers.
    * @param width - the viewport width in columns.
    * @returns the panel lines, each exactly `width` columns wide.
    */
   render(width: number): string[] {
     const available = Math.max(1, width)
-    const title = typeof this.title === 'function' ? this.title() : this.title
-    const lines = [this.theme.bold(title), '', ...this.body.render(available)]
+    const heading = this.heading(available)
+    this.headingRows = heading.length
+    const lines = [...heading, '', ...this.body.render(available)]
     return lines.map(line => this.row(line, available))
+  }
+
+  /**
+   * Wrap the heading into at most {@link PROMPT_TITLE_MAX_ROWS} rows.
+   * @param width - the available columns.
+   * @returns the styled heading rows.
+   */
+  private heading(width: number): string[] {
+    const value = typeof this.title === 'function' ? this.title() : this.title
+    const wrapped = wrapHeading(value, width)
+    const rows: string[] = []
+    if (wrapped.header !== undefined) rows.push(this.theme.dim(truncateToWidth(wrapped.header, width, '…')))
+    for (const line of wrapped.question) rows.push(this.theme.bold(line))
+    const trailing = typeof value === 'string' ? undefined : value.trailing
+    if (trailing !== undefined) rows[0] = this.withTrailing(rows[0] as string, singleLine(trailing), width)
+    return rows
+  }
+
+  /**
+   * Pin one line of text to the right of a heading row.
+   * @param line - the heading row.
+   * @param trailing - the text to pin.
+   * @param width - the available columns.
+   * @returns the row with the trailing text at its right edge.
+   */
+  private withTrailing(line: string, trailing: string, width: number): string {
+    const suffix = `  ${trailing}`
+    const suffixWidth = visibleWidth(suffix)
+    if (suffixWidth >= width) return truncateToWidth(suffix, width, '…')
+    return truncateToWidth(line, width - suffixWidth, '…') + suffix
   }
 
   private row(text: string, available: number): string {

@@ -5,7 +5,9 @@
  * another surface keeps its own answerers authoritative. A timed question is
  * claimed through the user-questions service so this surface owns the
  * countdown; a window that closes without an answer settles the call as
- * pending, leaving it answerable as a late reply.
+ * pending, leaving it answerable as a late reply. A question's options end in a
+ * free-text `Other…` row, Escape skips the question, and Ctrl+C cancels the
+ * whole ask.
  * @module @deepseek-ai/dsh-tui-app/interactions
  */
 
@@ -16,11 +18,25 @@ import type { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
 import type { AskUserQuestionAnswer, AskUserQuestionAnswerItem, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-user-questions'
+import type { PromptHeading, PromptTitle } from './views.ts'
 
-/** A heading that is a fixed string, or a provider the surface re-evaluates as it repaints. */
-export type InteractionTitle = string | (() => string)
+/** A heading that is a fixed value, or a provider the surface re-evaluates as it repaints. */
+export type InteractionTitle = PromptTitle
+
+/**
+ * How one modal prompt settled.
+ *
+ * `skip` is Escape's own outcome, distinct from `cancel` only because a question
+ * batch advances past a skipped question while a cancelled one is abandoned;
+ * every other caller treats the two alike.
+ */
+export type PromptOutcome<T> =
+  | { readonly kind: 'answer'; readonly value: T }
+  | { readonly kind: 'skip' }
+  | { readonly kind: 'cancel' }
 
 /** The terminal surfaces the answerers drive. */
 export interface InteractionHost {
@@ -28,34 +44,39 @@ export interface InteractionHost {
    * Ask the user to choose one item.
    * @param title - the question shown above the list; a provider is re-evaluated on every repaint.
    * @param items - the selectable items.
-   * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param signal - cancellation lifetime; aborting cancels the prompt.
    * @param detail - markdown shown above the list, scrollable with Up/Down, PageUp/PageDown, and the wheel.
-   * @returns the chosen item, or undefined when the user cancelled.
+   * @returns how the prompt settled: the chosen item, Escape's skip, or Ctrl+C's cancel.
    */
-  choose(title: InteractionTitle, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<SelectItem | undefined>
+  choose(title: InteractionTitle, items: readonly SelectItem[], signal?: AbortSignal, detail?: string): Promise<PromptOutcome<SelectItem>>
   /**
    * Ask the user to check any number of items.
    * @param title - the question shown above the list; a provider is re-evaluated on every repaint.
    * @param items - the selectable items.
-   * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param signal - cancellation lifetime; aborting cancels the prompt.
    * @param detail - markdown shown above the list, scrollable with Up/Down, PageUp/PageDown, and the wheel.
-   * @returns the checked items in list order, or undefined when the user cancelled.
+   * @returns how the prompt settled: the checked items in list order, Escape's skip, or Ctrl+C's cancel.
    */
   chooseMany(
     title: InteractionTitle,
     items: readonly SelectItem[],
     signal?: AbortSignal,
     detail?: string,
-  ): Promise<SelectItem[] | undefined>
+  ): Promise<PromptOutcome<SelectItem[]>>
   /**
    * Ask the user for one line of text.
    * @param title - the question shown above the input; a provider is re-evaluated on every repaint.
-   * @param signal - cancellation lifetime; aborting dismisses the prompt.
+   * @param signal - cancellation lifetime; aborting cancels the prompt.
    * @param detail - markdown shown above the input, scrollable with Up/Down, PageUp/PageDown, and the wheel.
-   * @returns the entered text, or undefined when the user cancelled.
+   * @returns how the prompt settled: the entered text, Escape's skip, or Ctrl+C's cancel.
    */
-  ask(title: InteractionTitle, signal?: AbortSignal, detail?: string): Promise<string | undefined>
+  ask(title: InteractionTitle, signal?: AbortSignal, detail?: string): Promise<PromptOutcome<string>>
 }
+
+/** Option value the ask flow appends for its free-text row; it never reaches an answer. */
+const OTHER_OPTION = '\u0000other'
+/** Label of the free-text row {@link OTHER_OPTION} marks. */
+const OTHER_LABEL = 'Other…'
 
 /** Option value that allows one approved action. */
 const ALLOW = 'allow-once'
@@ -149,58 +170,163 @@ export function installApprovalAnswerer(ctx: Context, host: InteractionHost, own
       { value: ALLOW, label: 'Allow once', description: request.reason ?? request.toolName },
       { value: REJECT, label: 'Reject', description: 'Deny this call' },
     ]
-    return host.choose(`Allow ${request.toolName}?`, items, request.signal).then((choice): ApprovalOutcome => {
-      if (choice === undefined) return 'cancelled'
-      return choice.value === ALLOW ? 'allowed-once' : 'rejected'
+    return host.choose(`Allow ${request.toolName}?`, items, request.signal).then((outcome): ApprovalOutcome => {
+      if (outcome.kind !== 'answer') return 'cancelled'
+      return outcome.value.value === ALLOW ? 'allowed-once' : 'rejected'
     })
   })
+}
+
+/** One question's place in the batch it arrived with. */
+export interface QuestionPosition {
+  /** Zero-based index of the question. */
+  readonly index: number
+  /** Number of questions the batch carries. */
+  readonly total: number
+}
+
+/** How one question is presented: its cancellation lifetime, timed window, and batch place. */
+export interface AnswerQuestionOptions {
+  /** Cancellation lifetime of the whole request; aborting cancels the ask. */
+  readonly signal?: AbortSignal | undefined
+  /** Absolute epoch milliseconds a timed window ends at; the heading counts down to it. */
+  readonly deadline?: number | undefined
+  /** The question's place in a multi-question batch; a lone question shows none. */
+  readonly position?: QuestionPosition | undefined
+}
+
+/**
+ * Compose one question's heading.
+ *
+ * A timed window's heading is a provider so the panel re-reads the countdown on
+ * every repaint, and the surface starts its repaint timer for it.
+ * @param question - the question to present.
+ * @param position - the question's place in its batch, when more than one was asked.
+ * @param deadline - absolute epoch milliseconds a timed window ends at.
+ * @returns the heading: a dim label, the wrapped question, and any countdown.
+ */
+function questionHeading(
+  question: AskUserQuestionItem,
+  position: QuestionPosition | undefined,
+  deadline: number | undefined,
+): InteractionTitle {
+  const label: string[] = []
+  if (position !== undefined && position.total > 1) label.push(`${String(position.index + 1)}/${String(position.total)}`)
+  if (question.header !== undefined) label.push(question.header)
+  const heading: PromptHeading = {
+    ...label.length === 0 ? {} : { header: label.join(' · ') },
+    question: question.question,
+  }
+  if (deadline === undefined) return heading
+  return (): PromptHeading => ({ ...heading, trailing: remainingLabel(deadline) })
+}
+
+/**
+ * Collect the free-form answer an `Other…` choice asks for.
+ * @param host - the terminal prompt surface.
+ * @param title - the heading repeated above the input.
+ * @param question - the question the note answers.
+ * @param options - cancellation lifetime and timed window of the request.
+ * @param selected - options the user already checked, carried into the answer.
+ * @param planReview - whether the note reviews a plan, whose empty answer hands
+ * the turn back instead of answering.
+ * @returns the answer item, or undefined when the user cancelled the prompt.
+ */
+async function answerOther(
+  host: InteractionHost,
+  title: InteractionTitle,
+  question: AskUserQuestionItem,
+  options: AnswerQuestionOptions,
+  selected: readonly string[],
+  planReview: boolean,
+): Promise<AskUserQuestionAnswerItem | undefined> {
+  const note = await host.ask(title, options.signal, question.detail)
+  switch (note.kind) {
+    case 'cancel':
+      return undefined
+    case 'skip':
+      return planReview ? undefined : { id: question.id, selected: [...selected] }
+    case 'answer':
+      if (note.value !== '') return { id: question.id, selected: [...selected], custom: note.value }
+      return planReview ? undefined : { id: question.id, selected: [...selected] }
+    /* v8 ignore next -- closed-union exhaustiveness guard */
+    default:
+      return assertNever(note, 'prompt outcome')
+  }
 }
 
 /**
  * Answer one structured question.
  *
- * A multi-select question opens a checkable list and answers with every checked
- * label. A plan review is special: its non-approve choice is not an answer to
- * send back. The terminal has no separate "talk it over" action, so choosing
- * Keep planning means the user kept planning to speak instead — leaving the
- * question unanswered hands the turn back so the agent stays in plan mode and
- * waits for their adjustment rather than revising immediately.
+ * A question with options opens a picker whose last row is `Other…`: choosing it
+ * collects a free-form answer, which replaces a single selection and
+ * accompanies a multi-selection. Escape skips the question with an empty
+ * selection so the batch advances; Ctrl+C cancels the whole request.
+ *
+ * A plan review is special: its non-approve choice is not an answer to send
+ * back. The terminal has no separate "talk it over" action, so choosing Keep
+ * planning means the user kept planning to speak instead — leaving the question
+ * unanswered hands the turn back so the agent stays in plan mode and waits for
+ * their adjustment rather than revising immediately. Every unanswered path
+ * there hands the turn back the same way, while `Other…` carries the user's own
+ * feedback to the waiting model.
  * @param host - the terminal prompt surface.
  * @param question - the question to present.
- * @param signal - cancellation lifetime of the whole request.
- * @param deadline - absolute epoch milliseconds a timed window ends at; the heading counts down to it.
- * @returns the answer item, or undefined when the user dismissed the prompt or
+ * @param options - cancellation lifetime, timed window, and batch place.
+ * @returns the answer item, or undefined when the user cancelled the prompt or
  * chose to keep planning instead of answering.
  */
 export async function answerQuestion(
   host: InteractionHost,
   question: AskUserQuestionItem,
-  signal: AbortSignal | undefined,
-  deadline?: number,
+  options: AnswerQuestionOptions = {},
 ): Promise<AskUserQuestionAnswerItem | undefined> {
-  const heading = question.header === undefined ? question.question : `${question.header}: ${question.question}`
-  const options = question.options ?? []
-  if (options.length === 0) {
-    const title = deadline === undefined ? heading : (): string => `${heading}  ·  ${remainingLabel(deadline)}`
-    const text = await host.ask(title, signal, question.detail)
-    if (text === undefined) return undefined
-    return { id: question.id, selected: [], custom: text }
+  const title = questionHeading(question, options.position, options.deadline)
+  const declared = question.options ?? []
+  const planReview = question.intent?.kind === 'plan-review'
+  if (declared.length === 0) {
+    return await answerOther(host, title, question, options, [], false)
   }
-  const items: SelectItem[] = options.map(option => ({
+  const items: SelectItem[] = declared.map(option => ({
     value: option.label,
     label: option.label,
     ...(option.description === undefined ? {} : { description: option.description }),
   }))
-  const title = deadline === undefined ? heading : (): string => `${heading}  ·  ${remainingLabel(deadline)}`
+  items.push({ value: OTHER_OPTION, label: OTHER_LABEL })
   if (question.multiSelect === true) {
-    const checked = await host.chooseMany(title, items, signal, question.detail)
-    if (checked === undefined) return undefined
-    return { id: question.id, selected: checked.map(item => item.value) }
+    const checked = await host.chooseMany(title, items, options.signal, question.detail)
+    switch (checked.kind) {
+      case 'cancel':
+        return undefined
+      case 'skip':
+        return { id: question.id, selected: [] }
+      case 'answer': {
+        const selected = checked.value.filter(item => item.value !== OTHER_OPTION).map(item => item.value)
+        return checked.value.some(item => item.value === OTHER_OPTION)
+          ? await answerOther(host, title, question, options, selected, false)
+          : { id: question.id, selected }
+      }
+      /* v8 ignore next -- closed-union exhaustiveness guard */
+      default:
+        return assertNever(checked, 'prompt outcome')
+    }
   }
-  const chosen = await host.choose(title, items, signal, question.detail)
-  if (chosen === undefined) return undefined
-  if (question.intent?.kind === 'plan-review' && chosen.value !== question.intent.approve) return undefined
-  return { id: question.id, selected: [chosen.value] }
+  const chosen = await host.choose(title, items, options.signal, question.detail)
+  switch (chosen.kind) {
+    case 'cancel':
+      return undefined
+    case 'skip':
+      return planReview ? undefined : { id: question.id, selected: [] }
+    case 'answer':
+      if (chosen.value.value === OTHER_OPTION) {
+        return await answerOther(host, title, question, options, [], planReview)
+      }
+      if (planReview && chosen.value.value !== question.intent?.approve) return undefined
+      return { id: question.id, selected: [chosen.value.value] }
+    /* v8 ignore next -- closed-union exhaustiveness guard */
+    default:
+      return assertNever(chosen, 'prompt outcome')
+  }
 }
 
 /**
@@ -237,8 +363,9 @@ async function answerTimedRequest(
   const cancelExpiry = armExpiry(deadline, () => { window.abort() })
   try {
     const answers: AskUserQuestionAnswerItem[] = []
-    for (const question of request.questions) {
-      const answer = await answerQuestion(host, question, window.signal, deadline)
+    const total = request.questions.length
+    for (const [index, question] of request.questions.entries()) {
+      const answer = await answerQuestion(host, question, { signal: window.signal, deadline, position: { index, total } })
       if (answer === undefined) {
         // The host aborts its own wait only for a cancelled Turn or disposal;
         // the claimed deadline is this surface's timer, not the host's.
@@ -277,8 +404,9 @@ export function installQuestionAnswerer(ctx: Context, host: InteractionHost, own
     const wait = request.wait
     if (wait?.timed === true) return await answerTimedRequest(ctx, host, owned, request, wait.callId)
     const answers: AskUserQuestionAnswerItem[] = []
-    for (const question of request.questions) {
-      const answer = await answerQuestion(host, question, request.signal)
+    const total = request.questions.length
+    for (const [index, question] of request.questions.entries()) {
+      const answer = await answerQuestion(host, question, { signal: request.signal, position: { index, total } })
       if (answer === undefined) {
         const planReview = question.intent?.kind === 'plan-review'
         throw new UserQuestionError(
