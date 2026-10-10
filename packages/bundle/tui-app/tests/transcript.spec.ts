@@ -538,6 +538,51 @@ describe('TranscriptView', () => {
     expect(view.render(60).join('\n')).toContain('› [Image #1] what is this?')
   })
 
+  it('gives prompts and replies distinct role gutters', async () => {
+    const session = await makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'first line\nsecond line' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      stream: [],
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: 'reply one\n\nreply two' }],
+        source: { provider: 'test-provider', model: 'test-model' },
+      }),
+    }, { surfaceOp: 'append' })
+    const transcript = new TerminalTranscript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    const lines = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60)
+    const rendered = lines.join('\n')
+    expect(rendered).toContain('› first line')
+    expect(rendered).toContain('│ second line')
+    expect(rendered).toContain('◆ reply one')
+    expect(rendered).toContain('│ reply two')
+  })
+
+  it('colors the assistant gutter with its own role color', async () => {
+    const session = await makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      stream: [],
+      message: createAssistantMessage({
+        content: [{ type: 'text', text: 'reply one\n\nreply two' }],
+        source: { provider: 'test-provider', model: 'test-model' },
+      }),
+    }, { surfaceOp: 'append' })
+    const transcript = new TerminalTranscript()
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+    const rendered = new TranscriptView(transcript, createTheme({ enabled: true, palette: 'dark' })).render(60).join('\n')
+    expect(rendered).toContain('\x1b[38;5;79m◆ \x1b[0m')
+    expect(rendered).toContain('\x1b[38;5;79m│ \x1b[0m')
+  })
+
   it('folds a long tool result and summarizes its arguments', async () => {
     const session = await makeSession()
     const callId = 'call-1' as ToolCallId

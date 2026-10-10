@@ -36,6 +36,7 @@ describe('createTheme', () => {
     const theme = createTheme({ enabled: false, palette: 'dark' })
     expect(theme.user('text')).toBe('text')
     expect(theme.assistant('text')).toBe('text')
+    expect(theme.assistantRule('text')).toBe('text')
     expect(theme.reasoning('text')).toBe('text')
     expect(theme.tool('text')).toBe('text')
     expect(theme.toolOk('text')).toBe('text')
@@ -58,6 +59,7 @@ describe('createTheme', () => {
   it('emits the dark palette', () => {
     const theme = createTheme({ enabled: true, palette: 'dark' })
     expect(theme.user('x')).toBe('\x1b[1;38;5;81mx\x1b[0m')
+    expect(theme.assistantRule('x')).toBe('\x1b[38;5;79mx\x1b[0m')
     expect(theme.reasoning('x')).toBe('\x1b[38;5;110mx\x1b[0m')
     expect(theme.tool('x')).toBe('\x1b[1;38;5;214mx\x1b[0m')
     expect(theme.toolOk('x')).toBe('\x1b[38;5;114mx\x1b[0m')
@@ -81,6 +83,7 @@ describe('createTheme', () => {
   it('emits the light palette', () => {
     const theme = createTheme({ enabled: true, palette: 'light' })
     expect(theme.user('x')).toBe('\x1b[1;38;5;25mx\x1b[0m')
+    expect(theme.assistantRule('x')).toBe('\x1b[38;5;29mx\x1b[0m')
     expect(theme.reasoning('x')).toBe('\x1b[38;5;60mx\x1b[0m')
     expect(theme.tool('x')).toBe('\x1b[1;38;5;130mx\x1b[0m')
     expect(theme.toolOk('x')).toBe('\x1b[38;5;28mx\x1b[0m')
