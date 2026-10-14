@@ -66,9 +66,9 @@ A line beginning with a known `/command` runs that command instead of reaching t
 | Command | Effect |
 |---|---|
 | `/help` | List the app's commands and every registered command |
-| `/new` | Flush and close the session, then start a fresh one |
+| `/new` | Flush the session, start a fresh one, then close the previous |
 | `/sessions` | List stored sessions, newest first |
-| `/resume [id]` | Resume a stored session by id, or choose one from a picker |
+| `/resume [id]` | Resume a stored session by id, or choose one from a picker; naming the live session keeps it |
 | `/model [provider/model]` | Choose a model from the live catalog, or switch directly |
 | `/effort [id]` | Choose the routed model's declared reasoning effort, or switch directly |
 | `/questions` | Answer a question whose foreground window closed, from the picker of calls still waiting |
@@ -184,7 +184,7 @@ The app adds nothing to the request prefix; it only routes the typed prompt thro
 
 These limits define what the terminal surface does not do. They are current constraints of this bundle, not a backlog of the browser surface.
 
-- **One Agent per invocation** — the app owns a single session; switching to another Agent means `/new` or `/resume`, which closes the current one first.
+- **One Agent per invocation** — the app owns a single session; switching to another Agent means `/new` or `/resume`, which opens the replacement before closing the current one so a failed open leaves the live session in place.
 - **Keep planning waits for a message** — the terminal review has no free-text feedback field, so choosing Keep planning closes the review and hands the turn back, keeping plan mode active; the adjustment is the user's next prompt rather than an answer carried on the review.
 - **A prompt's height is fixed when it opens** — the panel sizes itself from the terminal once, so resizing the terminal during a review does not resize it; close and reopen the prompt to pick up the new height.
 - **Images come only from the clipboard** — the composer attaches PNG, JPEG, WebP, and GIF bytes read from the system clipboard, through `osascript` reading `NSPasteboard` on macOS, PowerShell on Windows and WSL, `wl-paste` on Wayland, or `xclip` on X11. A host with none of those readers reports the paste as an empty clipboard, and no file picker, drag-and-drop, or non-image attachment exists.

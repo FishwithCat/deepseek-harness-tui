@@ -38,6 +38,8 @@ import { copyClipboardText } from '../src/clipboard.ts'
 import type { ClipboardImage } from '../src/clipboard.ts'
 import { apply, inject, name, TUI_STARTUP_SERVICE } from '../src/index.ts'
 import type { Config } from '../src/config.ts'
+import { textOfBlocks } from '../src/transcript.ts'
+import type { TranscriptEntry } from '../src/transcript.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
 import { commandCatalog, executeCommand, listModelChoices, parseCommand, slashAutocomplete } from '../src/commands.ts'
 
@@ -181,6 +183,8 @@ async function bench(
     }
     /** Resume this stored session at boot. */
     resume?: string
+    /** Reject the scripted `resume` factory with this message, to exercise a failed session replacement. */
+    resumeError?: string
     models?: readonly LlmModelInfo[]
     modalities?: readonly ModelModality[]
     reasoning?: LlmModelReasoningInfo
@@ -255,6 +259,7 @@ async function bench(
       return await publishAgent(ownerCtx, ctx.sessions.create(createOptions.sessionId), createOptions)
     },
     async resume(ownerCtx: Context, resumeOptions: ResumeAgentOptions): Promise<AgentHandle> {
+      if (options.resumeError !== undefined) throw new Error(options.resumeError)
       const session = ctx.sessions.create(resumeOptions.resumeSessionId, {
         seed: structuredClone([...(options.stored?.history ?? [])]),
       })
@@ -335,6 +340,16 @@ function owned(test: Fixture): Agent {
   const agent = test.ctx.agents.list()[0]
   if (agent === undefined) throw new Error('the fixture created no Agent')
   return agent
+}
+
+/**
+ * The assistant text rows the app's transcript currently holds.
+ * @param test - the running fixture.
+ * @returns each assistant row's text, in order.
+ */
+function assistantRows(test: Fixture): string[] {
+  const transcript = Reflect.get(test.app, 'transcript') as { entries(): readonly TranscriptEntry[] }
+  return transcript.entries().flatMap(entry => entry.kind === 'assistant' ? [entry.text] : [])
 }
 
 /** Append one complete answered turn to a session. */
@@ -1032,6 +1047,54 @@ describe('TuiApp', () => {
     await vi.waitFor(() => {
       expect(plain(test.terminal.output)).toContain('could not restore the session history')
     })
+    await test.app.stop(0)
+  })
+
+  it('keeps the live session when /resume cannot open the replacement', async () => {
+    internals.stderr = { write: () => true }
+    const test = await bench({
+      afterPrompt(session, message) {
+        appendAnsweredTurn(session, message, `reply to ${textOfBlocks(message.content)}`)
+      },
+    }, { persistence: true, resumeError: 'cannot open the stored session' })
+    const live = owned(test)
+    test.terminal.feed('first')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(assistantRows(test)).toContain('reply to first') })
+
+    test.terminal.feed('/resume missing-session')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('cannot open the stored session')
+    })
+
+    // The rejected open leaves the same Agent subscribed and the rows it folded.
+    expect(owned(test)).toBe(live)
+    expect(assistantRows(test)).toContain('reply to first')
+    // Those subscriptions still deliver: the next turn's reply renders too.
+    test.terminal.feed('second')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(assistantRows(test)).toContain('reply to second') })
+    await test.app.stop(0)
+  })
+
+  it('reports a /resume by id when the deployment stores no sessions', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    test.terminal.feed('/resume session-1')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('this deployment stores no sessions') })
+    await test.app.stop(0)
+  })
+
+  it('rejects a /resume that names the live session instead of reopening it', async () => {
+    internals.stderr = { write: () => true }
+    const test = await bench({ afterPrompt: () => {} }, { persistence: true })
+    const live = owned(test)
+    const id = String(live.session.id)
+    test.terminal.feed(`/resume ${id}`)
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain(`already on session ${id}`) })
+    expect(owned(test)).toBe(live)
     await test.app.stop(0)
   })
 

@@ -714,8 +714,7 @@ export class TuiApp implements InteractionHost {
   private async resumeCommand(input: string): Promise<void> {
     const trimmed = input.trim()
     if (trimmed !== '') {
-      await this.replaceSession(() => TuiSession.resume(this.options.ctx, trimmed, this.sessionOptions()))
-      this.notice('info', `resumed ${trimmed}`)
+      await this.resumeSession(trimmed)
       return
     }
     const persistence = this.options.ctx.get('sessionPersistence')
@@ -737,8 +736,29 @@ export class TuiApp implements InteractionHost {
     }))
     const chosen = await this.choose('Resume which session?', items)
     if (chosen.kind !== 'answer') return
-    await this.replaceSession(() => TuiSession.resume(this.options.ctx, chosen.value.value, this.sessionOptions()))
-    this.notice('info', `resumed ${chosen.value.value}`)
+    await this.resumeSession(chosen.value.value)
+  }
+
+  /**
+   * Resume the stored session `id` over the live one.
+   *
+   * The typed and picker paths share this guard so neither reaches
+   * {@link replaceSession} without a backend or with the live session's own id:
+   * the live session already holds the state, and reopening the same id would
+   * conflict with the write claim its handle holds.
+   * @param id - the stored session id.
+   */
+  private async resumeSession(id: string): Promise<void> {
+    if (this.options.ctx.get('sessionPersistence') === undefined) {
+      this.notice('error', 'this deployment stores no sessions')
+      return
+    }
+    if (id === String(this.session.session.id)) {
+      this.notice('info', `already on session ${id}`)
+      return
+    }
+    await this.replaceSession(() => TuiSession.resume(this.options.ctx, id, this.sessionOptions()))
+    this.notice('info', `resumed ${id}`)
   }
 
   /**
@@ -887,23 +907,30 @@ export class TuiApp implements InteractionHost {
 
   /**
    * Swap the live session, rewiring events and clearing the transcript.
+   *
+   * The previous session is flushed and the replacement is opened before the
+   * previous one is retired, so a rejected flush or `open` leaves the running
+   * session, its subscriptions, and the transcript untouched. The replacement
+   * becomes current before the previous session is closed, so even a disposal
+   * failure leaves the app on a usable session.
    * @param open - creates the replacement session.
    */
   private async replaceSession(open: () => Promise<TuiSession>): Promise<void> {
     const previous = this.session
-    // Only the session subscriptions retire with the old session; the global
-    // key bindings stay installed for the replacement.
-    for (const dispose of this.sessionDisposers.splice(0)) dispose()
     try {
       await previous.flush()
     } catch (error) {
       if (!isTeardown(error)) throw error
     }
-    await previous.dispose()
+    const next = await open()
+    // Only the session subscriptions retire with the old session; the global
+    // key bindings stay installed for the replacement.
+    for (const dispose of this.sessionDisposers.splice(0)) dispose()
     this.transcript.reset()
-    this.session = await open()
-    await this.attach(this.session)
+    this.session = next
+    await this.attach(next)
     this.refresh()
+    await previous.dispose()
   }
 
   /** Push the current facts into the footer and request a repaint. */
