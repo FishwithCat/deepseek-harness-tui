@@ -46,7 +46,10 @@ export interface ReasoningEntry {
   text: string
 }
 
-/** One Tool call and its settled outcome. */
+/**
+ * One Tool call and its settled outcome. The fold replaces this row when the
+ * result settles rather than mutating it, so durable rows keep one identity.
+ */
 export interface ToolEntry {
   kind: 'tool'
   /** Row identity, stable for the life of the row. */
@@ -404,11 +407,14 @@ export class TerminalTranscript {
 
   private applyToolResult(data: SessionEvent<'tool/result'>['data']): boolean {
     const message = data.message
-    const row = this.toolByCallId.get(message.toolCallId)
-    if (row === undefined) return false
+    const pending = this.toolByCallId.get(message.toolCallId)
+    if (pending === undefined) return false
     const isError = message.isError === true
-    row.status = isError ? 'error' : 'ok'
-    row.result = textOfBlocks(message.content)
+    const row: ToolEntry = {
+      ...pending,
+      status: isError ? 'error' : 'ok',
+      result: textOfBlocks(message.content),
+    }
     if (data.error !== undefined) row.error = `${data.error.name}: ${data.error.code}`
     // A failed call's view no longer describes the outcome, so both views are
     // dropped and the raw error text is what the user needs. A successful
@@ -433,6 +439,10 @@ export class TerminalTranscript {
         }
       }
     }
+    // Replace the pending row rather than mutating it: durable rows are
+    // immutable, which lets a view cache rendered lines by row identity.
+    this.rows[this.rows.indexOf(pending)] = row
+    this.toolByCallId.set(message.toolCallId, row)
     // A timed question that outlived its window stays answerable; the notice is
     // what tells the user the `/questions` command can still finish it.
     if (!isError && row.name === 'ask_user_question' && isPendingQuestionResult(row.result)) {

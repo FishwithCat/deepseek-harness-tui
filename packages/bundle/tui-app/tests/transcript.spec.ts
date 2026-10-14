@@ -23,6 +23,7 @@ import type { ToolPresentationResolver } from '../src/tool-view.ts'
 import { PROMPT_PANEL_CHROME_ROWS, PROMPT_TITLE_MAX_ROWS, DetailBody, KeyboardSelectList, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
 import type { TuiSessionStats, TuiStatus } from '../src/views.ts'
 import { createTheme, editorTheme, selectListTheme } from '../src/ansi.ts'
+import type { TuiTheme } from '../src/ansi.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
 
 /** A real screen over a fake terminal whose renderer requests are inert. */
@@ -663,6 +664,73 @@ describe('TranscriptView', () => {
     expect(view.render(40)).not.toBe(first)
     transcript.applyFrame(chunkFrame(4, 2, { type: 'text-delta', index: 0, text: 'lo' }))
     expect(view.render(40).join('\n')).toContain('Hello')
+  })
+
+  it('reuses every unchanged row when a new revision only appends', async () => {
+    const session = await makeSession()
+    session.append('turn/start', { turn: 1 })
+    session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'edit the file' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    const callId = 'call-edit' as ToolCallId
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('tool/call', { turn: 1, step: 1, callId, name: 'edit', arguments: '{"file_path":"a.ts"}' })
+    session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({ callId, content: [{ type: 'text', text: 'done' }], isError: false }),
+    }, { surfaceOp: 'append' })
+    const transcript = new TerminalTranscript({
+      call: () => ({ card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }] }),
+      result: () => ({ card: 'diff', title: 'Edit a.ts', diffs: [{ path: 'a.ts', oldText: 'ctx\nold', newText: 'ctx\nnew' }] }),
+    })
+    for (const event of session.ownEvents()) transcript.applyEvent(event)
+
+    const theme = createTheme({ enabled: false, palette: 'dark' })
+    let promptStyles = 0
+    let diffContexts = 0
+    const counted: TuiTheme = {
+      ...theme,
+      user: (text) => { promptStyles += 1; return theme.user(text) },
+      diffContext: (text) => { diffContexts += 1; return theme.diffContext(text) },
+    }
+    const view = new TranscriptView(transcript, counted)
+    expect(view.render(60).join('\n')).toContain('› edit the file')
+    const prompts = promptStyles
+    const contexts = diffContexts
+    expect(prompts).toBeGreaterThan(0)
+    expect(contexts).toBeGreaterThan(0)
+
+    transcript.notice('info', 'unrelated')
+    expect(view.render(60).join('\n')).toContain('unrelated')
+    // Both historical rows are unchanged, so neither renders its body again.
+    expect(promptStyles).toBe(prompts)
+    expect(diffContexts).toBe(contexts)
+  })
+
+  it('draws a settled Tool row after its running row was already rendered', async () => {
+    const session = await makeSession()
+    const transcript = new TerminalTranscript()
+    const appendAndFold = folder(transcript, session)
+    appendAndFold(() => { session.append('turn/start', { turn: 1 }) })
+    appendAndFold(() => { session.append('step/start', { turn: 1, step: 1 }) })
+    appendAndFold(() => {
+      session.append('tool/call', { turn: 1, step: 1, callId: 'call-1' as ToolCallId, name: 'bash', arguments: '{"command":"echo hi"}' })
+    })
+    const view = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
+    expect(view.render(60).join('\n')).toContain('⏺ bash')
+    appendAndFold(() => {
+      session.append('tool/result', {
+        turn: 1,
+        step: 1,
+        message: createToolResultMessage({ callId: 'call-1' as ToolCallId, content: [{ type: 'text', text: 'hi' }], isError: false }),
+      }, { surfaceOp: 'append' })
+    })
+    const settled = view.render(60).join('\n')
+    expect(settled).toContain('✔ bash')
+    expect(settled).toContain('hi')
+    expect(settled).not.toContain('⏺ bash')
   })
 
   it('marks an interrupted assistant message beside its body', async () => {

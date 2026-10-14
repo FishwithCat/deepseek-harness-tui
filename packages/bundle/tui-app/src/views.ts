@@ -219,12 +219,14 @@ function toolBody(text: string, width: number, style: Styler): string[] {
 }
 
 /**
- * The transcript document. It renders every row it holds; the surrounding
- * viewport (an alternate-screen scroll view, or the terminal's own scrollback)
- * owns scrolling.
+ * The transcript document. It renders every row it holds and reuses the rows an
+ * earlier revision already rendered; the surrounding viewport (an
+ * alternate-screen scroll view, or the terminal's own scrollback) owns
+ * scrolling.
  */
 export class TranscriptView implements Component {
-  private cache: { width: number; revision: number; lines: string[] } | undefined
+  private document: { width: number; revision: number; lines: string[] } | undefined
+  private rendered = new WeakMap<TranscriptEntry, { width: number; lines: string[] }>()
   private readonly markdown = new Map<number, { text: string; component: Markdown }>()
   private readonly markdownTheme: MarkdownTheme
 
@@ -241,29 +243,49 @@ export class TranscriptView implements Component {
 
   /** Drop cached render state. */
   invalidate(): void {
-    this.cache = undefined
+    this.document = undefined
+    this.rendered = new WeakMap()
     this.markdown.clear()
   }
 
   /**
    * Render the transcript body.
+   *
+   * Only the rows a revision touched are rendered again: a durable entry is
+   * never mutated after the fold appends it, and a live entry is a fresh object
+   * for every frame, so the per-entry cache is keyed by entry identity and
+   * width.
    * @param width - the viewport width in columns.
    * @returns one string per row, each within `width`.
    */
   render(width: number): string[] {
-    if (this.cache !== undefined && this.cache.width === width && this.cache.revision === this.transcript.revision) {
-      return this.cache.lines
+    if (this.document !== undefined && this.document.width === width && this.document.revision === this.transcript.revision) {
+      return this.document.lines
     }
     const lines: string[] = []
     for (const entry of this.transcript.entries()) {
-      const row = this.renderEntry(entry, width)
+      const row = this.entryLines(entry, width)
       if (row.length === 0) continue
       if (lines.length > 0) lines.push('')
       lines.push(...row)
     }
-    const bounded = lines.map(line => (visibleWidth(line) > width ? truncateToWidth(line, width) : line))
-    this.cache = { width, revision: this.transcript.revision, lines: bounded }
-    return bounded
+    this.document = { width, revision: this.transcript.revision, lines }
+    return lines
+  }
+
+  /**
+   * One entry's rows at one width, reused until the entry or the width changes.
+   * @param entry - the row to render.
+   * @param width - the viewport width in columns.
+   * @returns the entry's rows, each within `width`.
+   */
+  private entryLines(entry: TranscriptEntry, width: number): string[] {
+    const cached = this.rendered.get(entry)
+    if (cached !== undefined && cached.width === width) return cached.lines
+    const lines = this.renderEntry(entry, width)
+      .map(line => (visibleWidth(line) > width ? truncateToWidth(line, width) : line))
+    this.rendered.set(entry, { width, lines })
+    return lines
   }
 
   private renderEntry(entry: TranscriptEntry, width: number): string[] {
