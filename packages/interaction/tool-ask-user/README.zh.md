@@ -63,7 +63,7 @@ kind: "package-reference"
 
 收到回答时，工具为每个问题返回一项。`selected` 保存选项标签；`custom` 可以补充多选答案，或替代单选选项。跳过的回答项具有空 `selected`，且没有 `custom`。
 
-对于有限时长的 timed 调用，`{ "pending": true, "callId": "…" }` 表示前台等待结束时仍没有回答。问题仍可回答，模型可以继续独立工作。之后的回答以用户消息送达，由 `kind`、`tool` 和 `callId` 标识。Web 对话会配对展示问题与回答；其他消费方收到紧凑 JSON 文本。
+对于有限时长的 timed 调用，`{ "pending": true, "callId": "…" }` 表示前台等待结束时仍没有回答。问题仍可回答，模型可以继续独立工作。之后的回答以用户消息送达，由 `kind`、`tool` 和 `callId` 标识。Web 对话与工具声明的呈现视图会配对展示问题与回答；直接渲染原始结果的消费方收到紧凑 JSON 文本。
 
 ```json
 { "answers": [{ "id": "cleanup", "selected": ["Yes, delete them (Recommended)"] }] }
@@ -89,6 +89,7 @@ Legacy 调用和 `timeout: -1` 调用会等待回答或取消；没有 answerer 
 |---|---|
 | [`src/index.ts`](src/index.ts) | 默认阻塞式工具定义与模式选择 |
 | [`src/timed.ts`](src/timed.ts) | 显式启用的计时工具定义与结果渲染 |
+| [`src/presentation.ts`](src/presentation.ts) | 供宿主调用行与结果行使用的问题与回答视图 |
 
 ### 消费方角色
 

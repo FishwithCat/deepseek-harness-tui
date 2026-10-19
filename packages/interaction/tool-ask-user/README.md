@@ -63,7 +63,7 @@ Send one or more questions with ids unique within the call; the answer echoes th
 
 An answer returns one item per question. `selected` holds option labels; `custom` supplements a multi-select answer or replaces a single-select choice. A skipped item has empty `selected` and no `custom`.
 
-For a finite timed call, `{ "pending": true, "callId": "…" }` means the foreground wait ended without an answer. The question remains answerable, and the model may continue independent work. A later answer arrives as a user message identified by `kind`, `tool`, and `callId`. Web chat pairs its questions and answers; other consumers receive compact JSON text.
+For a finite timed call, `{ "pending": true, "callId": "…" }` means the foreground wait ended without an answer. The question remains answerable, and the model may continue independent work. A later answer arrives as a user message identified by `kind`, `tool`, and `callId`. Web chat and the tool's presentation view pair its questions and answers; consumers that render the raw result receive compact JSON text.
 
 ```json
 { "answers": [{ "id": "cleanup", "selected": ["Yes, delete them (Recommended)"] }] }
@@ -89,6 +89,7 @@ The observable behavior is covered in [Use this package](#use-this-package); thi
 |---|---|
 | [`src/index.ts`](src/index.ts) | Default blocking tool definition and mode selection |
 | [`src/timed.ts`](src/timed.ts) | Opt-in timed tool definition and result rendering |
+| [`src/presentation.ts`](src/presentation.ts) | Question-and-answer views for a host's call and result rows |
 
 ### Consumer role
 
@@ -96,7 +97,7 @@ The plugin registers one tool definition. Legacy mode calls `ask()`; timed mode 
 
 ### Result rendering
 
-The `render` output projects the structured value to a single text block via `JSON.stringify`, which is why the model-facing result is compact JSON rather than a richer content-block vocabulary.
+The `render` output projects the structured value to a single text block via `JSON.stringify`, which is why the model-facing result is compact JSON rather than a richer content-block vocabulary. `presentCall` and `presentResult` separately declare Host views that list each question with the labels the user chose, or with a skip marker, so a terminal or editor row never has to show the answer JSON to its reader.
 
 </details>
 

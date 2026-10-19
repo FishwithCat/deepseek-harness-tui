@@ -8,6 +8,7 @@ import { TIMED_WAIT_PARAMETER } from '@deepseek-ai/dsh-user-questions'
 import type {
   AskUserQuestionAnswer, AskUserQuestionRequestEvent,
 } from '@deepseek-ai/dsh-user-questions/types'
+import { presentAskCall, presentAskResult } from './presentation.ts'
 
 function validateTimeout(timeout: number): number {
   if (timeout !== -1 && (!Number.isInteger(timeout) || timeout < 1 || timeout > 2_147_483)) {
@@ -188,6 +189,8 @@ export function registerTimedAskUser(ctx: Context, timeout = 120): void {
       },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
     },
+    presentCall: args => presentAskCall(args.questions),
+    presentResult: (args, result) => presentAskResult(args.questions, result),
     async execute(args, exec) {
       const timeout = validateTimeout(args.timeout ?? defaultTimeout)
       validateQuestionIds(args.questions)

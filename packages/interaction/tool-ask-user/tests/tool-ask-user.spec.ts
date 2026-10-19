@@ -681,3 +681,113 @@ describe('ask_user_question tool', () => {
     expect(ctx.tools.get('ask_user_question')).toBeUndefined()
   })
 })
+
+describe('ask_user_question presentation', () => {
+  /** The two-question call the presentation tests read. */
+  const args = {
+    questions: [
+      {
+        id: 'color',
+        header: 'Pick one',
+        question: 'Which color do you prefer?',
+        options: [{ label: 'Blue' }, { label: 'Green' }],
+        multi_select: true,
+      },
+      { id: 'size', question: 'Which size?' },
+    ],
+  }
+
+  it('presents a call as its questions instead of raw arguments', async () => {
+    const tool = (await setup({ mode: 'legacy' })).tools.get('ask_user_question')!
+
+    expect(tool.presentCall?.(args)).toEqual({
+      card: 'generic',
+      title: 'Ask user question',
+      content: [{ type: 'text', text: 'Pick one · Which color do you prefer?\nWhich size?' }],
+    })
+    expect(tool.presentResult?.(args, {
+      content: [{ type: 'text', text: JSON.stringify({ answers: [{ id: 'color', selected: ['Blue'] }, { id: 'size', selected: ['large'] }] }) }],
+      isError: false,
+    })).toMatchObject({ title: 'Ask user question · 2 of 2 answered' })
+  })
+
+  it('presents each question with the labels the user chose', async () => {
+    const tool = (await setup()).tools.get('ask_user_question')!
+
+    expect(tool.presentResult?.(args, {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          answers: [
+            { id: 'color', selected: ['Blue', 'Green'] },
+            { id: 'size', selected: [], custom: 'large' },
+          ],
+        }),
+      }],
+      isError: false,
+    })).toEqual({
+      card: 'generic',
+      title: 'Ask user question · 2 of 2 answered',
+      content: [{ type: 'text', text: 'Pick one · Which color do you prefer?\n  → Blue, Green\nWhich size?\n  → large' }],
+    })
+  })
+
+  it('marks a skipped question and counts only answered ones', async () => {
+    const tool = (await setup()).tools.get('ask_user_question')!
+
+    expect(tool.presentResult?.(args, {
+      content: [{ type: 'text', text: JSON.stringify({ answers: [{ id: 'color', selected: [] }, { id: 'size', selected: [] }] }) }],
+      isError: false,
+    })).toMatchObject({
+      title: 'Ask user question · 0 of 2 answered',
+      content: [{ type: 'text', text: 'Pick one · Which color do you prefer?\n  → (skipped)\nWhich size?\n  → (skipped)' }],
+    })
+  })
+
+  it('keeps a timed call that is still waiting answerable in the row', async () => {
+    const tool = (await setup()).tools.get('ask_user_question')!
+
+    expect(tool.presentCall?.(args)).toMatchObject({ title: 'Ask user question' })
+
+    expect(tool.presentResult?.(args, {
+      content: [{ type: 'text', text: JSON.stringify({ pending: true, callId: 'call-1', message: 'pending' }) }],
+      isError: false,
+    })).toEqual({
+      card: 'generic',
+      title: 'Ask user question · waiting for an answer',
+      content: [{ type: 'text', text: 'Pick one · Which color do you prefer?\nWhich size?' }],
+    })
+  })
+
+  it('declines an error or an unreadable answer batch', async () => {
+    const tool = (await setup()).tools.get('ask_user_question')!
+    const result = (text: string): { content: { type: 'text'; text: string }[]; isError: boolean } => ({
+      content: [{ type: 'text', text }],
+      isError: false,
+    })
+
+    expect(tool.presentResult?.(args, result('not json'))).toBeUndefined()
+    expect(tool.presentResult?.(args, result('[]'))).toBeUndefined()
+    expect(tool.presentResult?.(args, { ...result('{"answers":[]}'), isError: true })).toBeUndefined()
+    expect(tool.presentResult?.(args, result('{"answers":"none"}'))).toBeUndefined()
+    expect(tool.presentResult?.(args, result('{"answers":[1]}'))).toBeUndefined()
+    expect(tool.presentResult?.(args, result('{"answers":[{"id":1,"selected":[]}]}'))).toBeUndefined()
+    expect(tool.presentResult?.(args, result(JSON.stringify({ answers: [{ id: 'color', selected: 'Blue' }] })))).toBeUndefined()
+    expect(tool.presentResult?.(args, result(JSON.stringify({ answers: [{ id: 'color', selected: [1] }, { id: 'size', selected: [] }] })))).toBeUndefined()
+    expect(tool.presentResult?.(args, result(JSON.stringify({ answers: [{ id: 'color', selected: [], custom: 1 }, { id: 'size', selected: [] }] })))).toBeUndefined()
+    expect(tool.presentResult?.(args, result(JSON.stringify({ answers: [{ id: 'color', selected: ['Blue'] }] })))).toBeUndefined()
+  })
+
+  it('omits an empty custom answer from the chosen labels', async () => {
+    const tool = (await setup()).tools.get('ask_user_question')!
+    const questions = [{ id: 'why', question: 'Why?' }]
+
+    expect(tool.presentResult?.({ questions }, {
+      content: [{ type: 'text', text: JSON.stringify({ answers: [{ id: 'why', selected: ['Because'], custom: '' }] }) }],
+      isError: false,
+    })).toMatchObject({
+      title: 'Ask user question · 1 of 1 answered',
+      content: [{ type: 'text', text: 'Why?\n  → Because' }],
+    })
+  })
+})

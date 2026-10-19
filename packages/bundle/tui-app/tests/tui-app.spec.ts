@@ -33,6 +33,7 @@ import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import UserApprovalService from '@deepseek-ai/dsh-user-approval'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
+import * as AskUserTool from '@deepseek-ai/dsh-tool-ask-user'
 import { TuiApp, internals, reservesCtrlV, wheelScroll } from '../src/app.ts'
 import { copyClipboardText } from '../src/clipboard.ts'
 import type { ClipboardImage } from '../src/clipboard.ts'
@@ -2019,6 +2020,62 @@ describe('TuiApp question detail', () => {
     })
     test.terminal.feed('\r')
     await expect(pending).resolves.toMatchObject({ answers: [{ id: 'free', selected: [] }] })
+    await test.app.stop(0)
+  })
+})
+
+describe('TuiApp question presentation', () => {
+  it('renders a settled ask_user_question row as questions and answers, not result JSON', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { questions: true, tools: true, screen: 'alternate' })
+    await test.ctx.plugin(AskUserTool, { mode: 'timed', timeout: -1 })
+    const agent = owned(test)
+    agent.session.append('tool/call', {
+      turn: 1,
+      step: 1,
+      callId: ToolCallId('call-present'),
+      name: 'ask_user_question',
+      arguments: JSON.stringify({
+        questions: [
+          {
+            id: 'color',
+            header: 'Pick one',
+            question: 'Which color do you prefer?',
+            options: [{ label: 'Blue' }, { label: 'Green' }],
+            multi_select: true,
+          },
+          { id: 'size', question: 'Which size?' },
+        ],
+      }),
+    })
+    await vi.waitFor(() => {
+      const frame = screen(test.app)
+      expect(frame.some(row => row.includes('Which color do you prefer?'))).toBe(true)
+      expect(frame.some(row => row.includes('questions=['))).toBe(false)
+    })
+    agent.session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId: ToolCallId('call-present'),
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            answers: [
+              { id: 'color', selected: ['Blue', 'Green'] },
+              { id: 'size', selected: [], custom: 'large' },
+            ],
+          }),
+        }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
+    await vi.waitFor(() => {
+      const frame = screen(test.app)
+      expect(frame.some(row => row.includes('2 of 2 answered'))).toBe(true)
+      expect(frame.some(row => row.includes('→ Blue, Green'))).toBe(true)
+      expect(frame.some(row => row.includes('→ large'))).toBe(true)
+      expect(frame.some(row => row.includes('"selected"'))).toBe(false)
+    })
     await test.app.stop(0)
   })
 })

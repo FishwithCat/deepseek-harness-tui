@@ -9,6 +9,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
+import { presentAskCall, presentAskResult } from './presentation.ts'
 import { registerTimedAskUser } from './timed.ts'
 import '@deepseek-ai/dsh-user-questions'
 
@@ -101,6 +102,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
     },
+    presentCall: args => presentAskCall(args.questions),
+    presentResult: (args, result) => presentAskResult(args.questions, result),
     async execute(args, exec) {
       const result = await ctx.userQuestions.ask({
         questions: args.questions.map(question => ({
