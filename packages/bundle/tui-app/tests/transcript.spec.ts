@@ -176,7 +176,7 @@ describe('TerminalTranscript', () => {
       step: 1,
       stream: [],
       message: createAssistantMessage({
-        content: [{ type: 'text', text: 'Hello' }],
+        content: [{ type: 'reasoning', text: 'thinking' }, { type: 'text', text: 'Hello' }],
         source: { provider: 'p', model: 'm' },
       }),
     }, { surfaceOp: 'append' })
@@ -189,13 +189,56 @@ describe('TerminalTranscript', () => {
       outcome: { kind: 'committed', eventType: 'assistant/message', seq: SessionSeq(session.seq - 1) },
     })
     expect(transcript.streaming).toBe(false)
-    // The live rows are gone; only the durable settlement remains.
-    expect(transcript.entries().map(entry => entry.kind)).toEqual(['user', 'assistant'])
+    expect(transcript.entries().map(entry => entry.kind)).toEqual(['user', 'reasoning', 'assistant'])
+    const restored = new TerminalTranscript()
+    for (const event of session.ownEvents()) restored.applyEvent(event)
+    expect(restored.entries()).toEqual(transcript.entries())
+    const view = new TranscriptView(restored, createTheme({ enabled: false, palette: 'dark' }))
+    expect(view.render(40).map(line => line.trimEnd()).join('\n')).toMatchInlineSnapshot(`
+      "› hi
+
+      ✻ thinking
+
+      ◆ Hello"
+    `)
+    transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('next'), revision: 7, turn: 2, step: 2 })
+    expect(transcript.entries()).toEqual(restored.entries())
+  })
+
+  it.each([false, true])('retains reasoning-only settlements (interrupted: %s)', async (interrupted) => {
+    const session = await makeSession()
+    session.append('assistant/message', {
+      turn: 1,
+      step: 1,
+      stream: [],
+      message: createAssistantMessage({
+        content: [{ type: 'reasoning', text: 'considering' }, { type: 'reasoning', text: ' options' }],
+        source: { provider: 'p', model: 'm' },
+      }),
+      ...interrupted ? { interrupted: true } : {},
+    }, { surfaceOp: 'append' })
+    const transcript = new TerminalTranscript()
+    for (const event of session.ownEvents()) expect(transcript.applyEvent(event)).toBe(true)
+    expect(transcript.entries()).toEqual([{ kind: 'reasoning', id: 1, text: 'considering options' }])
+  })
+
+  it('keeps abandoned reasoning before its notice without carrying it into the next attempt', () => {
+    const transcript = new TerminalTranscript()
+    transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('attempt'), revision: 1, turn: 1, step: 1 })
+    transcript.applyFrame(chunkFrame(2, 0, { type: 'reasoning-delta', index: 0, text: 'unfinished' }))
+    transcript.applyFrame({ type: 'end', attemptId: LlmAttemptId('attempt'), revision: 3, index: 1,
+      outcome: { kind: 'abandoned' } })
+    expect(transcript.entries().map(entry => entry.kind)).toEqual(['reasoning', 'notice'])
+    expect(transcript.entries()[0]).toMatchObject({ text: 'unfinished' })
+    transcript.applyFrame({ type: 'start', attemptId: LlmAttemptId('retry'), revision: 4, turn: 1, step: 1 })
+    expect(transcript.entries()).toHaveLength(2)
   })
 
   it('reports a failed attempt and an errored turn as notices', async () => {
     const session = await makeSession()
     const stream: AssistantStreamRecord[] = [{
+      type: 'reasoning-chunks', index: 0, time0: 0, dt: [1], texts: ['partial ', 'thought'],
+    }, {
       type: 'chunk',
       time: 0,
       chunk: { type: 'finish', reason: { kind: 'error', failure: { message: 'provider exploded', code: 'E' } } },
@@ -206,6 +249,7 @@ describe('TerminalTranscript', () => {
     const transcript = new TerminalTranscript()
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     expect(transcript.entries().at(-1)).toMatchObject({ kind: 'notice', level: 'error', text: 'provider exploded' })
+    expect(transcript.entries()[0]).toMatchObject({ kind: 'reasoning', text: 'partial thought' })
 
     session.append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } })
     const closer = session.ownEvents().at(-1)

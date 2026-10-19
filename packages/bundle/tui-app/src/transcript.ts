@@ -37,10 +37,10 @@ export interface AssistantEntry {
   interrupted: boolean
 }
 
-/** Provider reasoning shown while it streams; the durable settlement keeps it out of the transcript. */
+/** Provider reasoning retained before its assistant message or attempt outcome. */
 export interface ReasoningEntry {
   kind: 'reasoning'
-  /** Row identity; always negative, since only live reasoning is rendered. */
+  /** Row identity; negative while the reasoning is still streaming. */
   id: number
   /** The reasoning text streamed so far. */
   text: string
@@ -318,7 +318,10 @@ export class TerminalTranscript {
       case 'chunk':
         return this.applyChunk(frame.chunk)
       case 'end':
-        if (frame.outcome.kind === 'abandoned') this.notice('info', 'the model stream ended without a settlement')
+        if (frame.outcome.kind === 'abandoned') {
+          this.appendReasoning(this.liveReasoning)
+          this.notice('info', 'the model stream ended without a settlement')
+        }
         this.attempt = false
         this.liveText = ''
         this.liveReasoning = ''
@@ -371,8 +374,10 @@ export class TerminalTranscript {
   }
 
   private applyAssistantMessage(data: SessionEvent<'assistant/message'>['data']): boolean {
+    const reasoning = data.message.content.filter(block => block.type === 'reasoning').map(block => block.text).join('')
+    const retained = this.appendReasoning(reasoning)
     const text = textOfBlocks(data.message.content)
-    if (text === '') return false
+    if (text === '') return retained
     this.rows.push({
       kind: 'assistant',
       id: this.nextId++,
@@ -383,9 +388,20 @@ export class TerminalTranscript {
   }
 
   private applyAttempt(data: SessionEvent<'assistant/attempt'>['data']): boolean {
+    const reasoning = expandAssistantStream(data.stream)
+      .flatMap(({ chunk }) => chunk.type === 'reasoning-delta' ? [chunk.text] : [])
+      .join('')
+    const retained = this.appendReasoning(reasoning)
     const failure = streamFailure(data.stream)
-    if (failure === undefined) return false
+    if (failure === undefined) return retained
     return this.notice('error', failure)
+  }
+
+  private appendReasoning(text: string): boolean {
+    if (text === '') return false
+    this.rows.push({ kind: 'reasoning', id: this.nextId++, text })
+    this.liveReasoning = ''
+    return this.changed()
   }
 
   private applyToolCall(data: SessionEvent<'tool/call'>['data']): boolean {
