@@ -927,6 +927,7 @@ export class TuiApp implements InteractionHost {
     // key bindings stay installed for the replacement.
     for (const dispose of this.sessionDisposers.splice(0)) dispose()
     this.transcript.reset()
+    this.transcriptView.invalidate()
     this.session = next
     await this.attach(next)
     this.refresh()

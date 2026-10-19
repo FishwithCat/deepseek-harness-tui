@@ -971,6 +971,30 @@ describe('TuiApp', () => {
     expect(writes.join('')).toBe(`To resume this session:\n  dsh --resume ${replacement}\n`)
   })
 
+  it.each(['/new', '/resume session-1'])('releases the previous session markdown cache on %s', async (command) => {
+    internals.stderr = { write: () => true }
+    const test = await bench({
+      afterPrompt(session, message) { appendAnsweredTurn(session, message, 'old reply') },
+    }, { stored: { sessionId: 'session-1', history: storedTurn('stored prompt', 'stored reply') } })
+    test.terminal.feed('hello')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('old reply') })
+    const view = Reflect.get(test.app, 'transcriptView') as { markdown: Map<number, { text: string }> }
+    const oldIds = [...view.markdown.keys()]
+    expect(oldIds.length).toBeGreaterThan(0)
+    expect([...view.markdown.values()].map(value => value.text)).toContain('old reply')
+
+    test.terminal.feed(command)
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain(command === '/new' ? 'started a new session' : 'resumed session-1')
+    })
+    for (const id of oldIds) expect(view.markdown.has(id)).toBe(false)
+    if (command === '/new') expect(view.markdown.size).toBe(0)
+    else expect([...view.markdown.values()].map(value => value.text)).toEqual(['stored reply'])
+    await test.app.stop(0)
+  })
+
   it('omits the resume command when the deployment stores no sessions', async () => {
     const writes: string[] = []
     internals.stderr = { write: (chunk: string) => { writes.push(chunk); return true } }

@@ -241,7 +241,7 @@ export class TranscriptView implements Component {
     this.markdownTheme = markdownTheme(theme)
   }
 
-  /** Drop cached render state. */
+  /** Release cached lines and Markdown components, including those of a replaced session. */
   invalidate(): void {
     this.document = undefined
     this.rendered = new WeakMap()
