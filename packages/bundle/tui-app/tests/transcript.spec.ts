@@ -853,6 +853,13 @@ describe('StatusBar', () => {
     expect(stats).toBe('')
   })
 
+  it('reports a compaction in flight in place of the idle state', () => {
+    const base: TuiStatus = { workspace: '~/Workspace/Nutkin', state: 'compacting', model: 'deepseek-flash' }
+    const [head] = bar(base).render(60)
+    expect(head).toContain('~/Workspace/Nutkin  ● compacting')
+    expect(head).not.toContain('○ idle')
+  })
+
   it('marks plan mode beside the lifecycle state', () => {
     const base: TuiStatus = { workspace: '~/Workspace/Nutkin', state: 'idle', model: 'deepseek-flash' }
     expect(bar({ ...base, plan: true }).render(60)[0]).toContain('○ idle  plan')

@@ -214,6 +214,8 @@ export class TuiApp implements InteractionHost {
   private readonly providerCount: number
   /** Whether the mounted compaction engine schedules its own work. */
   private readonly autoCompaction: boolean
+  /** Whether a compaction transaction is in flight; the footer reports its wait. */
+  private compacting = false
   /** Footer measurement cached against the session and log position it was read at. */
   private measurementCache: { session: Session; seq: number; value: TuiMeasurement } | undefined
 
@@ -336,6 +338,7 @@ export class TuiApp implements InteractionHost {
    */
   private async attach(session: TuiSession): Promise<void> {
     const owned = session.agent
+    this.compacting = false
     this.editor.setAutocompleteProvider(slashAutocomplete(this.options.ctx, owned, this.options.cwd))
     // A resumed session's earlier events are not re-published on the live
     // stream, so they are folded from stored history. An event that lands
@@ -351,8 +354,7 @@ export class TuiApp implements InteractionHost {
       }
       // Every appended event can move a footer fact, including the ones the
       // transcript does not show.
-      this.transcript.applyEvent(event)
-      this.refresh()
+      this.applyEvent(event)
     }))
     this.sessionDisposers.push(this.options.ctx.on('agent/assistant-stream', ({ agent, frame }) => {
       if (agent !== owned) return
@@ -376,10 +378,24 @@ export class TuiApp implements InteractionHost {
       this.notice('error', `could not restore the session history: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       loading = false
-      for (const event of buffered) this.transcript.applyEvent(event)
+      for (const event of buffered) this.applyEvent(event)
       buffered.length = 0
       this.refresh()
     }
+  }
+
+  /**
+   * Fold one live event into the transcript and the footer's facts.
+   *
+   * A manual compaction runs outside the turn lifecycle, so the Agent's status
+   * stays `idle` and these durable markers are the only account of the wait.
+   * @param event - the event appended to this surface's session.
+   */
+  private applyEvent(event: SessionEvent): void {
+    if (event.type === 'compaction/start') this.compacting = true
+    else if (event.type === 'compaction/end') this.compacting = false
+    this.transcript.applyEvent(event)
+    this.refresh()
   }
 
   /** Install the global key bindings; the viewport owns scrolling keys. */
@@ -945,7 +961,7 @@ export class TuiApp implements InteractionHost {
     const busy = session.busy
     const status: TuiStatus = {
       workspace: this.workspaceLabel(),
-      state: busy ? 'running' : 'idle',
+      state: this.compacting ? 'compacting' : busy ? 'running' : 'idle',
       model: modelLabel(route.provider, route.model, this.providerCount),
       effort: route.reasoningEffort,
       context: measured.context,

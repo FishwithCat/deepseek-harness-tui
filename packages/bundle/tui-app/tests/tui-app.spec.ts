@@ -30,6 +30,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
+import { CompactionId } from '@deepseek-ai/dsh-compaction'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
 import UserApprovalService from '@deepseek-ai/dsh-user-approval'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -842,6 +843,35 @@ describe('TuiApp', () => {
 
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('Esc/Ctrl+C cancel'))).toBe(false)
+    })
+    await test.app.stop(0)
+  })
+
+  it('reports a manual compaction in the footer until its end marker', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    await test.ctx.plugin(CommandRuntime)
+    const compactionId = CompactionId('manual-compaction')
+    const session = owned(test).session
+    let settle: () => void = () => {}
+    test.ctx.commands.register({
+      name: 'compact',
+      description: 'Compact older conversation history',
+      handler: () => new Promise((resolve) => {
+        session.append('compaction/start', { compactionId, turn: null })
+        settle = () => {
+          session.append('compaction/end', { compactionId, turn: null })
+          resolve({ kind: 'success' as const, text: 'Compacted 2 history items.' })
+        }
+      }),
+    })
+    test.terminal.feed('/compact')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('● compacting'))).toBe(true)
+    })
+    settle()
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('○ idle'))).toBe(true)
     })
     await test.app.stop(0)
   })

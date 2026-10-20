@@ -1107,8 +1107,11 @@ export interface TuiSessionStats {
 export interface TuiStatus {
   /** Workspace directory, abbreviated against the home directory. */
   workspace: string
-  /** Agent lifecycle state. */
-  state: 'idle' | 'running'
+  /**
+   * Agent lifecycle state, or `compacting` while a compaction transaction runs
+   * outside the turn lifecycle and the Agent itself stays idle.
+   */
+  state: 'idle' | 'running' | 'compacting'
   /** Display label for the routed model, provider-qualified when the deployment registers several. */
   model: string
   /** Reasoning effort in force, when the route declares one. */
@@ -1266,10 +1269,24 @@ export class StatusBar implements Component {
   }
 
   private headText(): string {
-    const state = this.status.state === 'running' ? this.theme.accent('● running') : this.theme.dim('○ idle')
     const plan = this.status.plan === true ? `  ${this.theme.accent('plan')}` : ''
     const pasting = this.status.pasting === true ? `  ${this.theme.dim('pasting image…')}` : ''
-    return `${this.theme.dim(this.status.workspace)}  ${state}${plan}${pasting}`
+    return `${this.theme.dim(this.status.workspace)}  ${this.stateText()}${plan}${pasting}`
+  }
+
+  /**
+   * The lifecycle slot: `compacting` while a compaction transaction occupies an
+   * otherwise idle Agent, because no turn status changes until it settles.
+   * @returns the styled lifecycle label.
+   */
+  private stateText(): string {
+    switch (this.status.state) {
+      case 'running': return this.theme.accent('● running')
+      case 'compacting': return this.theme.accent('● compacting')
+      case 'idle': return this.theme.dim('○ idle')
+      /* v8 ignore next -- closed-union exhaustiveness guard */
+      default: return assertNever(this.status.state, 'footer state')
+    }
   }
 
   private modelText(): string {
