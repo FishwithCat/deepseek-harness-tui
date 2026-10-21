@@ -15,7 +15,10 @@
 | `dsh --profile sdk` | 通过 JSON-RPC stdio 为 SDK 客户端提供服务，直至关闭或断开连接。 |
 | `dsh --profile sdk-minimal` | 以独立极简 agent（智能体）配置树为 SDK 客户端提供服务。 |
 | `dsh web` | 启动 Web profile。 |
+| `dsh watch <session-id>` | 在另一个终端只读查看本地子 agent；参见 [TUI 查看说明](../../packages/bundle/tui-app/README.zh.md)。 |
 | `dsh plugin --profile <name> <pnpm args>` | 通过在 profile 目录中转发给 pnpm 来管理该 profile 的插件。 |
+
+`watch` 和 `plugin` 是保留子命令；启动同名 profile 时使用 `--profile watch` 或 `--profile plugin`。
 
 运行命令时所在的目录将作为默认 workspace 根目录。`web`、`headless`、`sdk`、`sdk-minimal` 和 `acp` profile 在首次使用时会从随附模板自动初始化。使用 `--from-default-profile` 可以基于这些模板之一，在非内置名称处创建或重置其他 profile；通过 `dsh plugin` 则可以初始化一个以 base 为基础的 profile。`desktop` 名称保留给 Electron 持有的 profile，因此 CLI（命令行界面）会拒绝针对它的启动和配置 dump 请求。npm CLI 也会拒绝其插件管理请求；[Desktop 内置命令](../desktop/README.zh.md#bundled-command-runtime)可以使用该安装的运行时管理已初始化的 Desktop profile。
 
@@ -26,6 +29,7 @@
 ```sh
 dsh --profile web --port 8080       # --port belongs to the web app
 dsh --profile tui --resume <id>     # example, assuming the tui profile is installed; --resume belongs to the terminal app
+dsh --profile tui --watch <id>      # view a local subagent read-only; --watch belongs to the terminal app
 dsh --profile headless "run the tests"
 dsh --profile web --help            # the web app's flags, not the launcher's
 dsh --help                          # the launcher's own help

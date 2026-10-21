@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-tui-app` 是 dsh 的交互式终端界面。运行 `dsh` 即在当前目录启动一个 Agent，其模型、工具、沙箱与审批默认值与其他界面完全一致，但以全屏终端应用呈现：可滚动的对话记录、位于固定页脚之上的输入框，以及报告工作区、上下文占用、路由模型、token 吞吐量、token 总量和缓存命中率的状态行。由于 Agent 运行在同一进程内，它不监听端口、也不启动服务。主要边界：每次调用只有一个会话，没有浏览器与文件侧栏。
+`dsh-tui-app` 是 dsh 的交互式终端界面。运行 `dsh` 即在当前目录启动一个 Agent，其模型、工具、沙箱与审批默认值与其他界面完全一致，但以全屏终端应用呈现：可滚动的对话记录、位于固定页脚之上的输入框，以及报告工作区、上下文占用、路由模型、token 吞吐量、token 总量和缓存命中率的状态行。Agent 运行在同一进程内。它唯一的监听器是首个本地 subagent 启动时的回环查看服务，使另一个终端可以读取该子会话的对话记录与实时流，而无需创建第二个 Agent。主要边界：每次调用只有一个会话，没有浏览器与文件侧栏。
 
 ## 目录
 
@@ -58,6 +58,20 @@ dsh
 | `Ctrl+L` | 全量重绘 |
 
 退出时——无运行时按 Ctrl+C、按 Ctrl+D，或执行 `/quit`——应用会恢复终端，并把会话 id 以 `dsh --resume <session-id>` 命令的形式打印出来，以便之后的调用继续同一段对话。恢复时——启动时执行该命令，或在输入框执行 `/resume`——应用会把已存储的对话恢复到对话记录中，然后才接受下一条提示，因此此前的提示、回复与工具行都会重新出现在屏幕上，而不只是留在模型上下文中。仅当部署挂载了会话持久化后端时才会打印该提示；没有后端时 `--resume` 无可打开的对象。
+
+### 查看子代理
+
+本地 subagent 启动后，TUI 会先发布回环连接记录，然后以普通提示显示查看命令：
+
+```
+· watch: dsh watch <session-id>
+```
+
+旧写法 `dsh tui --watch <session-id>` 仍可使用。
+
+在另一个终端执行该命令即可查看子会话。查看端是只读的：没有输入框，不发送提示、不审批工具，也不取消子代理。它显示已提交的对话记录，以及正在生成的文字、思考内容和工具调用，因此响应进行到一半时打开也能看到已经生成的部分。PageUp/PageDown、鼠标滚轮、选择复制、配色与配置的屏幕模式都与交互界面一致。Esc、Ctrl+C、Ctrl+D 仅退出查看。单次模型响应结束后连接仍保持打开。子代理本次执行结束后保留画面，连接仍在时继续显示该子会话的后续执行；连接中途断开时保留最后的可信画面并提示断开，不自动重连。
+
+底部显示子会话 ID、执行状态和连接状态：`online`、`history` 或 `disconnected`。第二行根据子会话已提交的事件显示可用的上下文占用、生成速度、累计计费 token 和缓存命中率，在线和历史模式均支持；断线后保留最后的统计值。没有在线记录，或记录对应的服务已不存在时，查看端通过持久化读句柄打开已存储日志并标记 `history`；它不取得写锁、不恢复 Agent，也不发起模型请求。错误令牌、不兼容协议或损坏记录会明确报错，而不是静默转成历史模式。两个终端必须使用同一用户、同一 `$DSH_HOME`，并具有兼容的 TUI 持久化配置。
 
 ### 命令
 
@@ -111,7 +125,7 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 
 ### 基于 base 的补丁面
 
-补丁叠加在 `dsh-base` 之上，不添加任何 host、HTTP 或浏览器行。它重述其他界面设置的编码 persona，插入启动 provider 与应用本身，并把 base 的面向模型的行保留在 host 平面：本界面是单会话的，其 Agent 进程级组合这些行，而非按会话组合。启动 provider（[`src/startup.ts`](src/startup.ts)）注入 `ctx.cmdlineArgs`（[`dsh-cmdline`](../../boot/cmdline/README.zh.md)），解析 `--resume`、`--provider` 与 `--model`，并提供 `tuiStartup`；应用行注入该服务，因此 `--help` 与被拒绝的调用完全不会挂载终端界面。补丁还以 `mode: timed` 形式挂载 `tool-ask-user`，因为 base 层提供提问服务但不提供提问工具。补丁还把 `session-log-deepseek` 设为 `enabled: false`，因此本 fork 让 Session 日志留在本机，而不会向官方 DeepSeek 请求附带上游的 `dsh_session_log` 后缀；需要该后缀的部署可通过 `--patch` 覆盖层或 profile 自带的 `cordis.patch.yml` 重新启用该行。
+补丁叠加在 `dsh-base` 之上，不添加任何 Host 或浏览器行。它重述其他界面设置的编码 persona，插入启动 provider 与应用本身，并把 base 的面向模型的行保留在 host 平面：本界面是单会话的，其 Agent 进程级组合这些行，而非按会话组合。启动 provider（[`src/startup.ts`](src/startup.ts)）注入 `ctx.cmdlineArgs`（[`dsh-cmdline`](../../boot/cmdline/README.zh.md)），解析 `--resume`、`--provider`、`--model` 与 `--watch`，并提供 `tuiStartup`；应用行注入该服务，因此 `--help` 与被拒绝的调用完全不会挂载终端界面。`--watch` 与会话参数互斥，并启动 [`src/watch/viewer.ts`](src/watch/viewer.ts) 而不是交互应用。首个本地 subagent 会启动由 [`src/watch/server.ts`](src/watch/server.ts) 拥有的进程内 Node HTTP 监听器；它只服务该 TUI 的本地 subagent 树，并随 TUI 退出。补丁还以 `mode: timed` 形式挂载 `tool-ask-user`，因为 base 层提供提问服务但不提供提问工具。补丁还把 `session-log-deepseek` 设为 `enabled: false`，因此本 fork 让 Session 日志留在本机，而不会向官方 DeepSeek 请求附带上游的 `dsh_session_log` 后缀；需要该后缀的部署可通过 `--patch` 覆盖层或 profile 自带的 `cordis.patch.yml` 重新启用该行。
 
 ### 源码索引
 
@@ -130,17 +144,24 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 | [`src/commands.ts`](src/commands.ts) | 斜杠命令目录、派发与模型目录 |
 | [`src/interactions.ts`](src/interactions.ts) | 审批与用户提问应答者 |
 | [`src/ansi.ts`](src/ansi.ts) | 语义样式与组件主题 |
+| [`src/watch/protocol.ts`](src/watch/protocol.ts) | NDJSON 线协议与连接记录校验 |
+| [`src/watch/record.ts`](src/watch/record.ts) | 私有运行时记录的发布与清理 |
+| [`src/watch/server.ts`](src/watch/server.ts) | 回环流服务、子会话状态与有界客户端队列 |
+| [`src/watch/client.ts`](src/watch/client.ts) | 带令牌的流读取与线数据校验 |
+| [`src/watch/history.ts`](src/watch/history.ts) | 查看端的历史读句柄访问 |
+| [`src/watch/viewer.ts`](src/watch/viewer.ts) | 只读查看界面及其页脚 |
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端补丁 |
-| — | 不发布运行时 invariant 伴随模块；应用不注册任何注册表，也不持有树内可变关系，其可观察契约就是终端界面本身。 |
+| — | 不发布运行时 invariant 伴随模块；应用不注册任何注册表，查看记录是可丢弃的运行时数据而非 Session 状态。 |
 | [`tests/tui-app.spec.ts`](tests/tui-app.spec.ts) | 输入路由、剪贴板粘贴、渲染、模态应答与退出 |
 | [`tests/transcript.spec.ts`](tests/transcript.spec.ts) | 事件折叠、页脚、placeholder 输入框与行宽边界 |
 | [`tests/clipboard.spec.ts`](tests/clipboard.spec.ts) | 各平台读取器路径与暂存文件适配器 |
 | [`tests/images.spec.ts`](tests/images.spec.ts) | 输入框标记解析 |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | 在真实 Loader 树上的命令行解析 |
+| [`tests/watch.spec.ts`](tests/watch.spec.ts) | 记录发布、鉴权流、连续性校验、历史回退与查看界面 |
 
 ### invariant 归属
 
-不发布 invariant 伴随模块：应用不贡献任何注册表，也不持有树内可变关系，其可观察契约是终端界面，而该界面由测试通过替换 Terminal 驱动。
+不发布 invariant 伴随模块：应用不贡献任何注册表，查看记录是带仅所有者可读令牌的可丢弃运行时数据，其可观察契约是终端界面，而该界面由测试通过替换 Terminal 驱动。
 
 </details>
 
@@ -194,6 +215,7 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 - **占用是估算值**——页脚百分比锚定最近一次 provider 报告的提示规模，并对表层此后的增减做启发式重新计价；它是给用户看的参考，不是计费或准入依据。
 - **退出由启动器拥有**——与所有界面一样，应用只能通过 `dsh` profile 启动，因为只有启动器提供有界退出请求。
 - **没有录制会话快照**——无密钥快照框架通过 stdio 驱动随附 profile，而本界面拥有一个终端；它的验收是包测试加一次伪终端运行，而不是快照夹具，因此终端布局的回归需要扩展界面测试，而不是重新录制快照。
+- **查看功能仅限本机第一版**——只能查看 TUI 启动的本地 subagent，包括嵌套 subagent。Web、headless、SDK 与远程机器会话不在范围内；查看端不自动重连；写入端不转发工具内部 stdout。原进程崩溃前已生成但尚未提交到 Session 日志的 token 无法恢复；查看端只保留已经显示的内容并报告中断。
 
 <a id="dev-note"></a>
 ### 开发备注

@@ -11,7 +11,7 @@
  * and `dsh --profile web -h` prints the web app's help, not this one's.
  *
  * `dsh <name>` abbreviates `dsh --profile <name>`; `plugin` manages a profile's
- * plugin dependencies by forwarding to pnpm.
+ * plugin dependencies by forwarding to pnpm; `watch` opens the TUI's read-only viewer.
  * @module @deepseek-ai/dsh/args
  */
 
@@ -107,6 +107,7 @@ Examples:
   dsh headless "run the tests"              answer one task, print the result, and exit
   dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay
   dsh tui --resume <session>                arguments after the launcher flags reach the app
+  dsh watch <session>                       watch a local subagent read-only from another terminal
   dsh web --help                            the web app's own flags and help
   dsh plugin --profile tui add <package>    install a plugin into the tui profile
 `
@@ -213,8 +214,21 @@ export function parseDshArgs(argv: readonly string[], version: string, manageDes
       })
   }
 
+  if (first === 'watch') {
+    const watch = program.command('watch').description('watch a local subagent session read-only in the terminal')
+    watch
+      .helpOption('-h, --help', 'show this help')
+      .argument('<session-id>', 'the local subagent session to watch')
+      .option('--patch <path>', 'extra patch-list overlay for the tui profile (repeatable)', collect)
+      .action((sessionId: string, options: BootOptions) => {
+        if (sessionId === '') watch.error('error: watch needs a session id')
+        if (program.opts<{ profile?: string }>().profile !== undefined) watch.error('error: watch uses the tui profile; do not pass --profile')
+        resolved = resolveBoot(watch, 'tui', options, ['--watch', sessionId])
+      })
+  }
+
   try {
-    const expanded = first !== undefined && !first.startsWith('-') && first !== 'plugin'
+    const expanded = first !== undefined && !first.startsWith('-') && first !== 'plugin' && first !== 'watch'
       ? ['--profile', ...argv]
       : argv
     program.parse(expanded, { from: 'user' })

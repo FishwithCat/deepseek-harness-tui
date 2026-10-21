@@ -54,9 +54,11 @@ function parseArguments(argsJson: string): Record<string, unknown> | undefined {
  * @param ctx - the application context carrying the optional `tools` service.
  * @param agent - reads the Agent whose scope owns the call; the registry resolves the
  *   definition the acting scope sees, so a scoped shadow renders as it executed.
+ *   Returning undefined reads the deployment's global tool view, which is what a
+ *   read-only viewer with no live Agent can present.
  * @returns the resolver the transcript folds with.
  */
-export function createToolPresentationResolver(ctx: Context, agent: () => object): ToolPresentationResolver {
+export function createToolPresentationResolver(ctx: Context, agent: () => object | undefined): ToolPresentationResolver {
   const resolve = <View>(
     name: string,
     argsJson: string,
@@ -64,7 +66,8 @@ export function createToolPresentationResolver(ctx: Context, agent: () => object
   ): View | undefined => {
     const args = parseArguments(argsJson)
     if (args === undefined) return undefined
-    const definition = ctx.get('tools')?.get(name, agent())
+    const scope = agent()
+    const definition = ctx.get('tools')?.get(name, scope)
     if (definition === undefined) return undefined
     try {
       return present(definition, args)

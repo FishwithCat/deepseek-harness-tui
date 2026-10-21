@@ -90,6 +90,25 @@ describe('tui command-line provider', () => {
     expect(values).toEqual({ resume: 'session-1', provider: 'p', model: 'm' })
   })
 
+  it('publishes a watch target', async () => {
+    const { values } = await bootStartup(['--watch', 'child-1'])
+    expect(values).toEqual({ watch: 'child-1' })
+  })
+
+  it('rejects an empty --watch value without publishing', async () => {
+    const { values, observed } = await bootStartup(['--watch', ''])
+    expect(observed.out).toContain('--watch needs a session id')
+    expect(values).toBeUndefined()
+    expect(observed.exits).toEqual([1])
+  })
+
+  it('rejects --watch combined with a session flag without publishing', async () => {
+    const { values, observed } = await bootStartup(['--watch', 'child-1', '--resume', 'parent-1'])
+    expect(observed.out).toContain('--watch cannot be combined with --resume')
+    expect(values).toBeUndefined()
+    expect(observed.exits).toEqual([1])
+  })
+
   it('rejects a half-specified route without publishing', async () => {
     const { values, observed } = await bootStartup(['--model', 'm'])
     expect(observed.out).toContain('--provider and --model must be given together')

@@ -11,6 +11,7 @@ Run `pnpm run gen-cli-help` to regenerate; run `pnpm run verify-cli-help` to che
 
 - [`dsh`](#dsh)
 - [`dsh plugin`](#dsh-plugin)
+- [`dsh watch`](#dsh-watch)
 - [`dsh acp`](#dsh-acp)
 - [`dsh headless`](#dsh-headless)
 - [`dsh sdk`](#dsh-sdk)
@@ -55,6 +56,7 @@ Examples:
   dsh headless "run the tests"              answer one task, print the result, and exit
   dsh tui --patch ./extra.yml               boot a custom profile with one extra overlay
   dsh tui --resume <session>                arguments after the launcher flags reach the app
+  dsh watch <session>                       watch a local subagent read-only from another terminal
   dsh web --help                            the web app's own flags and help
   dsh plugin --profile tui add <package>    install a plugin into the tui profile
 
@@ -79,6 +81,24 @@ Options:
   --profile <name>  the profile whose plugins to manage (initialized on first
                     use)
   -h, --help        show this help
+```
+
+<a id="dsh-watch"></a>
+## `dsh watch`
+
+Invocations: `dsh watch --help`
+
+```text
+Usage: dsh watch [options] <session-id>
+
+watch a local subagent session read-only in the terminal
+
+Arguments:
+  session-id      the local subagent session to watch
+
+Options:
+  --patch <path>  extra patch-list overlay for the tui profile (repeatable)
+  -h, --help      show this help
 ```
 
 <a id="dsh-acp"></a>
@@ -179,11 +199,14 @@ Options:
   --resume <session-id>  resume a stored session instead of starting a new one
   --provider <provider>  provider route for this session (requires --model)
   --model <model>        model id for this session (requires --provider)
+  --watch <session-id>   view a local subagent session read-only; cannot be
+                         combined with --resume, --provider, or --model
   -h, --help             show this help
 
 Examples:
   dsh                                        open the TUI in the current directory
   dsh --profile tui --resume <session-id>    continue a stored session
+  dsh watch <session-id>                     watch a local subagent read-only
   dsh --provider deepseek-official --model deepseek-v4-flash
 
 ```

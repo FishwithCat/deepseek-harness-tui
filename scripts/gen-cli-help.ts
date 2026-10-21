@@ -60,10 +60,10 @@ function addAlias(page: HelpPage, invocation: string, path: ReadonlySet<HelpPage
 /**
  * List the top-level help invocations in the order {@link collectCliHelp} visits them.
  * @param profiles - shipped profile names whose explicit and shorthand forms must be documented.
- * @returns launcher help, plugin help, then each profile's shorthand and `--profile` forms in sorted profile order.
+ * @returns launcher help, plugin and watch help, then each profile's shorthand and `--profile` forms in sorted profile order.
  */
 export function topLevelHelpArgs(profiles: readonly string[]): string[][] {
-  return [[], ['plugin'], ...[...profiles].sort().flatMap(profile => [[profile], ['--profile', profile]])]
+  return [[], ['plugin'], ['watch'], ...[...profiles].sort().flatMap(profile => [[profile], ['--profile', profile]])]
 }
 
 /** Help reads started ahead of an in-order consumer. */
@@ -148,7 +148,7 @@ export function prefetchHelp(
 }
 
 /**
- * Collect launcher, plugin, and profile help even when root help lists no commands.
+ * Collect launcher, plugin, watch, and profile help even when root help lists no commands.
  * @param readHelp - run one help invocation and return its complete stdout.
  * @param profiles - shipped profile names whose explicit and shorthand forms must be documented.
  * @returns distinct help pages with every discovered invocation and nested command.

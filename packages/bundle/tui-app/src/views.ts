@@ -1237,12 +1237,21 @@ export class StatusBar implements Component {
    * @returns the footer lines, each within `width`.
    */
   render(width: number): string[] {
-    const right = this.statsRight()
-    const left = this.contextPart()
     return [
       this.pairLine(this.headText(), this.modelText(), width),
-      right === '' ? truncateToWidth(left, width) : this.pairLine(left, right, width),
+      this.renderUsage(width),
     ]
+  }
+
+  /**
+   * Render context occupancy and whole-log token figures for either terminal surface.
+   * @param width - the viewport width in columns.
+   * @returns the usage line within `width`.
+   */
+  renderUsage(width: number): string {
+    const right = this.statsRight()
+    const left = this.contextPart()
+    return right === '' ? truncateToWidth(left, width) : this.pairLine(left, right, width)
   }
 
   /**

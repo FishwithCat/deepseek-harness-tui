@@ -15,7 +15,10 @@ The `dsh` command is the sole supported Node application launcher: profiles are 
 | `dsh --profile sdk` | Serve SDK clients over JSON-RPC stdio until shutdown or disconnect. |
 | `dsh --profile sdk-minimal` | Serve SDK clients with the standalone minimal agent tree. |
 | `dsh web` | Boot the Web profile. |
+| `dsh watch <session-id>` | Watch a local subagent read-only in another terminal; see [TUI watching](../../packages/bundle/tui-app/README.md). |
 | `dsh plugin --profile <name> <pnpm args>` | Manage a profile's plugins by forwarding to pnpm in the profile directory. |
+
+`watch` and `plugin` are reserved subcommands; use `--profile watch` or `--profile plugin` to boot profiles with those names.
 
 The invoking directory is the default workspace root. The `web`, `headless`, `sdk`, `sdk-minimal`, and `acp` profiles auto-initialize on first use from shipped templates. Create or reset another profile at a non-shipped name with `--from-default-profile`, or initialize a base-backed profile through `dsh plugin`. The `desktop` name is reserved for the Electron-owned profile, so the CLI rejects boot and config-dump requests for it. The npm CLI also rejects its plugin-management requests; the [Desktop-installed command](../desktop/README.md#bundled-command-runtime) can manage the initialized Desktop profile using that installation’s runtime.
 
@@ -26,6 +29,7 @@ The launcher parses only its own flags and hands everything after them to the bo
 ```sh
 dsh --profile web --port 8080       # --port belongs to the web app
 dsh --profile tui --resume <id>     # example, assuming the tui profile is installed; --resume belongs to the terminal app
+dsh --profile tui --watch <id>      # view a local subagent read-only; --watch belongs to the terminal app
 dsh --profile headless "run the tests"
 dsh --profile web --help            # the web app's flags, not the launcher's
 dsh --help                          # the launcher's own help

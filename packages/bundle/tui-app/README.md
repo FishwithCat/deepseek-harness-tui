@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-tui-app` is the interactive terminal surface for dsh. Run `dsh` and one Agent starts in the current directory with the same model, tools, sandbox, and approval defaults as every other surface — but rendered as a full-screen terminal application: a scrolling transcript, a composer that stays above a pinned footer, and status lines that report the workspace, context occupancy, routed model, token throughput, total tokens, and cache-hit rate. It opens no port and starts no server, because the Agent runs in the same process. The main boundary: one session per invocation, with no browser or file sidebar.
+`dsh-tui-app` is the interactive terminal surface for dsh. Run `dsh` and one Agent starts in the current directory with the same model, tools, sandbox, and approval defaults as every other surface — but rendered as a full-screen terminal application: a scrolling transcript, a composer that stays above a pinned footer, and status lines that report the workspace, context occupancy, routed model, token throughput, total tokens, and cache-hit rate. A loopback watch service lets another terminal read a local subagent's transcript and live stream without a second Agent. The main boundary: one session per invocation, with no browser or file sidebar.
 
 ## Table of Contents
 
@@ -58,6 +58,20 @@ Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is 
 | `Ctrl+L` | Repaint from scratch |
 
 Exiting — Ctrl+C with nothing running, Ctrl+D, or `/quit` — restores the terminal and prints the session id as a `dsh --resume <session-id>` command, so a later invocation continues the same conversation. Resuming — that command at startup, or `/resume` in the composer — restores the stored conversation into the transcript before the composer accepts the next prompt, so the earlier prompts, replies, and Tool rows are back on screen instead of only their effects on the model. The hint is printed only where the deployment mounts a session-persistence backend; without one there is nothing for `--resume` to open.
+
+### Watching a subagent
+
+When a local subagent starts, the TUI publishes a loopback connection record and then prints a watch command as an ordinary notice:
+
+```
+· watch: dsh watch <session-id>
+```
+
+The earlier `dsh tui --watch <session-id>` spelling also works.
+
+Run that command in another terminal to follow the child. The viewer is read-only: it has no composer and does not send prompts, approve Tools, or cancel the child. It shows the committed transcript plus the text, reasoning, and Tool calls currently streaming, so opening it in the middle of a response shows the prefix already generated. PageUp/PageDown, the mouse wheel, selection copy, the palette, and the configured screen mode behave as they do in the interactive surface. Esc, Ctrl+C, and Ctrl+D only leave the viewer. Completing a model response keeps the connection open. A finished execution keeps its screen and the stream stays open for a later execution of the same child; a lost connection keeps the last trusted screen and reports the disconnect instead of reconnecting.
+
+The footer names the child session id, its execution state, and the connection state: `online`, `history`, or `disconnected`. Its second line shows available context occupancy, decode throughput, total billed tokens, and cache-hit share from the child's committed events, in both online and history modes; disconnecting preserves the last figures. When no live service is published, or the published service is gone, the viewer opens the stored log through the persistence read handle and marks `history`; it takes no write lock, restores no Agent, and issues no model request. A bad token, an incompatible protocol, or a corrupt record is reported rather than silently downgraded to history. Both terminals must use the same user, the same `$DSH_HOME`, and compatible TUI persistence settings.
 
 ### Commands
 
@@ -111,7 +125,7 @@ Ctrl+V reads the system clipboard through the platform's own reader ([`src/clipb
 
 ### Patch surface over base
 
-The patch rides over `dsh-base` and adds no host, HTTP, or browser row. It restates the coding persona the other surfaces set, inserts the startup provider and the app, and leaves the base's model-facing rows in the host plane: this surface is single-session, so its Agent composes them process-wide instead of per session. The startup provider ([`src/startup.ts`](src/startup.ts)) injects `ctx.cmdlineArgs` ([`dsh-cmdline`](../../boot/cmdline/README.md)), parses `--resume`, `--provider`, and `--model`, and provides `tuiStartup`; the app row injects that service, so `--help` and a rejected invocation mount no terminal UI at all. The patch also mounts `tool-ask-user` in its `mode: timed` form, because the base layer provides the question service but no question tool. The patch also sets `session-log-deepseek` to `enabled: false`, so this fork keeps Session logs on the machine instead of contributing the upstream `dsh_session_log` suffix to official DeepSeek requests; a deployment that wants that suffix re-enables the row through a `--patch` overlay or the profile's own `cordis.patch.yml`.
+The patch rides over `dsh-base` and adds no Host or browser row. It restates the coding persona the other surfaces set, inserts the startup provider and the app, and leaves the base's model-facing rows in the host plane: this surface is single-session, so its Agent composes them process-wide instead of per session. The startup provider ([`src/startup.ts`](src/startup.ts)) injects `ctx.cmdlineArgs` ([`dsh-cmdline`](../../boot/cmdline/README.md)), parses `--resume`, `--provider`, `--model`, and `--watch`, and provides `tuiStartup`; the app row injects that service, so `--help` and a rejected invocation mount no terminal UI at all. `--watch` is mutually exclusive with the session flags and boots [`src/watch/viewer.ts`](src/watch/viewer.ts) instead of the interactive app. The first local subagent starts the in-process Node HTTP listener owned by [`src/watch/server.ts`](src/watch/server.ts); it serves only that TUI's local subagent tree and exits with the TUI. The patch also mounts `tool-ask-user` in its `mode: timed` form, because the base layer provides the question service but no question tool. The patch also sets `session-log-deepseek` to `enabled: false`, so this fork keeps Session logs on the machine instead of contributing the upstream `dsh_session_log` suffix to official DeepSeek requests; a deployment that wants that suffix re-enables the row through a `--patch` overlay or the profile's own `cordis.patch.yml`.
 
 ### Source map
 
@@ -130,17 +144,24 @@ The patch rides over `dsh-base` and adds no host, HTTP, or browser row. It resta
 | [`src/commands.ts`](src/commands.ts) | Slash-command catalog, dispatch, and model catalog |
 | [`src/interactions.ts`](src/interactions.ts) | Approval and user-question answerers |
 | [`src/ansi.ts`](src/ansi.ts) | Semantic styles and the component themes |
+| [`src/watch/protocol.ts`](src/watch/protocol.ts) | NDJSON wire vocabulary and record validation |
+| [`src/watch/record.ts`](src/watch/record.ts) | Private runtime record publication and cleanup |
+| [`src/watch/server.ts`](src/watch/server.ts) | Loopback stream service, child state, and bounded client queues |
+| [`src/watch/client.ts`](src/watch/client.ts) | Authenticated stream reader and wire validation |
+| [`src/watch/history.ts`](src/watch/history.ts) | Read-handle history access for the viewer |
+| [`src/watch/viewer.ts`](src/watch/viewer.ts) | Read-only watch surface and its footer |
 | [`cordis.patch.yml`](cordis.patch.yml) | The terminal patch over `dsh-base` |
-| — | No runtime invariant companion is published; the app registers no registry and holds no intra-tree relation to audit, because its observable contract is the terminal surface itself. |
+| — | No runtime invariant companion is published; the app registers no registry, and its watch records are disposable runtime data rather than Session state. |
 | [`tests/tui-app.spec.ts`](tests/tui-app.spec.ts) | Composer routing, clipboard paste, rendering, modal answers, and exit |
 | [`tests/transcript.spec.ts`](tests/transcript.spec.ts) | The event fold, the footer, the placeholder composer, and line-width bounds |
 | [`tests/clipboard.spec.ts`](tests/clipboard.spec.ts) | Every platform reader path and the staging-file adapters |
 | [`tests/images.spec.ts`](tests/images.spec.ts) | Composer marker parsing |
 | [`tests/startup.spec.ts`](tests/startup.spec.ts) | Command-line parsing over a real Loader tree |
+| [`tests/watch.spec.ts`](tests/watch.spec.ts) | Record publication, authenticated streaming, continuity checks, history fallback, and the viewer |
 
 ### Invariant ownership
 
-No invariant companion is published: the app contributes no registry and holds no mutable relation inside the tree, and its observable contract is the terminal surface, which the surface tests drive through a substituted Terminal.
+No invariant companion is published: the app contributes no registry, its watch records are disposable runtime data with an owner-only access token, and its observable contract is the terminal surface, which the surface tests drive through a substituted Terminal.
 
 </details>
 
@@ -194,6 +215,7 @@ These limits define what the terminal surface does not do. They are current cons
 - **Occupancy is an estimate** — the footer's percentage anchors on the last provider-reported prompt size and heuristically reprices what the surface gained or lost since; it is a reference for the user, not a billing or admission input.
 - **Launcher-owned exit** — like every surface, the app starts only through the `dsh` profile, because only the launcher provides the bounded exit request.
 - **No recorded-session snapshot** — the keyless snapshot harness drives shipped profiles over stdio, while this surface owns a terminal; its acceptance is the package tests plus a pseudo-terminal run rather than a snapshot fixture, so a regression in terminal layout needs the surface tests to be extended rather than a re-recorded snapshot.
+- **Watching is local and first-version** — only local subagents started by a TUI, including nested ones, are viewable. Web, headless, SDK, and remote-machine sessions are out of scope, the viewer never reconnects automatically, and the writer side does not relay raw tool stdout. Tokens generated before the original process crashes but not committed to the Session log are not recoverable; the viewer keeps only what it already displayed and reports the interruption.
 
 <a id="dev-note"></a>
 ### Dev Note

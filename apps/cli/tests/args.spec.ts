@@ -30,6 +30,34 @@ function exitCode(argv: string[], manageDesktopProfile = false): number {
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('parseDshArgs', () => {
+  it('routes watch to the tui viewer regardless of the default profile', () => {
+    vi.stubEnv('DSH_DEFAULT_PROFILE', 'web')
+    try {
+      expect(parse(['watch', 'child-id']))
+        .toEqual({ mode: 'profile', profile: 'tui', patches: [], args: ['--watch', 'child-id'] })
+      expect(parse(['watch', '--patch', 'extra.yml', 'child-id']))
+        .toEqual({ mode: 'profile', profile: 'tui', patches: ['extra.yml'], args: ['--watch', 'child-id'] })
+      expect(parse(['--profile', 'watch', 'task'])).toMatchObject({ profile: 'watch', args: ['task'] })
+      expect(parse(['headless', 'watch'])).toMatchObject({ profile: 'headless', args: ['watch'] })
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  })
+
+  it.each([
+    ['watch'], ['watch', ''], ['watch', 'one', 'two'],
+    ['watch', '--resume', 'one'], ['watch', '--profile', 'web', 'one'],
+    ['watch', '--dump-config', 'one'],
+  ])('rejects invalid watch invocation %j', (...argv: string[]) => {
+    expect(exitCode(argv)).toBe(1)
+  })
+
+  it('prints dedicated watch help', () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+    expect(exitCode(['watch', '--help'])).toBe(0)
+    expect(stdout.mock.calls.map(([chunk]) => String(chunk)).join('')).toContain('Usage: dsh watch [options] <session-id>')
+  })
+
   it('routes profile boots and shorthand, handing the rest to the app', () => {
     expect(parse(['--profile', 'tui'])).toEqual({ mode: 'profile', profile: 'tui', patches: [], args: [] })
     expect(parse(['--profile', 'tui', '--patch', 'a.yml', '--patch', 'b.yml']))

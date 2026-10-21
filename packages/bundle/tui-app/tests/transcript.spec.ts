@@ -521,6 +521,20 @@ describe('TerminalTranscript timed questions', () => {
 })
 
 describe('TranscriptView', () => {
+  it('renders watch commands as ordinary notices and wraps them within the viewport', () => {
+    const transcript = new TerminalTranscript()
+    transcript.notice('info', 'watch: dsh watch child-id')
+    const plain = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
+    expect(plain.render(32).join('\n')).toMatchInlineSnapshot(`
+      "· watch: dsh watch child-id"
+    `)
+    for (const width of [1, 12, 32]) {
+      expect(plain.render(width).every(line => visibleWidth(line) <= width)).toBe(true)
+    }
+    const colored = new TranscriptView(transcript, createTheme({ enabled: true, palette: 'dark' })).render(32)
+    expect(colored.every(line => !line.includes('\u001b[1m'))).toBe(true)
+  })
+
   it('keeps every rendered line inside the viewport width', async () => {
     const session = await makeSession()
     session.append('turn/start', { turn: 1 })

@@ -3688,7 +3688,7 @@ export type TokenMeterConfig = Record<string, never>
 ## `@deepseek-ai/dsh-tool-ask-user`
 
 - `inject`: `tools` · `userQuestions`
-- `source`: [`packages/interaction/tool-ask-user/src/index.ts:16`](../packages/interaction/tool-ask-user/src/index.ts)
+- `source`: [`packages/interaction/tool-ask-user/src/index.ts:17`](../packages/interaction/tool-ask-user/src/index.ts)
 
 ```ts config-catalog
 /** Cordis row selecting the tool schema and its default foreground wait. */

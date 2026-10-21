@@ -478,10 +478,10 @@ export class TerminalTranscript {
   /**
    * Append an app-level notice row.
    * @param level - whether the row reads as a failure.
-   * @param text - the one-line account, or a multi-line block.
+   * @param text - the one-line account.
    * @returns always true, since a row was appended.
    */
-  notice(level: 'info' | 'error', text: string): boolean {
+  notice(level: NoticeEntry['level'], text: string): boolean {
     this.rows.push({ kind: 'notice', id: this.nextId++, level, text })
     return this.changed()
   }

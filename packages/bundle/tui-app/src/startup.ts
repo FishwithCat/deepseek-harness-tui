@@ -1,6 +1,6 @@
 /**
  * The terminal app's command-line provider: it parses the `dsh --profile tui`
- * flag family (`--resume`, `--provider`, `--model`) and its `--help` text, then
+ * flag family (`--resume`, `--provider`, `--model`, `--watch`) and its `--help` text, then
  * publishes the values as {@link TUI_STARTUP_SERVICE}. The TUI row injects that
  * service, so a help or usage invocation — which publishes nothing — mounts no
  * terminal UI.
@@ -28,6 +28,8 @@ export interface TuiStartupValues {
   provider?: string | undefined
   /** Model id this session starts on, absent when the deployment default applies. */
   model?: string | undefined
+  /** Stored child session id to view read-only, absent for an interactive session. */
+  watch?: string | undefined
 }
 
 /** The flag family as commander parsed it. */
@@ -35,6 +37,7 @@ interface TuiOptions {
   model?: string
   provider?: string
   resume?: string
+  watch?: string
 }
 
 /**
@@ -49,10 +52,12 @@ function tuiCommand(): Command {
     .option('--resume <session-id>', 'resume a stored session instead of starting a new one')
     .option('--provider <provider>', 'provider route for this session (requires --model)')
     .option('--model <model>', 'model id for this session (requires --provider)')
+    .option('--watch <session-id>', 'view a local subagent session read-only; cannot be combined with --resume, --provider, or --model')
     .addHelpText('after', `
 Examples:
   dsh                                        open the TUI in the current directory
   dsh --profile tui --resume <session-id>    continue a stored session
+  dsh watch <session-id>                     watch a local subagent read-only
   dsh --provider deepseek-official --model deepseek-v4-flash
 `)
 }
@@ -70,10 +75,16 @@ export function apply(ctx: Context): void {
     if ((options.provider === undefined) !== (options.model === undefined)) {
       program.error('error: --provider and --model must be given together')
     }
+    if (options.watch === '') program.error('error: --watch needs a session id')
+    if (options.watch !== undefined
+      && (options.resume !== undefined || options.provider !== undefined || options.model !== undefined)) {
+      program.error('error: --watch cannot be combined with --resume, --provider, or --model')
+    }
     ctx.provide(TUI_STARTUP_SERVICE, {
       ...options.resume === undefined ? {} : { resume: options.resume },
       ...options.provider === undefined ? {} : { provider: options.provider },
       ...options.model === undefined ? {} : { model: options.model },
+      ...options.watch === undefined ? {} : { watch: options.watch },
     } satisfies TuiStartupValues)
   })
   parseCmdline(ctx, program)

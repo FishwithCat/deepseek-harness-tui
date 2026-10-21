@@ -34,19 +34,20 @@ describe('CLI help discovery', () => {
     expect(result.output).toBe(help.replaceAll('\r\n', '\n'))
   })
 
-  it('includes plugin, both profile forms, and their nested commands when launcher help has no command list', async () => {
+  it('includes plugin, watch, both profile forms, and their nested commands when launcher help has no command list', async () => {
     const visited: string[] = []
     const pages = await collectCliHelp(async (args) => {
       visited.push(args.join(' '))
       if (args.length === 0) return 'Usage: dsh [--profile] <name>\n'
       if (args[0] === 'plugin') return 'Usage: dsh plugin --profile <name> <args...>\n'
+      if (args[0] === 'watch') return 'Usage: dsh watch <session-id>\n'
       const selected = args[0] === '--profile' ? args.slice(1) : args
       if (selected[1] === 'nested') return 'Usage: nested\n'
       return `Usage: ${selected[0]} [command]\n\nCommands:\n  nested  Run the nested command\n`
     }, ['web'])
-    expect(visited).toEqual(['', 'plugin', 'web', 'web nested', '--profile web'])
+    expect(visited).toEqual(['', 'plugin', 'watch', 'web', 'web nested', '--profile web'])
     expect(pages.map(page => page.invocations)).toEqual([
-      ['dsh'], ['dsh plugin'], ['dsh web', 'dsh --profile web'],
+      ['dsh'], ['dsh plugin'], ['dsh watch'], ['dsh web', 'dsh --profile web'],
       ['dsh web nested', 'dsh --profile web nested'],
     ])
   })
@@ -58,12 +59,13 @@ describe('CLI help discovery', () => {
       visited.push(args.join(' '))
       if (args.length === 0) return 'Usage: dsh\n'
       if (args[0] === 'plugin') return 'Usage: dsh plugin\n'
+      if (args[0] === 'watch') return 'Usage: dsh watch <session-id>\n'
       const selected = args[0] === '--profile' ? args.slice(1) : args
       return selected[1] === 'serve' || selected[1] === 's' ? 'Usage: web serve\n' : parent
     }, ['web'])
-    expect(visited).toEqual(['', 'plugin', 'web', 'web serve', 'web s', 'web help', '--profile web'])
+    expect(visited).toEqual(['', 'plugin', 'watch', 'web', 'web serve', 'web s', 'web help', '--profile web'])
     expect(pages.map(page => page.invocations)).toEqual([
-      ['dsh'], ['dsh plugin'], ['dsh web', 'dsh web help', 'dsh --profile web', 'dsh --profile web help'],
+      ['dsh'], ['dsh plugin'], ['dsh watch'], ['dsh web', 'dsh web help', 'dsh --profile web', 'dsh --profile web help'],
       ['dsh web serve', 'dsh web s', 'dsh --profile web serve', 'dsh --profile web s'],
     ])
   })
@@ -79,7 +81,7 @@ describe('CLI help discovery', () => {
       return `Usage: ${args.join(' ')}\n`
     }, ['web', 'acp'])
     expect(topLevelHelpArgs(['web', 'acp']).map(args => args.join(' '))).toEqual(visited)
-    expect(visited).toEqual(['', 'plugin', 'acp', '--profile acp', 'web', '--profile web'])
+    expect(visited).toEqual(['', 'plugin', 'watch', 'acp', '--profile acp', 'web', '--profile web'])
   })
 })
 

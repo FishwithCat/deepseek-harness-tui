@@ -37,8 +37,10 @@ import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import * as AskUserTool from '@deepseek-ai/dsh-tool-ask-user'
 import { TuiApp, internals, reservesCtrlV, wheelScroll } from '../src/app.ts'
 import { copyClipboardText } from '../src/clipboard.ts'
+import { readWatchRecord } from '../src/watch/record.ts'
 import type { ClipboardImage } from '../src/clipboard.ts'
 import { apply, inject, name, TUI_STARTUP_SERVICE } from '../src/index.ts'
+import { WatchApp } from '../src/watch/viewer.ts'
 import type { Config } from '../src/config.ts'
 import { textOfBlocks } from '../src/transcript.ts'
 import type { TranscriptEntry } from '../src/transcript.ts'
@@ -53,6 +55,7 @@ const contexts: Context[] = []
 const homes: string[] = []
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   Object.assign(internals, originalInternals)
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose()
   for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true })
@@ -258,7 +261,11 @@ async function bench(
   }
   ctx.agents.setFactory({
     async createAgent(ownerCtx: Context, createOptions: CreateAgentOptions): Promise<AgentHandle> {
-      return await publishAgent(ownerCtx, ctx.sessions.create(createOptions.sessionId), createOptions)
+      const session = ctx.sessions.create(
+        createOptions.sessionId,
+        createOptions.meta === undefined ? undefined : { meta: createOptions.meta },
+      )
+      return await publishAgent(ownerCtx, session, createOptions)
     },
     async resume(ownerCtx: Context, resumeOptions: ResumeAgentOptions): Promise<AgentHandle> {
       if (options.resumeError !== undefined) throw new Error(options.resumeError)
@@ -821,6 +828,40 @@ describe('TuiApp', () => {
     await vi.waitFor(() => { expect(test.interruptedSubagents).toEqual([SessionId('child-1')]) })
     expect(test.exits).toEqual([])
     await test.app.stop(0)
+  })
+
+  it('publishes the watch command only after a local subagent record lands', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { subagents: true, screen: 'alternate' })
+    const home = await mkdtemp(join(tmpdir(), 'dsh-tui-watch-'))
+    homes.push(home)
+    vi.stubEnv('DSH_HOME', home)
+    const parent = owned(test)
+    const child = await test.ctx.agents.create({
+      sessionId: SessionId('watch-child'),
+      parentAgent: parent,
+      meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
+    })
+    test.ctx.provide('sessionQuery', {
+      async observeSession() {
+        return {
+          header: child.agent.session.header,
+          events: [],
+          cursor: -1,
+          [Symbol.dispose]() {},
+        }
+      },
+    } as never)
+    test.startSubagent(child.agent.id)
+
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('dsh watch watch-child'))).toBe(true)
+    })
+    const rows = screen(test.app)
+    expect(rows.filter(row => row.includes('watch-child'))).toEqual(['· watch: dsh watch watch-child'])
+    const record = await readWatchRecord('watch-child')
+    expect(record?.sessionId).toBe('watch-child')
+    await test.app.stop(0)
+    expect(await readWatchRecord('watch-child')).toBeUndefined()
   })
 
   it('reports a running session and offers cancel while only a subagent works', async () => {
@@ -1542,6 +1583,67 @@ describe('TuiApp plan mode', () => {
     test.terminal.feed(SHIFT_TAB)
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('plan mode on') })
     await test.app.stop(0)
+  })
+})
+
+describe('TuiApp boot selection', () => {
+  it('requires the launcher and startup services before selecting a surface', () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    expect(() => { apply(ctx, { screen: 'inline', colorScheme: 'auto' }) }).toThrow('launcher must provide ctx.appExit')
+    ctx.provide('appExit', () => {})
+    expect(() => { apply(ctx, { screen: 'inline', colorScheme: 'auto' }) }).toThrow('startup provider must publish tuiStartup')
+  })
+
+  it('boots the watch surface for a watch invocation', () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    ctx.provide('appExit', () => {})
+    ctx.provide(TUI_STARTUP_SERVICE, { watch: 'child-1' })
+    const boot = vi.spyOn(WatchApp, 'boot').mockResolvedValue({} as WatchApp)
+    try {
+      apply(ctx, { screen: 'inline', colorScheme: 'auto' })
+      expect(boot).toHaveBeenCalledWith(expect.objectContaining({ watch: 'child-1' }))
+    } finally {
+      boot.mockRestore()
+    }
+  })
+
+  it('reports a non-Error boot rejection through stderr and the launcher exit', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    const exits: number[] = []
+    let written = ''
+    internals.stderr = { write: (chunk: string) => { written += chunk; return true } }
+    ctx.provide('appExit', (code: number) => { exits.push(code) })
+    ctx.provide(TUI_STARTUP_SERVICE, {})
+    const boot = vi.spyOn(TuiApp, 'boot').mockRejectedValue('boot failed')
+    try {
+      apply(ctx, { screen: 'inline', colorScheme: 'auto' })
+      await vi.waitFor(() => { expect(written).toContain('dsh: boot failed') })
+      expect(exits).toEqual([1])
+    } finally {
+      boot.mockRestore()
+    }
+  })
+
+  it('reports a rejected interactive boot through stderr and the launcher exit', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    const exits: number[] = []
+    let written = ''
+    internals.stderr = { write: (chunk: string) => { written += chunk; return true } }
+    ctx.provide('appExit', (code: number) => { exits.push(code) })
+    ctx.provide(TUI_STARTUP_SERVICE, {})
+    const boot = vi.spyOn(TuiApp, 'boot').mockRejectedValue(new Error('boot failed'))
+    try {
+      apply(ctx, { screen: 'inline', colorScheme: 'auto' })
+      await vi.waitFor(() => { expect(written).toContain('dsh: boot failed') })
+      expect(exits).toEqual([1])
+      expect(boot).toHaveBeenCalled()
+    } finally {
+      boot.mockRestore()
+    }
   })
 })
 

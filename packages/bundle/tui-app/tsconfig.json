@@ -57,6 +57,9 @@
       "path": "../../llm/token-meter"
     },
     {
+      "path": "../../session-query/session-query"
+    },
+    {
       "path": "../../session/session-persistence"
     },
     {
@@ -70,6 +73,9 @@
     },
     {
       "path": "../../util/brand"
+    },
+    {
+      "path": "../../util/home-paths"
     },
     {
       "path": "../../util/values"

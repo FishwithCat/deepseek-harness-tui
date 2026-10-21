@@ -16,6 +16,7 @@ import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-cmdline'
 import { internals, TuiApp } from './app.ts'
+import { WatchApp } from './watch/viewer.ts'
 import { Config } from './config.ts'
 import { TUI_STARTUP_SERVICE } from './startup.ts'
 import type { TuiStartupValues } from './startup.ts'
@@ -47,7 +48,10 @@ export function apply(ctx: Context, config: Config): void {
   if (invocation === undefined) {
     throw new Error('tui-app: the startup provider must publish tuiStartup before this row mounts')
   }
-  void TuiApp.boot({ ctx, config, cwd: process.cwd(), invocation, exit }).catch((error: unknown) => {
+  const boot = invocation.watch === undefined
+    ? TuiApp.boot({ ctx, config, cwd: process.cwd(), invocation, exit })
+    : WatchApp.boot({ ctx, config, watch: invocation.watch, exit })
+  void boot.catch((error: unknown) => {
     internals.stderr.write(`dsh: ${error instanceof Error ? error.message : String(error)}\n`)
     exit(1)
   })

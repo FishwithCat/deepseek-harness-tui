@@ -39,9 +39,8 @@ import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-working-directory'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { ContextPressureProjection, TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
-// Type-only: activates the `sessionStats` projection key the footer's throughput reads.
-import type { SessionStatsProjection } from '@deepseek-ai/dsh-session-stats/client'
+import { measureUsage } from './measurement.ts'
+import type { TuiMeasurement } from './measurement.ts'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { createTheme, editorTheme, resolveColorScheme, selectListTheme, supportsColor } from './ansi.ts'
 import type { TuiTheme } from './ansi.ts'
@@ -60,8 +59,9 @@ import type { TuiSessionOptions } from './session.ts'
 import type { TuiStartupValues } from './startup.ts'
 import { createToolPresentationResolver } from './tool-view.ts'
 import { DetailBody, KeyboardSelectList, MULTI_SELECT_HINT_ROWS, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptHeadingRows, promptPanelRows } from './views.ts'
-import type { PromptTitle, TuiContextStatus, TuiSessionStats, TuiStatus } from './views.ts'
+import type { PromptTitle, TuiStatus } from './views.ts'
 import { TerminalTranscript } from './transcript.ts'
+import { SubagentWatchHub } from './watch/server.ts'
 
 /** Longest stored-session list rendered by `/sessions`. */
 const SESSION_LIST_LIMIT = 20
@@ -80,22 +80,6 @@ const PINNED_FOOTER_ROWS = 5
 const PROMPT_LIST_LAYOUT: SelectListLayoutOptions = {
   minPrimaryColumnWidth: 1,
   maxPrimaryColumnWidth: Number.MAX_SAFE_INTEGER,
-}
-
-/** Billing buckets a session without the `tokenUsage` unit is treated as having. */
-const ZERO_USAGE: TokenUsageProjection = {
-  uncachedInputTokens: 0,
-  outputTokens: 0,
-  cacheReadTokens: 0,
-  cacheWriteTokens: 0,
-}
-
-/** Footer facts derived from one projection snapshot, cached against the Session and its log position. */
-interface TuiMeasurement {
-  /** Context occupancy, absent until the meter reports both a pressure and a capacity. */
-  context: TuiContextStatus | undefined
-  /** Whole-log throughput and token totals; zero counts render nothing. */
-  stats: TuiSessionStats
 }
 
 /** Process-facing effects the app needs; tests substitute them. */
@@ -192,6 +176,8 @@ export class TuiApp implements InteractionHost {
   private readonly transcript: TerminalTranscript
   private readonly transcriptView: TranscriptView
   private readonly statusBar: StatusBar
+  /** Local subagent watch service; owns the HTTP listener and runtime records. */
+  private readonly watch: SubagentWatchHub
   private readonly editor: Editor
   private readonly composer: PlaceholderEditor
   private readonly disposers: (() => void)[] = []
@@ -230,6 +216,7 @@ export class TuiApp implements InteractionHost {
       palette: resolveColorScheme(options.config.colorScheme, process.env),
     })
     this.transcript = new TerminalTranscript(createToolPresentationResolver(options.ctx, () => this.session.agent))
+    this.watch = new SubagentWatchHub(options.ctx)
     this.providerCount = options.ctx.llm.listProviders().length
     this.autoCompaction = options.ctx.get('compaction')?.autoCompactionEnabled ?? false
     this.viewport = options.config.screen === 'alternate' ? new TuiAltScreen(terminal, true, undefined, {
@@ -296,6 +283,10 @@ export class TuiApp implements InteractionHost {
     }
     this.registerKeys()
     this.options.ctx.effect(() => () => { this.teardown() }, 'tui-app.terminal')
+    this.options.ctx.effect(() => () => this.watch.close().catch((error: unknown) => {
+      this.options.ctx.logger.warn(`subagent watch: cleanup failed: ${String(error)}`)
+    }), 'tui-app.subagent-watch')
+    this.activateWatch(this.session)
     this.refresh()
     this.tui.setFocus(this.composer)
     this.tui.start()
@@ -310,6 +301,9 @@ export class TuiApp implements InteractionHost {
     if (this.leaving) return
     this.leaving = true
     this.teardown()
+    await this.watch.close().catch((error: unknown) => {
+      this.options.ctx.logger.warn(`subagent watch: cleanup failed: ${String(error)}`)
+    })
     // The hint is honest only where a backend will store the session the
     // command names; without one there is nothing for `--resume` to open.
     const resumable = this.options.ctx.get('sessionPersistence') !== undefined
@@ -944,6 +938,12 @@ export class TuiApp implements InteractionHost {
     for (const dispose of this.sessionDisposers.splice(0)) dispose()
     this.transcript.reset()
     this.transcriptView.invalidate()
+    try {
+      await this.watch.rebind(next.session.id)
+    } catch (error: unknown) {
+      // A stale record must not block moving to the replacement session.
+      this.options.ctx.logger.warn(`subagent watch: rebind failed: ${String(error)}`)
+    }
     this.session = next
     await this.attach(next)
     this.refresh()
@@ -1015,24 +1015,7 @@ export class TuiApp implements InteractionHost {
     if (cached !== undefined && cached.session === session && cached.seq === session.seq) return cached.value
     const values = this.options.ctx.get('sessionProjections')
       ?.snapshot(session, ['contextPressure', 'tokenUsage', 'sessionStats']).values
-    const pressure: ContextPressureProjection | undefined = values?.['contextPressure']
-    const window = pressure?.contextWindow
-    const tokens = pressure?.projectedTokens ?? pressure?.pressureTokens
-    const usage: TokenUsageProjection = values?.['tokenUsage'] ?? ZERO_USAGE
-    const whole: SessionStatsProjection | undefined = values?.['sessionStats']
-    const value: TuiMeasurement = {
-      context: window === undefined || tokens === undefined
-        ? undefined
-        : { tokens, window, automatic: this.autoCompaction },
-      stats: {
-        ...whole !== undefined && whole.decodeMs > 0
-          ? { tokensPerSecond: whole.decodeTokens / (whole.decodeMs / 1_000) }
-          : {},
-        promptTokens: usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens,
-        outputTokens: usage.outputTokens,
-        cacheReadTokens: usage.cacheReadTokens,
-      },
-    }
+    const value = measureUsage(values, this.autoCompaction)
     this.measurementCache = { session, seq: session.seq, value }
     return value
   }
@@ -1283,6 +1266,18 @@ export class TuiApp implements InteractionHost {
     this.refresh()
   }
 
+  /** Point the watch service at the session tree this surface now owns. */
+  private activateWatch(session: TuiSession): void {
+    this.watch.activate(session.session.id, {
+      published: (_sessionId, command) => {
+        this.notice('info', `watch: ${command}`)
+      },
+      failed: (sessionId, error) => {
+        this.notice('error', `could not publish a watch command for ${sessionId}: ${error instanceof Error ? error.message : String(error)}`)
+      },
+    })
+  }
+
   /** Restore the terminal exactly once. */
   private teardown(): void {
     if (this.stopped) return
@@ -1290,6 +1285,9 @@ export class TuiApp implements InteractionHost {
     this.editor.setText('')
     for (const dispose of this.disposers.splice(0)) dispose()
     for (const dispose of this.sessionDisposers.splice(0)) dispose()
+    void this.watch.close().catch((error: unknown) => {
+      this.options.ctx.logger.warn(`subagent watch: cleanup failed: ${String(error)}`)
+    })
     this.tui.stop()
   }
 }

@@ -185,9 +185,6 @@
     "c7136804a6f7b829f525135643cb93cc8b3176b1d0036b2ebde5d7b668411658": 1,
     "dd244515f22ccbc14e5872126c3fc405ed6a63bb0390940976e234e3c06fcc2b": 1
   },
-  "packages/api/session-controller/src/assistant-stream.ts": {
-    "cdd397836fbdc7e5730e5fe531633591289cea76dd8a58cb6749f6b1b6777f98": 1
-  },
   "packages/api/session-controller/src/client/index.ts": {
     "35f4c7349b7474bef7d2d1c5a8beaab93bcfac1e0d002520f80207444e3f256b": 1
   },
