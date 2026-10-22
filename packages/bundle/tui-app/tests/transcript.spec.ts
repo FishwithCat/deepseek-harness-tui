@@ -501,6 +501,33 @@ describe('TerminalTranscript', () => {
     expect(rendered).toContain('· approval · bash — allowed once · needs the workspace')
   })
 
+  it('renders a remembered grant decision as allowed always', async () => {
+    const session = await makeSession()
+    const transcript = new TerminalTranscript()
+    const appendAndFold = folder(transcript, session)
+    appendAndFold(() => { session.append('turn/start', { turn: 1 }) })
+    appendAndFold(() => {
+      session.append('approval/asked', { id: ApprovalRequestId('approval-always'), toolName: 'bash' })
+    })
+    appendAndFold(() => {
+      session.append('approval/decided', {
+        id: ApprovalRequestId('approval-always'),
+        outcome: 'allowed-once',
+        remembered: true,
+      })
+    })
+
+    expect(transcript.entries().at(-1)).toMatchObject({
+      kind: 'approval',
+      outcome: 'allowed-once',
+      remembered: true,
+    })
+    const rendered = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
+      .render(80)
+      .join('\n')
+    expect(rendered).toContain('· approval · bash — allowed always')
+  })
+
   it('renders a reasonless pending approval and ignores a decision without its ask', async () => {
     const session = await makeSession()
     const transcript = new TerminalTranscript()

@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use this package to require a one-shot decision before a sensitive tool action proceeds. The `ask` policy sends each request to the deployment's human or machine answerers; `never` rejects it without prompting. Missing or failed answerers return `unavailable`, so the action fails closed, and an approval applies only to that request. Every request and outcome is recorded in the requesting session's audit log. The model sees the resulting tool outcome and current policy, but not the human permission UI or audit events.
+Use this package to require a decision before a sensitive tool action proceeds. The `ask` policy sends each request to the deployment's human or machine answerers; `never` rejects it without prompting. Missing or failed answerers return `unavailable`, so the action fails closed. A one-shot approval covers only its request; a remembered grant covers the same tool for the session and its live descendants. Every request and outcome is recorded in the requesting session's audit log. The model sees the resulting tool outcome and current policy, but not the human permission UI or audit events.
 
 ## Table of Contents
 
@@ -47,13 +47,17 @@ The effective policy is the one set for the session, falling back to the configu
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-user-approval) is the exhaustive source for every accepted field and its JSDoc. `effectivePolicy(session)` reads the policy currently in force, including the configured default; delegation uses it to decide whether a child inherits an interactive policy. `setPolicy(agent, policy)` switches a live agent and queues a "changed by the user" message for its next model step; `setApprovalPolicy(session, policy)` is the direct durable write path used by session initialization.
 
+### Remembering a tool
+
+`grant(session, toolName)` appends one durable `approval/grant` for a tool, and `isGranted(agent, toolName)` checks the Agent's own session and each live ancestor through `parentSession`. Under `ask`, a granted ask resolves `allowed-once` without consulting an answerer and its `approval/decided` carries `remembered: true`; `never` still rejects first. The TUI records the grant on its own root Agent, so one Always allow choice covers the app and every live subagent, including one that asked.
+
 ### Requesting a decision
 
 `request(req)` names the agent, tool, optional call id and reason, and an abort signal. Optional `displayReason` supplies localized presentation text without changing the logged reason. It requires an open turn: an idle or between-turn caller throws before auditing anything. Aborting withdraws the question — the request settles `cancelled` and a late answer is discarded. A failure that prevents either audit append from committing rejects instead of returning an unlogged decision.
 
 ### What the model and user see
 
-The model sees only the asking consumer's eventual tool outcome — allowed, rejected, cancelled, or unavailable — plus the current policy in the runtime-context snapshot; the audit events and the human permission UI are not model context. A `never` switch is announced to the model by a sourced user message, and both policies contribute their complete current meaning to the snapshot.
+The model sees only the asking consumer's eventual tool outcome — allowed, rejected, cancelled, or unavailable — plus the current policy in the runtime-context snapshot; the audit events, remembered grants, and the human permission UI are not model context. A `never` switch is announced to the model by a sourced user message, and both policies contribute their complete current meaning to the snapshot.
 
 -----
 
@@ -69,12 +73,12 @@ The observable behavior is covered in [Use this package](#use-this-package); thi
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `ApprovalService`: request dispatch, policy fold and write path, runtime-context contribution |
+| [`src/index.ts`](src/index.ts) | `ApprovalService`: request dispatch, policy fold and write path, remembered grants, runtime-context contribution |
 | [`src/types.ts`](src/types.ts) | `ApprovalRequestId` brand and outcome types |
 
 ### Dispatch
 
-`decide()` races the answerer waterfall against the request signal and contains every answerer failure: a throwing listener fails the question closed to `unavailable`, and a rogue non-vocabulary return is normalized to `unavailable`. The `never` policy is enforced inside the service before waterfall dispatch, so a listener registered later with `prepend` cannot bypass the deterministic rejection. The request must be turn-enclosed because the turn is the durable log's commit/replay boundary — a bare event between turns is indistinguishable from a crash tail.
+`decide()` races the answerer waterfall against the request signal and contains every answerer failure: a throwing listener fails the question closed to `unavailable`, and a rogue non-vocabulary return is normalized to `unavailable`. The `never` policy is enforced inside the service before waterfall dispatch, so a listener registered later with `prepend` cannot bypass the deterministic rejection. A remembered grant is checked after `never` and before dispatch, so a covered ask never reaches an answerer. The request must be turn-enclosed because the audit pair is the durable log's commit/replay boundary — a bare event between turns is indistinguishable from a crash tail.
 
 ### Policy and the runtime-context snapshot
 
@@ -82,7 +86,7 @@ The system-prompt contribution `approval:policy` states the complete current mea
 
 ### Audit
 
-`request()` appends `approval/asked` with the request identity and tool, then `approval/decided` with the closed outcome; the exact appended fields live in [`src/index.ts`](src/index.ts). Both are log-only.
+`request()` appends `approval/asked` with the request identity and tool, then `approval/decided` with the closed outcome; a decision covered by a remembered grant also carries `remembered: true`. `grant()` appends `approval/grant` once per tool. The exact appended fields live in [`src/index.ts`](src/index.ts). All are log-only.
 
 </details>
 
@@ -95,6 +99,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 - [Approval subsystem reference](../../../docs/subsystems/approval.md) — the shared request/outcome vocabulary and the `ctx.approval` Cordis surface.
 - [Approval seam Agent Note](../../../.agents/notes/implemented/feature/2026-07-06-approval-seam.md) — design rationale for the seam.
+- [Remembered approval grants Agent Note](../../../.agents/notes/implemented/architecture/2026-10-22-remembered-approval-grants.md) — why grants are tool-scoped session state and how the TUI shares them with subagents.
 - [Sandbox reference](../../shell/tool-bash/README.md) — how the sandboxed bash tool consumes approvals for escalated retries.
 - [Interaction group map](../README.md) — adjacent permission preset and question packages.
 
@@ -150,8 +155,9 @@ Append-only; newly visible content follows the reusable request prefix and does 
 
 These limits define when the seam is a poor fit or needs special composition care. They are current package constraints, not a general permission comparison.
 
-- **Requests are valid only inside an open turn** — an idle or between-turn caller throws before auditing; a durable out-of-turn approval workflow is deferred.
-- **Only one-shot grants exist** — the outcome vocabulary has `allowed-once` but no `allow-always`, remembered rule, revocation, or grant store; session policy is only `ask` / `never`.
+- **Requests are valid only inside an open turn** — an idle or between-turn caller throws before auditing; a durable out-of-turn approval workflow is deferred. Grants are standalone log entries and may be recorded outside a turn.
+- **Grants are per tool name** — the request carries no arguments, so a grant covers every operation the tool gates; there is no per-command, per-path, or per-call grant.
+- **Grants have no revocation control** — a grant lasts for the session and its live descendants; switching the policy to `never` suppresses every ask, but no API removes one grant.
 - **The request carries no tool arguments** — an answerer sees the tool name, reason, and optional call id; the ACP machine channel requires a call id and delegates requests without one.
 - **No built-in answerer** — headless or incompletely composed deployments resolve `unavailable` and fail closed; the service itself never prompts a human.
 

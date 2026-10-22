@@ -2,7 +2,7 @@
 
 English | [中文](approval.zh.md)
 
-The user-approval seam of [dsh-user-approval](../../packages/interaction/user-approval) answers one question: may this specific action proceed? It owns the shared request/outcome vocabulary, the `ctx.approval` dispatch service, the `approval/request` answerer waterfall, the log-only audit pair, and the per-session `ask`/`never` policy. UI channels may provide human answerers; the [ACP automation bridge](../../packages/acp/acp) provides one-shot machine decisions for its own agents. Callers such as [dsh-tools](../../packages/core/tools) and [dsh-tool-bash](../../packages/shell/tool-bash) consume the closed outcome and fail closed unless it is `allowed-once`.
+The user-approval seam of [dsh-user-approval](../../packages/interaction/user-approval) answers one question: may this specific action proceed? It owns the shared request/outcome vocabulary, the `ctx.approval` dispatch service, the `approval/request` answerer waterfall, the log-only audit pair, the per-session `ask`/`never` policy, and remembered per-tool grants. UI channels may provide human answerers; the [ACP automation bridge](../../packages/acp/acp) provides one-shot machine decisions for its own agents. Callers such as [dsh-tools](../../packages/core/tools) and [dsh-tool-bash](../../packages/shell/tool-bash) consume the closed outcome and fail closed unless it is `allowed-once`.
 
 Source: [`packages/interaction/user-approval/src/index.ts`](../../packages/interaction/user-approval/src/index.ts)
 
@@ -18,7 +18,7 @@ Every request receives a fresh `ApprovalRequestId`. The brand pairs the `approva
 type ApprovalRequestId = Branded<'ApprovalRequestId'>
 ```
 
-`ApprovalOutcome` is closed and fail-closed. `allowed-once` grants only the asked-about action; callers deny on `rejected`, `cancelled`, and `unavailable`. A missing, non-owning, throwing, or non-conforming answerer becomes `unavailable` rather than opening the gate.
+`ApprovalOutcome` is closed and fail-closed. `allowed-once` grants only the asked-about action; callers deny on `rejected`, `cancelled`, and `unavailable`. A missing, non-owning, throwing, or non-conforming answerer becomes `unavailable` rather than opening the gate. A remembered grant adds no outcome value: a covered ask still returns `allowed-once` and is marked `remembered` in its audit decision.
 
 ```ts type-equiv
 /**
@@ -47,6 +47,10 @@ type ApprovalPolicy = 'ask' | 'never'
 ```
 
 Both policies contribute their complete current meaning to the cache-safe runtime-context snapshot. The sourced `user/message` is the durable model-visible input; changing approval state appends a new full snapshot after retained history without touching the `system/message` nodes that hold the rendered system prompt.
+
+## Remembered grants
+
+`ApprovalService.grant(session, toolName)` appends one `approval/grant` event, or nothing when that session already holds the tool's grant. `isGranted(agent, toolName)` reads the Agent's own session and each live ancestor through `parentSession`; a vanished ancestor ends the walk, so an orphaned child inherits nothing it cannot prove. The service checks grants after `never` and before answerer dispatch under `ask`, so a covered ask settles `allowed-once` without prompting and its `approval/decided` carries `remembered: true`. Grants are surface-independent session state; the TUI is the shipped producer and records them on its root Agent for the whole app tree.
 
 ## Approval request
 
@@ -83,7 +87,7 @@ interface ApprovalRequest extends ApprovalRequestEvent {
 
 ## Dispatch and audit
 
-`ctx.approval.request(req)` requires the requesting session to be inside an open turn. It appends `approval/asked`, obtains one outcome, appends the matching `approval/decided`, and resolves with that outcome. The `never` policy is enforced inside the service before waterfall dispatch, so even an answerer registered later with `prepend` cannot bypass it. Answerers return an outcome when they own the request or call `next()` to delegate; the first answer occupies the single decision slot.
+`ctx.approval.request(req)` requires the requesting session to be inside an open turn. It appends `approval/asked`, obtains one outcome, appends the matching `approval/decided`, and resolves with that outcome. The `never` policy is enforced inside the service before waterfall dispatch, and a remembered grant is checked immediately after it, so even an answerer registered later with `prepend` cannot bypass `never` or force a prompt for a covered tool. Answerers return an outcome when they own the request or call `next()` to delegate; the first answer occupies the single decision slot.
 
 The audit events are log-only and do not enter the model transcript. Model-visible behavior is the caller's derived tool result plus the current runtime-context snapshot. Service disposal removes its context contribution; answerer listeners are independently effect-bound to their owning plugins.
 
@@ -99,7 +103,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.approval` — `ApprovalService`
 
-Approval service that applies session policy before answerers and logs every ask/outcome pair to the requesting session. It exposes deterministic policy changes to the model through the runtime-context snapshot and switch notices.
+Approval service that applies session policy and remembered per-tool grants before answerers and logs every ask/outcome pair to the requesting session. It exposes deterministic policy changes to the model through the runtime-context snapshot and switch notices.
 
 ```ts cordis-catalog
 /**
@@ -114,10 +118,11 @@ setPolicy(agent: Agent, policy: ApprovalPolicy): void
 /**
  * Ask the composed answerers to decide one readonly same-process request.
  * The service borrows the request, agent, session, and live signal directly.
- * The request requires an open turn because the audit pair must be enclosed
- * by the durable log's commit/replay boundary; an idle ask rejects before
- * appending anything. The answerer phase always produces an outcome: an
- * aborted signal yields `'cancelled'`, a missing or throwing answerer yields
+ * A remembered grant for the tool resolves the ask `allowed-once` before any
+ * answerer sees it. The request requires an open turn because the audit pair
+ * must be enclosed by the durable log's commit/replay boundary; an idle ask
+ * rejects before appending anything. The answerer phase always produces an
+ * outcome: an aborted signal yields `'cancelled'`, a missing or throwing answerer yields
  * `'unavailable'` (fail closed), and a rogue non-vocabulary return value is
  * normalized to `'unavailable'`. A failure that prevents either audit append
  * from committing still rejects because returning an unlogged decision would
@@ -130,6 +135,38 @@ setPolicy(agent: Agent, policy: ApprovalPolicy): void
  *   append commit point.
  */
 async request(req: ApprovalRequest): Promise<ApprovalOutcome>
+
+/**
+ * Remember one tool's approval for a session and its live descendants. Every
+ * later ask for that tool resolves `allowed-once` without consulting an
+ * answerer while the effective policy is `ask`; `never` still rejects first.
+ * Recording nothing when the grant already exists keeps replay and repeated
+ * Always allow choices from growing the log.
+ * @param session - the session whose subtree the grant covers.
+ * @param toolName - the tool whose future asks the grant covers.
+ * @throws when the tool name is empty.
+ */
+grant(session: Session, toolName: string): void
+
+/**
+ * Whether a remembered grant covers this Agent's ask for the tool. The walk
+ * reads the Agent's session, then each live ancestor through `parentSession`;
+ * a vanished ancestor ends it, so an orphaned child never inherits a grant it
+ * cannot prove.
+ * @param agent - the asking Agent.
+ * @param toolName - the tool being asked about.
+ * @returns true when the Agent or a live ancestor holds the grant.
+ */
+isGranted(agent: Agent, toolName: string): boolean
+
+/**
+ * The session's effective policy: its own `approval/policy` fold, else the
+ * configured default (the schema already defaulted an omitted policy to
+ * `'ask'`; the `??` only narrows the optional-input TYPE).
+ * @param session - the exact accepted session whose policy applies.
+ * @returns the policy every ask for this session resolves under right now.
+ */
+effectivePolicy(session: Session): ApprovalPolicy
 
 /**
  * Read the session override without applying the configured default.

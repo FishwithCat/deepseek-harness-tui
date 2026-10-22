@@ -27,7 +27,8 @@
 | `event:agent-preset/selected` | event | `a10c17474eaf2ddab7095a099e0fe3d046fc18e56c3e344fc8894c05ff9ef97b` | [`{ type: "agent-preset/selected" }`](#persistence-type-sha256-a10c17474eaf2ddab7095a099e0fe3d046fc18e56c3e344fc8894c05ff9ef97b) |
 | `event:agent/inbox/spliced` | event | `0755b7d1128319ba2e389619cbbf2c961ad648882b4e91da7f3e9582cc8a2034` | [`{ type: "agent/inbox/spliced" }`](#persistence-type-sha256-0755b7d1128319ba2e389619cbbf2c961ad648882b4e91da7f3e9582cc8a2034) |
 | `event:approval/asked` | event | `3bfeb47b58606f4661904bc723da612782214c463d01e6d61cd6d6193d7374e1` | [`{ type: "approval/asked" }`](#persistence-type-sha256-3bfeb47b58606f4661904bc723da612782214c463d01e6d61cd6d6193d7374e1) |
-| `event:approval/decided` | event | `bb1ab3d08f49a9f3b265f844cd78d5c49813062a7b34b54904b426f85d0ff6e3` | [`{ type: "approval/decided" }`](#persistence-type-sha256-bb1ab3d08f49a9f3b265f844cd78d5c49813062a7b34b54904b426f85d0ff6e3) |
+| `event:approval/decided` | event | `9e19c5180611b84c128c8820dc3a432fac4b5780fe1897e7557fc1b99334fa69` | [`{ type: "approval/decided" }`](#persistence-type-sha256-9e19c5180611b84c128c8820dc3a432fac4b5780fe1897e7557fc1b99334fa69) |
+| `event:approval/grant` | event | `1525755c8d2d6ad380c2f42cc5b203dc4fa8b1f96bbd3cd9a8c7a8b9ce986db4` | [`{ type: "approval/grant" }`](#persistence-type-sha256-1525755c8d2d6ad380c2f42cc5b203dc4fa8b1f96bbd3cd9a8c7a8b9ce986db4) |
 | `event:approval/policy` | event | `26718e15e7e395bce9642dba5bbe09b3b1a4ce2213d20d566cd9207d7fc5fb78` | [`{ type: "approval/policy" }`](#persistence-type-sha256-26718e15e7e395bce9642dba5bbe09b3b1a4ce2213d20d566cd9207d7fc5fb78) |
 | `event:assistant/attempt` | event | `15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4` | [`{ type: "assistant/attempt" }`](#persistence-type-sha256-15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4) |
 | `event:assistant/message` | event | `1033093edd0db80ff410e00830b523405e00bb0c7684948e531ff65095799625` | [`{ type: "assistant/message" }`](#persistence-type-sha256-1033093edd0db80ff410e00830b523405e00bb0c7684948e531ff65095799625) |
@@ -235,7 +236,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 类型：[ToolCallId](subsystems/core.zh.md)
 
-来源：[`packages/interaction/user-approval/src/types.ts:44`](../packages/interaction/user-approval/src/types.ts)
+来源：[`packages/interaction/user-approval/src/types.ts:53`](../packages/interaction/user-approval/src/types.ts)
 
 <a id="approvaldecided--log-only"></a>
 
@@ -250,10 +251,34 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 'approval/decided': {
   id: ApprovalRequestId
   outcome: ApprovalOutcome
+  /**
+   * The `allowed-once` outcome was covered by a remembered grant for the
+   * asked-about tool, so the same session would allow it again without a
+   * prompt. One-shot grants and non-grants omit this field.
+   */
+  remembered?: true
 }
 ```
 
-来源：[`packages/interaction/user-approval/src/types.ts:55`](../packages/interaction/user-approval/src/types.ts)
+来源：[`packages/interaction/user-approval/src/types.ts:64`](../packages/interaction/user-approval/src/types.ts)
+
+<a id="approvalgrant--log-only"></a>
+
+#### `approval/grant` — log-only
+
+```ts persistence-catalog
+/**
+ * The session remembered one tool's approval — log-only state, not a
+ * surface event. Later asks for the same tool from this session or a live
+ * descendant resolve `allowed-once` without consulting an answerer while
+ * the effective policy is `ask`. Absence means no remembered grant.
+ */
+'approval/grant': {
+  toolName: string
+}
+```
+
+来源：[`packages/interaction/user-approval/src/types.ts:42`](../packages/interaction/user-approval/src/types.ts)
 
 <a id="approvalpolicy--log-only"></a>
 
@@ -275,7 +300,7 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 }
 ```
 
-来源：[`packages/interaction/user-approval/src/index.ts:40`](../packages/interaction/user-approval/src/index.ts)
+来源：[`packages/interaction/user-approval/src/index.ts:41`](../packages/interaction/user-approval/src/index.ts)
 
 ### `assistant/*`
 
@@ -1444,6 +1469,14 @@ SHA-256: `cd186c309e2bef305705e1d324139240f5e681f4f6a957d6a25b0225f65560df`
 SHA-256: `378f90f9f6022a0991928a1eaf7991094ea1920fe89a9248358a1da106e1a970`
 
 `"approval/decided"`
+
+<a id="persistence-type-sha256-a23e1b09cbd076d4bca2514a3867453624adb1e48cb82bba3eba11c4b23ceecd"></a>
+
+### `"approval/grant"`
+
+SHA-256: `a23e1b09cbd076d4bca2514a3867453624adb1e48cb82bba3eba11c4b23ceecd`
+
+`"approval/grant"`
 
 <a id="persistence-type-sha256-36d6a9a871d949ea4f3edd919d81d66aa69218bebef38899d2a1282c39420a1f"></a>
 
@@ -3161,7 +3194,7 @@ SHA-256: `930c1cd289def119d443e19dd90008916bf035f0a4d23e07241e7f050f2b89b7`
 
 SHA-256: `05d2ae1e0c7f8770f83f9a09047afb39a335d8ac986df3193659aa1e581472cf`
 
-来源：[`packages/interaction/user-approval/src/index.ts:67`](../packages/interaction/user-approval/src/index.ts)
+来源：[`packages/interaction/user-approval/src/index.ts:68`](../packages/interaction/user-approval/src/index.ts)
 
 以下类型之一：
 
@@ -5852,7 +5885,7 @@ SHA-256: `1528539c63db8b23506f0209a99ce77d8ad138adfbfcee3d4769b7382d93756c`
 
 SHA-256: `45f2a07ea94573123b6ae14db787a40062dec3834f36d8be92c523d40ba28448`
 
-来源：[`packages/interaction/user-approval/src/types.ts:44`](../packages/interaction/user-approval/src/types.ts)
+来源：[`packages/interaction/user-approval/src/types.ts:53`](../packages/interaction/user-approval/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -6306,18 +6339,19 @@ SHA-256: `0f46153645c297846a3fad3911636659ca4717a5e7d71c9f50bffacd312115ef`
 | `height` | 必需 | `number` |
 | `width` | 必需 | `number` |
 
-<a id="persistence-type-sha256-93cbbc5a7fd0b1aa1ff1b9a6bb5ec52b073f48e5a5200365c45c0cd54059e1b9"></a>
+<a id="persistence-type-sha256-851ba416ade82f5d2f084d404d4baf757fb3bd113d9a93f187fc4db8640af854"></a>
 
-### `{ id, outcome }`
+### `{ id, outcome, remembered? }`
 
-SHA-256: `93cbbc5a7fd0b1aa1ff1b9a6bb5ec52b073f48e5a5200365c45c0cd54059e1b9`
+SHA-256: `851ba416ade82f5d2f084d404d4baf757fb3bd113d9a93f187fc4db8640af854`
 
-来源：[`packages/interaction/user-approval/src/types.ts:55`](../packages/interaction/user-approval/src/types.ts)
+来源：[`packages/interaction/user-approval/src/types.ts:64`](../packages/interaction/user-approval/src/types.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
 | `id` | 必需 | `string` |
 | `outcome` | 必需 | [`ApprovalOutcome`](#persistence-type-sha256-930c1cd289def119d443e19dd90008916bf035f0a4d23e07241e7f050f2b89b7) |
+| `remembered` | 可选 | `true` |
 
 <a id="persistence-type-sha256-998f22585a5d73ec005365e203f07fc3b3a029e82323fdda3fd7f13b0a9639d0"></a>
 
@@ -7779,7 +7813,7 @@ SHA-256: `9890113e97dd3541787bfe6704f2b223d3a890b5325ca0acae2b0398909b413e`
 
 SHA-256: `11f70b595aa76897fc4e25a352bfa718c659f44b799e5aa14e84e5a38fe72912`
 
-来源：[`packages/interaction/user-approval/src/index.ts:40`](../packages/interaction/user-approval/src/index.ts)
+来源：[`packages/interaction/user-approval/src/index.ts:41`](../packages/interaction/user-approval/src/index.ts)
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
@@ -7917,6 +7951,18 @@ SHA-256: `79ddc907312f97cf9553d4841e8b3fc937097bd8d97900a790efad3c05255e99`
 |---|---|---|
 | `todos` | 必需 | [`TodoItem[]`](#persistence-type-sha256-4b7ddaf3710b88ff9b8df66304f5f97bf03688fd19730eedc2e9535203c820ea) |
 
+<a id="persistence-type-sha256-38a20918ad5257ce2e9f10115576f730c52b1043e25defd63920a51001cea870"></a>
+
+### `{ toolName }`
+
+SHA-256: `38a20918ad5257ce2e9f10115576f730c52b1043e25defd63920a51001cea870`
+
+来源：[`packages/interaction/user-approval/src/types.ts:42`](../packages/interaction/user-approval/src/types.ts)
+
+| 属性 | 存在性 | 类型 |
+|---|---|---|
+| `toolName` | 必需 | `string` |
+
 <a id="persistence-type-sha256-f90eb4ab2d3897bc20c521a038e3119d581f791ec974b1a0004f63a8ab9e232d"></a>
 
 ### `{ turn }`
@@ -7977,21 +8023,37 @@ SHA-256: `3bfeb47b58606f4661904bc723da612782214c463d01e6d61cd6d6193d7374e1`
 | `time` | 必需 | `number` |
 | `type` | 必需 | `"approval/asked"` |
 
-<a id="persistence-type-sha256-bb1ab3d08f49a9f3b265f844cd78d5c49813062a7b34b54904b426f85d0ff6e3"></a>
+<a id="persistence-type-sha256-9e19c5180611b84c128c8820dc3a432fac4b5780fe1897e7557fc1b99334fa69"></a>
 
 <a id="persistence-type-eventapprovaldecided"></a>
 
 ### `{ type: "approval/decided" }`
 
-SHA-256: `bb1ab3d08f49a9f3b265f844cd78d5c49813062a7b34b54904b426f85d0ff6e3`
+SHA-256: `9e19c5180611b84c128c8820dc3a432fac4b5780fe1897e7557fc1b99334fa69`
 
 | 属性 | 存在性 | 类型 |
 |---|---|---|
-| `data` | 必需 | [`{ id, outcome }`](#persistence-type-sha256-93cbbc5a7fd0b1aa1ff1b9a6bb5ec52b073f48e5a5200365c45c0cd54059e1b9) |
+| `data` | 必需 | [`{ id, outcome, remembered? }`](#persistence-type-sha256-851ba416ade82f5d2f084d404d4baf757fb3bd113d9a93f187fc4db8640af854) |
 | `ignorable` | 可选 | `true` |
 | `seq` | 必需 | `number` |
 | `time` | 必需 | `number` |
 | `type` | 必需 | `"approval/decided"` |
+
+<a id="persistence-type-sha256-1525755c8d2d6ad380c2f42cc5b203dc4fa8b1f96bbd3cd9a8c7a8b9ce986db4"></a>
+
+<a id="persistence-type-eventapprovalgrant"></a>
+
+### `{ type: "approval/grant" }`
+
+SHA-256: `1525755c8d2d6ad380c2f42cc5b203dc4fa8b1f96bbd3cd9a8c7a8b9ce986db4`
+
+| 属性 | 存在性 | 类型 |
+|---|---|---|
+| `data` | 必需 | [`{ toolName }`](#persistence-type-sha256-38a20918ad5257ce2e9f10115576f730c52b1043e25defd63920a51001cea870) |
+| `ignorable` | 可选 | `true` |
+| `seq` | 必需 | `number` |
+| `time` | 必需 | `number` |
+| `type` | 必需 | `"approval/grant"` |
 
 <a id="persistence-type-sha256-26718e15e7e395bce9642dba5bbe09b3b1a4ce2213d20d566cd9207d7fc5fb78"></a>
 

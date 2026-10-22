@@ -9,8 +9,8 @@
   en: 548c7fcc396775de
   zh: ad82c4872acbf83a
 /deepseek-ai-dsh-user-approval/summary:
-  en: 9b438f002e664c9e
-  zh: 1f1adf3db6a56ddc
+  en: 19dc57046af83b02
+  zh: 031d6e21c6a753bc
 /deepseek-ai-dsh-user-approval/table-of-contents:
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
@@ -23,30 +23,33 @@
 /deepseek-ai-dsh-user-approval/use-this-package/setting-the-policy:
   en: 7748826baed65c2e
   zh: d31462b09240326d
+/deepseek-ai-dsh-user-approval/use-this-package/remembering-a-tool:
+  en: a6e89af700f2d9d7
+  zh: 6656ecddf02ea6bb
 /deepseek-ai-dsh-user-approval/use-this-package/requesting-a-decision:
   en: dc465de82799bab0
   zh: 51144cc77bb15689
 /deepseek-ai-dsh-user-approval/use-this-package/what-the-model-and-user-see:
-  en: 016bf3cd1891d3d7
-  zh: 33e7e5ffaf95f5e7
+  en: 2418e1d07c9af65b
+  zh: f120a32eb9367f3d
 /deepseek-ai-dsh-user-approval/understand-the-implementation:
   en: d07be7ba08baf010
   zh: 665e68e9188e5d60
 /deepseek-ai-dsh-user-approval/understand-the-implementation/source-map:
-  en: ac27642b3a91082f
-  zh: 769a56eaad4218f7
+  en: 41d47e43e8b2823e
+  zh: b3f73f3f48931085
 /deepseek-ai-dsh-user-approval/understand-the-implementation/dispatch:
-  en: 38c3646e45d3dddd
-  zh: 3363dde8c786d6b2
+  en: 47f97100ae37720e
+  zh: 61a6c01408183076
 /deepseek-ai-dsh-user-approval/understand-the-implementation/policy-and-the-runtime-context-snapshot:
   en: a8df8823aa0b015d
   zh: ed0906f11645e7fd
 /deepseek-ai-dsh-user-approval/understand-the-implementation/audit:
-  en: 145530678bac5912
-  zh: a464effa3a29fce0
+  en: 0a583521364521cc
+  zh: 916bedea94f5c0e1
 /deepseek-ai-dsh-user-approval/further-exploration:
-  en: 8d9c8f312bf17cea
-  zh: 539f3b3d1173277d
+  en: 584b09e5be83317c
+  zh: 3c27cee4d33cb5af
 /deepseek-ai-dsh-user-approval/model-experience:
   en: 215e7ba838619b7b
   zh: a311da3843709f90
@@ -81,8 +84,8 @@
   en: f5d5f97a153f7c70
   zh: 4db81881ebdcfcc4
 /deepseek-ai-dsh-user-approval/known-limitations-and-deferred-work:
-  en: c6928515ff91ee7e
-  zh: c23bd844b4907f12
+  en: 69048422830248d4
+  zh: 4eb103bc1bdf88e2
 /deepseek-ai-dsh-user-approval/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98

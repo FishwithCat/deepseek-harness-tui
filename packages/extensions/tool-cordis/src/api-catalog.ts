@@ -392,8 +392,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'approval',
-    summary: 'Approval service that applies session policy before answerers and logs every ask/outcome pair to the requesting session.',
-    description: 'Approval service that applies session policy before answerers and logs every ask/outcome pair to the requesting session. It exposes deterministic policy changes to the model through the runtime-context snapshot and switch notices.',
+    summary: 'Approval service that applies session policy and remembered per-tool grants before answerers and logs every ask/outcome pair to the requesting session.',
+    description: 'Approval service that applies session policy and remembered per-tool grants before answerers and logs every ask/outcome pair to the requesting session. It exposes deterministic policy changes to the model through the runtime-context snapshot and switch notices.',
     methods: [
       {
         signature: 'setPolicy(agent: Agent, policy: ApprovalPolicy): void',
@@ -402,10 +402,28 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'async request(req: ApprovalRequest): Promise<ApprovalOutcome>',
-        description: 'Ask the composed answerers to decide one readonly same-process request. The service borrows the request, agent, session, and live signal directly. The request requires an open turn because the audit pair must be enclosed by the durable log\'s commit/replay boundary; an idle ask rejects before appending anything. The answerer phase always produces an outcome: an aborted signal yields `\'cancelled\'`, a missing or throwing answerer yields `\'unavailable\'` (fail closed), and a rogue non-vocabulary return value is normalized to `\'unavailable\'`. A failure that prevents either audit append from committing still rejects because returning an unlogged decision would violate the pair. Session contains post-commit observer failures, so an authoritative append cannot reject the request or suppress its matching audit event.',
+        description: 'Ask the composed answerers to decide one readonly same-process request. The service borrows the request, agent, session, and live signal directly. A remembered grant for the tool resolves the ask `allowed-once` before any answerer sees it. The request requires an open turn because the audit pair must be enclosed by the durable log\'s commit/replay boundary; an idle ask rejects before appending anything. The answerer phase always produces an outcome: an aborted signal yields `\'cancelled\'`, a missing or throwing answerer yields `\'unavailable\'` (fail closed), and a rogue non-vocabulary return value is normalized to `\'unavailable\'`. A failure that prevents either audit append from committing still rejects because returning an unlogged decision would violate the pair. Session contains post-commit observer failures, so an authoritative append cannot reject the request or suppress its matching audit event.',
         parameters: [{ name: 'req', description: 'the pending decision (agent, tool identity, reason, signal).' }],
         returns: 'the closed outcome; `\'allowed-once\'` is the only grant.',
         throws: ['when no turn is open or either audit event fails before the session append commit point.'],
+      },
+      {
+        signature: 'grant(session: Session, toolName: string): void',
+        description: 'Remember one tool\'s approval for a session and its live descendants. Every later ask for that tool resolves `allowed-once` without consulting an answerer while the effective policy is `ask`; `never` still rejects first. Recording nothing when the grant already exists keeps replay and repeated Always allow choices from growing the log.',
+        parameters: [{ name: 'session', description: 'the session whose subtree the grant covers.' }, { name: 'toolName', description: 'the tool whose future asks the grant covers.' }],
+        throws: ['when the tool name is empty.'],
+      },
+      {
+        signature: 'isGranted(agent: Agent, toolName: string): boolean',
+        description: 'Whether a remembered grant covers this Agent\'s ask for the tool. The walk reads the Agent\'s session, then each live ancestor through `parentSession`; a vanished ancestor ends it, so an orphaned child never inherits a grant it cannot prove.',
+        parameters: [{ name: 'agent', description: 'the asking Agent.' }, { name: 'toolName', description: 'the tool being asked about.' }],
+        returns: 'true when the Agent or a live ancestor holds the grant.',
+      },
+      {
+        signature: 'effectivePolicy(session: Session): ApprovalPolicy',
+        description: 'The session\'s effective policy: its own `approval/policy` fold, else the configured default (the schema already defaulted an omitted policy to `\'ask\'`; the `??` only narrows the optional-input TYPE).',
+        parameters: [{ name: 'session', description: 'the exact accepted session whose policy applies.' }],
+        returns: 'the policy every ask for this session resolves under right now.',
       },
       {
         signature: 'overrideOf(session: Session): ApprovalPolicy | undefined',

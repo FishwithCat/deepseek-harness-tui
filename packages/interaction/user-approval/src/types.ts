@@ -34,6 +34,15 @@ export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unava
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     /**
+     * The session remembered one tool's approval — log-only state, not a
+     * surface event. Later asks for the same tool from this session or a live
+     * descendant resolve `allowed-once` without consulting an answerer while
+     * the effective policy is `ask`. Absence means no remembered grant.
+     */
+    'approval/grant': {
+      toolName: string
+    }
+    /**
      * An approval question was put to the answerer chain — log-only audit
      * (like `hook/*`; NOT a surface event, carries no `surfaceOp`). `id` pairs
      * it with the `approval/decided` that always follows; `toolName` is the
@@ -55,6 +64,12 @@ declare module '@deepseek-ai/dsh-session/types' {
     'approval/decided': {
       id: ApprovalRequestId
       outcome: ApprovalOutcome
+      /**
+       * The `allowed-once` outcome was covered by a remembered grant for the
+       * asked-about tool, so the same session would allow it again without a
+       * prompt. One-shot grants and non-grants omit this field.
+       */
+      remembered?: true
     }
   }
 }

@@ -1,0 +1,31 @@
+# Bilingual-pair consistency record for 2026-10-22-remembered-approval-grants.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-22-remembered-approval-grants.md
+/agent-note-remembered-per-tool-approval-grants:
+  en: 6de887eb485334c1
+  zh: 62b2580617d39077
+/agent-note-remembered-per-tool-approval-grants/problem:
+  en: 5581781a0b084631
+  zh: 20a5755f8e48ee70
+/agent-note-remembered-per-tool-approval-grants/decision:
+  en: a15c7c13f167e5ac
+  zh: ff261e3705c47ff0
+/agent-note-remembered-per-tool-approval-grants/decision/a-grant-is-durable-session-state:
+  en: 414e0bf55e26d3c6
+  zh: 564f847bc656b9bf
+/agent-note-remembered-per-tool-approval-grants/decision/grants-are-checked-inside-the-service:
+  en: d11e2357a4c2d533
+  zh: 5185360a85677313
+/agent-note-remembered-per-tool-approval-grants/decision/the-tui-records-on-its-root-agent:
+  en: cf0b7ec7aa7abd7d
+  zh: 06d0116323829f7c
+/agent-note-remembered-per-tool-approval-grants/alternatives-considered:
+  en: dbb274f240b484b1
+  zh: 9af9982ded731160
+/agent-note-remembered-per-tool-approval-grants/consequences:
+  en: 31b779f4311d018c
+  zh: dcdfb19d6eb10d9c
+/agent-note-remembered-per-tool-approval-grants/verification:
+  en: 771da6247abce285
+  zh: 0c156177ca9a7929

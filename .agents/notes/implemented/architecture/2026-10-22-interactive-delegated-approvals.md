@@ -22,7 +22,7 @@ The [archived pin to `never`](../../archived/feature/2026-08-10-subagent-approva
 
 ### The TUI answers its own Agent and live descendants
 
-`installApprovalAnswerer` claims a request when the asking Agent is the app's own Agent or a live descendant. It walks the durable `parentSession` header through `ctx.agents`, so an unrelated root, or a child whose parent is no longer live, remains delegated and fails closed. A descendant prompt names the child's `subagent/descriptor` label (or a short id when it has none), so concurrent requests stay attributable; the existing prompt queue serializes them. `Allow once` remains the only grant, and a skipped or cancelled prompt still resolves `cancelled`.
+`installApprovalAnswerer` claims a request when the asking Agent is the app's own Agent or a live descendant. It walks the durable `parentSession` header through `ctx.agents`, so an unrelated root, or a child whose parent is no longer live, remains delegated and fails closed. A descendant prompt names the child's `subagent/descriptor` label (or a short id when it has none), so concurrent requests stay attributable; the existing prompt queue serializes them. `Allow once` covers one request; `Always allow` records a per-tool grant on the app's root, and a skipped or cancelled prompt still resolves `cancelled` ([remembered grants](2026-10-22-remembered-approval-grants.md)).
 
 The user-question seam is unchanged: a delegated child cannot ask `ask_user_question` because the question service rejects a non-root caller with `DELEGATED_CALLER`, so the terminal answerer keeps its root-only question scope.
 

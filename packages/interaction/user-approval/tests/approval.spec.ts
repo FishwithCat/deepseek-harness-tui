@@ -15,11 +15,21 @@ import ApprovalService, { ApprovalOutcome, ApprovalRequest, setApprovalPolicy } 
  * turn-enclosure precondition); pass `seed` to stage idle/closed logs.
  * Returns the recorded audit appends alongside the fake.
  */
-function fakeAgent(seed: Array<{ type: string }> = [{ type: 'turn/start' }, { type: 'user/message' }]): { agent: Agent; appended: Array<{ type: string; data: Record<string, unknown> }> } {
+function fakeAgent(
+  seed: Array<{ type: string }> = [{ type: 'turn/start' }, { type: 'user/message' }],
+  identity: { id?: string; parentSession?: string } = {},
+): { agent: Agent; appended: Array<{ type: string; data: Record<string, unknown> }> } {
   const appended: Array<{ type: string; data: Record<string, unknown> }> = []
   const events: Array<{ type: string; data?: Record<string, unknown> }> = [...seed]
+  const id = identity.id ?? 'approval-test-agent'
   const agent = {
+    id: SessionId(id),
     session: {
+      id: SessionId(id),
+      header: {
+        id: SessionId(id),
+        parentSession: identity.parentSession === undefined ? undefined : SessionId(identity.parentSession),
+      },
       get seq() { return events.length },
       eventAt: (seq: number) => events[seq],
       append: (type: string, data: Record<string, unknown>) => {
@@ -31,6 +41,11 @@ function fakeAgent(seed: Array<{ type: string }> = [{ type: 'turn/start' }, { ty
     },
   } as unknown as Agent
   return { agent, appended }
+}
+
+/** A child's default log: an open turn, so request() accepts it. */
+function defaultChildSeed(): Array<{ type: string }> {
+  return [{ type: 'turn/start' }, { type: 'user/message' }]
 }
 
 async function mounted(): Promise<Context> {
@@ -351,6 +366,115 @@ describe('ApprovalService.request', () => {
 
     await fiber.dispose()
     await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('unavailable')
+  })
+})
+
+describe('ApprovalService grants', () => {
+  it('records one durable grant per tool and reads it back', async () => {
+    const ctx = await mounted()
+    const { agent, appended } = fakeAgent()
+
+    ctx.approval.grant(agent.session, 'echo')
+    ctx.approval.grant(agent.session, 'echo')
+
+    expect(appended).toEqual([{ type: 'approval/grant', data: { toolName: 'echo' } }])
+    expect(ctx.approval.isGranted(agent, 'echo')).toBe(true)
+    expect(ctx.approval.isGranted(agent, 'read')).toBe(false)
+  })
+
+  it('replays a grant recorded after a closed turn', () => {
+    const ctx = new Context()
+    const service = new ApprovalService(ctx, {})
+    const session = Session.create(SessionId('grant-replay'))
+    session.append('turn/start', { turn: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    service.grant(session, 'echo')
+
+    const restored = Session.create(SessionId('grant-replay'), session.snapshotEvents())
+    const agent = { id: restored.id, session: restored } as unknown as Agent
+    expect(service.isGranted(agent, 'echo')).toBe(true)
+  })
+
+  it('rejects an empty tool name before appending and grants on a closed turn', async () => {
+    const ctx = await mounted()
+    const { agent, appended } = fakeAgent()
+    const closed = fakeAgent([{ type: 'turn/start' }, { type: 'turn/end' }])
+
+    expect(() => { ctx.approval.grant(agent.session, ' ') })
+      .toThrow('approval grant requires a non-empty tool name')
+    expect(appended).toHaveLength(0)
+
+    ctx.approval.grant(closed.agent.session, 'echo')
+    expect(closed.appended).toEqual([{ type: 'approval/grant', data: { toolName: 'echo' } }])
+    expect(ctx.approval.isGranted(closed.agent, 'echo')).toBe(true)
+  })
+
+  it('answers a granted request without consulting an answerer and marks it remembered', async () => {
+    const ctx = await mounted()
+    const { agent, appended } = fakeAgent()
+    ctx.approval.grant(agent.session, 'echo')
+    const consulted = vi.fn()
+    ctx.on('approval/request', (_req, next) => { consulted(); return next() })
+
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('allowed-once')
+
+    expect(consulted).not.toHaveBeenCalled()
+    expect(appended.map(event => event.type)).toEqual(['approval/grant', 'approval/asked', 'approval/decided'])
+    expect(appended[2]?.data).toMatchObject({ outcome: 'allowed-once', remembered: true })
+  })
+
+  it('keeps never deterministic over a remembered grant', async () => {
+    const ctx = new Context()
+    await ctx.plugin(ApprovalService, { policy: 'never' })
+    const { agent, appended } = fakeAgent()
+    ctx.approval.grant(agent.session, 'echo')
+
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('rejected')
+    expect(appended.at(-1)?.data).toMatchObject({ outcome: 'rejected' })
+    expect(appended.at(-1)?.data['remembered']).toBeUndefined()
+  })
+
+  it('marks a grant recorded by the answerer and shares it with a live descendant', async () => {
+    const ctx = await mounted()
+    const parent = fakeAgent([{ type: 'turn/start' }], { id: 'grant-parent' })
+    const child = fakeAgent(defaultChildSeed(), { id: 'grant-child', parentSession: 'grant-parent' })
+    ctx.provide('agents', { get: (id: SessionId) => id === parent.agent.id ? parent.agent : undefined } as never)
+    ctx.on('approval/request', () => {
+      ctx.approval.grant(parent.agent.session, 'echo')
+      return Promise.resolve<ApprovalOutcome>('allowed-once')
+    })
+
+    await expect(ctx.approval.request(requestOf(parent.agent))).resolves.toBe('allowed-once')
+    expect(parent.appended.at(-1)?.data).toMatchObject({ outcome: 'allowed-once', remembered: true })
+    expect(ctx.approval.isGranted(child.agent, 'echo')).toBe(true)
+    await expect(ctx.approval.request(requestOf(child.agent))).resolves.toBe('allowed-once')
+  })
+
+  it('does not inherit a grant across a missing parent or without a live registry', async () => {
+    const ctx = await mounted()
+    const parent = fakeAgent([{ type: 'turn/start' }], { id: 'grant-parent' })
+    ctx.approval.grant(parent.agent.session, 'echo')
+    const orphan = fakeAgent(defaultChildSeed(), { id: 'grant-orphan', parentSession: 'missing-parent' })
+    const child = fakeAgent(defaultChildSeed(), { id: 'grant-child', parentSession: 'grant-parent' })
+
+    expect(ctx.approval.isGranted(orphan.agent, 'echo')).toBe(false)
+    expect(ctx.approval.isGranted(child.agent, 'echo')).toBe(false)
+  })
+
+  it('walks more than one live ancestor', async () => {
+    const ctx = await mounted()
+    const root = fakeAgent([{ type: 'turn/start' }], { id: 'grant-root' })
+    const child = fakeAgent(defaultChildSeed(), { id: 'grant-middle', parentSession: 'grant-root' })
+    const grandchild = fakeAgent(defaultChildSeed(), { id: 'grant-leaf', parentSession: 'grant-middle' })
+    const byId = new Map<SessionId, Agent>([
+      [root.agent.id, root.agent],
+      [child.agent.id, child.agent],
+    ])
+    ctx.provide('agents', { get: (id: SessionId) => byId.get(id) } as never)
+    ctx.approval.grant(root.agent.session, 'echo')
+
+    expect(ctx.approval.isGranted(grandchild.agent, 'echo')).toBe(true)
+    expect(ctx.approval.isGranted(child.agent, 'read')).toBe(false)
   })
 })
 

@@ -3336,7 +3336,7 @@
       "kind": "event",
       "event": "approval/decided",
       "surface": false,
-      "digest": "bb1ab3d08f49a9f3b265f844cd78d5c49813062a7b34b54904b426f85d0ff6e3",
+      "digest": "9e19c5180611b84c128c8820dc3a432fac4b5780fe1897e7557fc1b99334fa69",
       "schema": {
         "root": 0,
         "nodes": [
@@ -3383,6 +3383,11 @@
                 "name": "outcome",
                 "type": 3,
                 "optional": false
+              },
+              {
+                "name": "remembered",
+                "type": 8,
+                "optional": true
               }
             ],
             "indices": []
@@ -3427,6 +3432,76 @@
           {
             "kind": "literal",
             "value": "approval/decided"
+          }
+        ]
+      }
+    },
+    {
+      "key": "event:approval/grant",
+      "kind": "event",
+      "event": "approval/grant",
+      "surface": false,
+      "digest": "1525755c8d2d6ad380c2f42cc5b203dc4fa8b1f96bbd3cd9a8c7a8b9ce986db4",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 4,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 5,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "toolName",
+                "type": 2,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "approval/grant"
           }
         ]
       }
@@ -22466,7 +22541,7 @@
         "packages/interaction/user-approval/src/index.ts#ApprovalPolicy"
       ],
       "sources": [
-        "packages/interaction/user-approval/src/index.ts:67"
+        "packages/interaction/user-approval/src/index.ts:68"
       ]
     },
     {
@@ -22668,7 +22743,7 @@
       "digest": "11f70b595aa76897fc4e25a352bfa718c659f44b799e5aa14e84e5a38fe72912",
       "names": [],
       "sources": [
-        "packages/interaction/user-approval/src/index.ts:40"
+        "packages/interaction/user-approval/src/index.ts:41"
       ]
     },
     {
@@ -22712,6 +22787,11 @@
     },
     {
       "digest": "15196447222782e773eb943c92b18316ce96b9af0f0cfddb6e57ba8274ecc5ff",
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "1525755c8d2d6ad380c2f42cc5b203dc4fa8b1f96bbd3cd9a8c7a8b9ce986db4",
       "names": [],
       "sources": []
     },
@@ -23270,6 +23350,13 @@
       ]
     },
     {
+      "digest": "38a20918ad5257ce2e9f10115576f730c52b1043e25defd63920a51001cea870",
+      "names": [],
+      "sources": [
+        "packages/interaction/user-approval/src/types.ts:42"
+      ]
+    },
+    {
       "digest": "390eed1028aba02774f14408647acec10ec5516e97d4f15ecde2b9989d5a69f2",
       "names": [
         "packages/feedback/message-feedback/src/types.ts#MessageFeedbackRating"
@@ -23445,7 +23532,7 @@
       "digest": "45f2a07ea94573123b6ae14db787a40062dec3834f36d8be92c523d40ba28448",
       "names": [],
       "sources": [
-        "packages/interaction/user-approval/src/types.ts:44"
+        "packages/interaction/user-approval/src/types.ts:53"
       ]
     },
     {
@@ -24440,6 +24527,13 @@
       "sources": []
     },
     {
+      "digest": "851ba416ade82f5d2f084d404d4baf757fb3bd113d9a93f187fc4db8640af854",
+      "names": [],
+      "sources": [
+        "packages/interaction/user-approval/src/types.ts:64"
+      ]
+    },
+    {
       "digest": "854db3efdfb0cd39d30953b28703e519c121f1115cebfffc40369fe86c406dd1",
       "names": [],
       "sources": []
@@ -24632,13 +24726,6 @@
       "sources": []
     },
     {
-      "digest": "93cbbc5a7fd0b1aa1ff1b9a6bb5ec52b073f48e5a5200365c45c0cd54059e1b9",
-      "names": [],
-      "sources": [
-        "packages/interaction/user-approval/src/types.ts:55"
-      ]
-    },
-    {
       "digest": "93d38436347f67c9022aacbc4472e283d722bcab8eb73fc376aaf7b6a6b9fb35",
       "names": [],
       "sources": []
@@ -24779,6 +24866,11 @@
       "sources": []
     },
     {
+      "digest": "9e19c5180611b84c128c8820dc3a432fac4b5780fe1897e7557fc1b99334fa69",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "9e2c06d8653585b33d72d5c1a80da79c8a24a88c284409bca15cc0f0ead5ebfb",
       "names": [],
       "sources": []
@@ -24845,6 +24937,11 @@
     },
     {
       "digest": "a2066bd52f61218ba15b758def2641cc6a8bd3d4a594a488ee4c65be356d7e39",
+      "names": [],
+      "sources": []
+    },
+    {
+      "digest": "a23e1b09cbd076d4bca2514a3867453624adb1e48cb82bba3eba11c4b23ceecd",
       "names": [],
       "sources": []
     },
@@ -25320,11 +25417,6 @@
     },
     {
       "digest": "baccc97ec34be6c4c78e95aa88c85c29820269479445e5b13f956cd64c5e286f",
-      "names": [],
-      "sources": []
-    },
-    {
-      "digest": "bb1ab3d08f49a9f3b265f844cd78d5c49813062a7b34b54904b426f85d0ff6e3",
       "names": [],
       "sources": []
     },

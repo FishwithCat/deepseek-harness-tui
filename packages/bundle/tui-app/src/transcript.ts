@@ -101,6 +101,8 @@ export interface ApprovalEntry {
   reason?: string
   /** Settled outcome; absent while the request is still waiting. */
   outcome?: ApprovalOutcome
+  /** The allowed outcome is covered by a remembered grant for this tool. */
+  remembered?: true
 }
 
 /** One rendered row of the transcript. */
@@ -509,7 +511,11 @@ export class TerminalTranscript {
   private applyApprovalDecided(data: SessionEvent<'approval/decided'>['data']): boolean {
     const pending = this.approvalById.get(data.id)
     if (pending === undefined) return false
-    const row: ApprovalEntry = { ...pending, outcome: data.outcome }
+    const row: ApprovalEntry = {
+      ...pending,
+      outcome: data.outcome,
+      ...data.remembered === true ? { remembered: true } : {},
+    }
     this.rows[this.rows.indexOf(pending)] = row
     this.approvalById.set(data.id, row)
     return this.changed()

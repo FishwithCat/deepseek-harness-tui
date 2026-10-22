@@ -1,0 +1,28 @@
+# Bilingual-pair consistency record for 2026-10-22-approval-grants.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/persistence-changes/2026-10-22-approval-grants.md
+/:
+  en: 3d5a424ae7d7e46b
+  zh: c22a8e4a62d8cc1a
+/2026-10-22-approval-grants:
+  en: b92e043bbebfd18a
+  zh: 1b9d4fe2bd98d039
+/2026-10-22-approval-grants/summary:
+  en: 3f55cbba928d18d8
+  zh: 7aeb06b6660d05f1
+/2026-10-22-approval-grants/table-of-contents:
+  en: 6cf314a069ceb451
+  zh: 9adff678e9ecab3b
+/2026-10-22-approval-grants/declaration:
+  en: 6907136f28e48c90
+  zh: 02f8298485f3d8e7
+/2026-10-22-approval-grants/compatibility:
+  en: 2066f652854d37fd
+  zh: 62ff0ac49402f0e7
+/2026-10-22-approval-grants/verification:
+  en: 0466e91fddd930bc
+  zh: b9d780845300d5cf
+/2026-10-22-approval-grants/dev-note:
+  en: b75c8458928b72b9
+  zh: 003ba4e17b4b5269

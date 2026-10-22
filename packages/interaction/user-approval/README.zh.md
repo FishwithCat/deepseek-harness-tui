@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-使用本包可要求敏感工具操作在继续前取得一次性决定。`ask` 策略将每个请求发送给部署中的人类或机器应答者；`never` 则直接拒绝，不发出提示。应答者缺失或失败时返回 `unavailable`，使操作以拒绝方式关闭；每项批准也只适用于对应请求。每个请求与结果都会记录在发起请求的会话审计日志中。模型会看到最终工具结果与当前策略，但不会看到人类权限 UI 或审计事件。
+使用本包可要求敏感工具操作在继续前取得决定。`ask` 策略将每个请求发送给部署中的人类或机器应答者；`never` 则直接拒绝，不发出提示。应答者缺失或失败时返回 `unavailable`，使操作以拒绝方式关闭。一次性批准只适用于对应请求；已记住的授权则覆盖同一工具的该会话及其存活后代。每个请求与结果都会记录在发起请求的会话审计日志中。模型会看到最终工具结果与当前策略，但不会看到人类权限 UI 或审计事件。
 
 ## 目录
 
@@ -47,13 +47,17 @@ kind: "package-reference"
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-user-approval)是每个受支持字段及其 JSDoc 的穷尽式真源。`effectivePolicy(session)` 读取当前生效的策略（含配置默认值）；委派用它判断子级是否继承交互式策略。`setPolicy(agent, policy)` 切换运行中的 agent 的策略，并为它的下一个模型步骤排队一条「由用户更改」消息；`setApprovalPolicy(session, policy)` 是会话初始化使用的直接持久写入路径。
 
+### 记住工具
+
+`grant(session, toolName)` 为工具追加一条持久的 `approval/grant`，`isGranted(agent, toolName)` 检查 Agent 自身会话以及通过 `parentSession` 可达的每个存活祖先。在 `ask` 下，已授权的询问不再咨询应答者，直接解析为 `allowed-once`，其 `approval/decided` 带有 `remembered: true`；`never` 仍优先拒绝。TUI 在其自己的根 Agent 上记录授权，因此一次「始终允许」选择覆盖应用及所有存活子代理，包括发起询问的那个。
+
 ### 请求决定
 
 `request(req)` 指名 agent、工具、原因、可选的调用 id，以及一个中止信号。可选的 `displayReason` 提供本地化展示文案，不改写日志中的原因。它要求当前处于尚未结束的轮次中：空闲或在轮次之间调用会在审计前抛出异常。中止会撤回问题——请求以 `cancelled` 结算，迟到的回答被丢弃。若任一审计事件在提交前失败，请求会被拒绝，而不会返回一项未记录的决定。
 
 ### 模型与用户看到什么
 
-模型只会看到发起请求的消费方最终给出的工具结果——允许、拒绝、取消或不可用——以及运行时上下文快照中的当前策略；审计事件与面向人类的权限 UI 不属于模型上下文。`never` 切换会以一条带来源的用户消息告知模型，两种策略都会把各自的完整当前含义贡献给快照。
+模型只会看到发起请求的消费方最终给出的工具结果——允许、拒绝、取消或不可用——以及运行时上下文快照中的当前策略；审计事件、已记住的授权与面向人类的权限 UI 不属于模型上下文。`never` 切换会以一条带来源的用户消息告知模型，两种策略都会把各自的完整当前含义贡献给快照。
 
 -----
 
@@ -69,12 +73,12 @@ kind: "package-reference"
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `ApprovalService`：请求分发、策略折叠与写入路径、运行时上下文贡献 |
+| [`src/index.ts`](src/index.ts) | `ApprovalService`：请求分发、策略折叠与写入路径、已记住的授权、运行时上下文贡献 |
 | [`src/types.ts`](src/types.ts) | `ApprovalRequestId` brand 与结果类型 |
 
 ### 分发
 
-`decide()` 让应答者 waterfall 与请求信号赛跑，并隔离所有应答者故障：抛出异常的监听器会使问题以 `unavailable` 关闭，不属于结果词汇的异常返回值也会规范化为 `unavailable`。`never` 策略在服务内部、waterfall 分发之前执行，因此之后以 `prepend` 注册的监听器也无法绕过确定性的拒绝。请求必须处于未结束的轮次内，因为轮次是持久日志的提交／回放边界——轮次之间的裸事件与崩溃尾部无法区分。
+`decide()` 让应答者 waterfall 与请求信号赛跑，并隔离所有应答者故障：抛出异常的监听器会使问题以 `unavailable` 关闭，不属于结果词汇的异常返回值也会规范化为 `unavailable`。`never` 策略在服务内部、waterfall 分发之前执行，因此之后以 `prepend` 注册的监听器也无法绕过确定性的拒绝。已记住的授权在 `never` 之后、分发之前检查，因此被覆盖的询问绝不会到达应答者。请求必须处于未结束的轮次内，因为审计事件对是持久日志的提交／回放边界——轮次之间的裸事件与崩溃尾部无法区分。
 
 ### 策略与运行时上下文快照
 
@@ -82,7 +86,7 @@ kind: "package-reference"
 
 ### 审计
 
-`request()` 先追加携带请求身份与工具的 `approval/asked`，再追加携带最终结果的 `approval/decided`；确切追加字段见 [`src/index.ts`](src/index.ts)。两者都只写入日志。
+`request()` 先追加携带请求身份与工具的 `approval/asked`，再追加携带最终结果的 `approval/decided`；被已记住授权覆盖的决定还会携带 `remembered: true`。`grant()` 为每个工具追加一次 `approval/grant`。确切追加字段见 [`src/index.ts`](src/index.ts)。这些事件都只写入日志。
 
 </details>
 
@@ -95,6 +99,7 @@ kind: "package-reference"
 
 - [审批子系统参考](../../../docs/subsystems/approval.zh.md)——共享的请求／结果词汇与 `ctx.approval` 的 Cordis 接口面。
 - [审批 seam Agent Note](../../../.agents/notes/implemented/feature/2026-07-06-approval-seam.zh.md)——该 seam 的设计依据。
+- [记住审批授权 Agent Note](../../../.agents/notes/implemented/architecture/2026-10-22-remembered-approval-grants.zh.md)——授权为何是按工具的会话状态，以及 TUI 如何与子代理共享。
 - [沙箱 参考](../../shell/tool-bash/README.zh.md)——沙箱 bash 工具如何为升权重试消费审批。
 - [交互组映射](../README.zh.md)——相邻的权限预设与问答包。
 
@@ -150,8 +155,9 @@ Approval prompts are disabled in this session: actions that require approval are
 
 这些限制说明该 seam 不适用的场景，以及组合时需要特别注意的场景。它们是当前包约束，不是通用权限对比。
 
-- **请求只在尚未结束的轮次内有效**：在空闲时或轮次之间发起调用，会在审计前抛出异常；持久化的轮次外审批工作流仍属延期工作。
-- **仅存在一次性授权**：结果词汇包含 `allowed-once`，但不含 `allow-always`、已记住的规则、撤销或授权存储；会话策略只有 `ask`／`never`。
+- **请求只在尚未结束的轮次内有效**：在空闲时或轮次之间发起调用，会在审计前抛出异常；持久化的轮次外审批工作流仍属延期工作。授权是独立的日志条目，可以在轮次外记录。
+- **授权按工具名称生效**：请求不携带参数，因此一项授权覆盖该工具门控的所有操作；不存在按命令、按路径或按调用的授权。
+- **授权没有撤销控制**：授权持续到会话及其存活后代结束；把策略切换为 `never` 会抑制所有询问，但没有 API 删除单项授权。
 - **请求不携带工具参数**：应答者会看到工具名称、原因和可选调用 id；ACP（Agent Client Protocol）机器通道要求调用 id，并会委托不含 id 的请求。
 - **没有内置应答者**：无头或组合不完整的部署会返回 `unavailable` 并以拒绝方式关闭；服务自身绝不会提示人类。
 

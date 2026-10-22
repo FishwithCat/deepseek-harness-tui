@@ -1,6 +1,7 @@
 /**
- * Service Definition for the approval capability seam, covering requests, cancellation, audit, and per-session policy. Missing
- * answerers fail closed; grants apply only to the requested action.
+ * Service Definition for the approval capability seam, covering requests,
+ * cancellation, audit, per-session policy, and remembered per-tool grants.
+ * Missing answerers fail closed.
  * @module @deepseek-ai/dsh-user-approval
  */
 
@@ -143,9 +144,10 @@ export interface Config {
 }
 
 /**
- * Approval service that applies session policy before answerers and logs every
- * ask/outcome pair to the requesting session. It exposes deterministic policy
- * changes to the model through the runtime-context snapshot and switch notices.
+ * Approval service that applies session policy and remembered per-tool grants
+ * before answerers and logs every ask/outcome pair to the requesting session.
+ * It exposes deterministic policy changes to the model through the
+ * runtime-context snapshot and switch notices.
  */
 export class ApprovalService extends Service {
   static Config: z<Config> = z.object({
@@ -197,10 +199,11 @@ export class ApprovalService extends Service {
   /**
    * Ask the composed answerers to decide one readonly same-process request.
    * The service borrows the request, agent, session, and live signal directly.
-   * The request requires an open turn because the audit pair must be enclosed
-   * by the durable log's commit/replay boundary; an idle ask rejects before
-   * appending anything. The answerer phase always produces an outcome: an
-   * aborted signal yields `'cancelled'`, a missing or throwing answerer yields
+   * A remembered grant for the tool resolves the ask `allowed-once` before any
+   * answerer sees it. The request requires an open turn because the audit pair
+   * must be enclosed by the durable log's commit/replay boundary; an idle ask
+   * rejects before appending anything. The answerer phase always produces an
+   * outcome: an aborted signal yields `'cancelled'`, a missing or throwing answerer yields
    * `'unavailable'` (fail closed), and a rogue non-vocabulary return value is
    * normalized to `'unavailable'`. A failure that prevents either audit append
    * from committing still rejects because returning an unlogged decision would
@@ -229,8 +232,66 @@ export class ApprovalService extends Service {
       ...req.reason !== undefined ? { reason: req.reason } : {},
     })
     const outcome = await this.decide(req, session)
-    session.append('approval/decided', { id, outcome })
+    // A grant recorded while the answerer was deciding (the TUI's Always
+    // allow) covers this request too: mark the decision so the transcript and
+    // watch viewer can show that the tool will not prompt again.
+    const remembered = outcome === 'allowed-once' && this.isGranted(req.agent, req.toolName)
+    session.append('approval/decided', { id, outcome, ...remembered ? { remembered: true } : {} })
     return outcome
+  }
+
+  /**
+   * Remember one tool's approval for a session and its live descendants. Every
+   * later ask for that tool resolves `allowed-once` without consulting an
+   * answerer while the effective policy is `ask`; `never` still rejects first.
+   * Recording nothing when the grant already exists keeps replay and repeated
+   * Always allow choices from growing the log.
+   * @param session - the session whose subtree the grant covers.
+   * @param toolName - the tool whose future asks the grant covers.
+   * @throws when the tool name is empty.
+   */
+  grant(session: Session, toolName: string): void {
+    if (toolName.trim() === '') {
+      throw new TypeError('approval grant requires a non-empty tool name')
+    }
+    if (this.grantedIn(session, toolName)) return
+    session.append('approval/grant', { toolName })
+  }
+
+  /**
+   * Whether a remembered grant covers this Agent's ask for the tool. The walk
+   * reads the Agent's session, then each live ancestor through `parentSession`;
+   * a vanished ancestor ends it, so an orphaned child never inherits a grant it
+   * cannot prove.
+   * @param agent - the asking Agent.
+   * @param toolName - the tool being asked about.
+   * @returns true when the Agent or a live ancestor holds the grant.
+   */
+  isGranted(agent: Agent, toolName: string): boolean {
+    let current = agent
+    for (;;) {
+      if (this.grantedIn(current.session, toolName)) return true
+      const parentId = current.session.header.parentSession
+      if (parentId === undefined) return false
+      const parent = this.ctx.get('agents')?.get(parentId)
+      if (parent === undefined) return false
+      current = parent
+    }
+  }
+
+  /**
+   * Read one session's own grants without walking its lineage.
+   * @param session - session whose log supplies the grants.
+   * @param toolName - tool whose grant is sought.
+   * @returns whether this session recorded a grant for the tool.
+   */
+  private grantedIn(session: Session, toolName: string): boolean {
+    for (let seq = session.seq - 1; seq >= 0; seq -= 1) {
+      // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
+      const event = session.eventAt(SessionSeq(seq))
+      if (event?.type === 'approval/grant' && event.data.toolName === toolName) return true
+    }
+    return false
   }
 
   /**
@@ -273,6 +334,9 @@ export class ApprovalService extends Service {
     // documented promise that 'never' rejects deterministically regardless
     // of registration order — only the service's own request path can.
     if (this.effectivePolicy(session) === 'never') return 'rejected'
+    // A remembered grant is part of the session policy: it decides before any
+    // answerer so a UI that already answered Always allow never sees the ask.
+    if (this.isGranted(req.agent, req.toolName)) return 'allowed-once'
     // Enter the promise chain BEFORE dispatching: a listener that throws
     // SYNCHRONOUSLY (before its first await) must land in the same rejection
     // path as an async one — `Promise.resolve(call())` would let it escape

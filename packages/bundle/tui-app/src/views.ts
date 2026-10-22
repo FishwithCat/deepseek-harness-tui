@@ -226,7 +226,11 @@ function toolBody(text: string, width: number, style: Styler): string[] {
  * @returns the row text.
  */
 function approvalText(entry: ApprovalEntry): string {
-  const state = entry.outcome === undefined ? 'waiting' : entry.outcome.replace('-', ' ')
+  const state = entry.outcome === undefined
+    ? 'waiting'
+    : entry.outcome === 'allowed-once' && entry.remembered === true
+      ? 'allowed always'
+      : entry.outcome.replace('-', ' ')
   const reason = entry.reason === undefined ? '' : ` · ${entry.reason}`
   return `approval · ${entry.toolName} — ${state}${reason}`
 }

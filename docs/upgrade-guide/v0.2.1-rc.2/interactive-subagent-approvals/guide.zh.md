@@ -9,7 +9,7 @@ description: "TUI 在委派子代理升权前询问用户，由 subagent.delegat
 
 ## 变更
 
-TUI 会为本应用自己的 Agent 及存活的子代理后代应答审批，其 profile 设置 `subagent.delegatedApproval: inherit`。在交互式 `ask` 策略下启动的进程内子代理会记录该策略，需要审批的操作会暂停在「允许一次／拒绝」提示上，而不再被自动拒绝；提示标题会标出子代理的 descriptor 标签。运行在 `never` 下的父级（例如 Full access preset）仍向子级委派 `never`，其他 profile 保持包的默认值 `never`。
+TUI 会为本应用自己的 Agent 及存活的子代理后代应答审批，其 profile 设置 `subagent.delegatedApproval: inherit`。在交互式 `ask` 策略下启动的进程内子代理会记录该策略，需要审批的操作会暂停在「允许一次／始终允许／拒绝」提示上，而不再被自动拒绝；提示标题会标出子代理的 descriptor 标签。「始终允许」会在根 Agent 上记录按工具的授权，因此之后来自根代理或任何存活子代理的同工具询问都不再弹出提示。该授权是必需的 Session 事件；早于该功能的构建会拒绝包含它的会话，而不是静默丢弃授权。运行在 `never` 下的父级（例如 Full access preset）仍向子级委派 `never`，其他 profile 保持包的默认值 `never`。
 
 ## 迁移
 

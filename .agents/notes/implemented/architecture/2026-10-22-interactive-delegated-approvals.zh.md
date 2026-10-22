@@ -22,7 +22,7 @@ Status: implemented
 
 ### TUI 应答自己的 Agent 与存活后代
 
-当提问的 Agent 是本应用自己的 Agent 或存活后代时，`installApprovalAnswerer` 认领该请求。它通过 `ctx.agents` 沿持久的 `parentSession` 头部向上遍历，因此无关根代理，或父级已不存活的子代理，仍会被委托并失败关闭。后代提示会标出子级的 `subagent/descriptor` 标签（没有标签时用短 id），使并发请求仍可归属；现有的提示队列将它们串行化。`Allow once` 仍是唯一的批准，跳过或取消仍解析为 `cancelled`。
+当提问的 Agent 是本应用自己的 Agent 或存活后代时，`installApprovalAnswerer` 认领该请求。它通过 `ctx.agents` 沿持久的 `parentSession` 头部向上遍历，因此无关根代理，或父级已不存活的子代理，仍会被委托并失败关闭。后代提示会标出子级的 `subagent/descriptor` 标签（没有标签时用短 id），使并发请求仍可归属；现有的提示队列将它们串行化。`Allow once` 只覆盖单个请求；`Always allow` 在应用的根代理上记录按工具的授权，跳过或取消仍解析为 `cancelled`（[记住的授权](2026-10-22-remembered-approval-grants.zh.md)）。
 
 用户提问接缝不变：委派子代理无法调用 `ask_user_question`，因为提问服务会以 `DELEGATED_CALLER` 拒绝非根调用者，所以终端应答器保持仅根 Agent 的提问范围。
 

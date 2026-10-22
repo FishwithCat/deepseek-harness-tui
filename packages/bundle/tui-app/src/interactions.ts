@@ -3,13 +3,14 @@
  * approvals and structured user questions. Approvals are answered for the
  * app's own Agent and its live subagent descendants; every other Agent's
  * request is delegated, so a composition that also mounts another surface
- * keeps its own answerers authoritative. Questions stay restricted to the
- * app's own Agent because a delegated child cannot ask them. A timed question
- * is claimed through the user-questions service so this surface owns the
- * countdown; a window that closes without an answer settles the call as
- * pending, leaving it answerable as a late reply. A question's options end in a
- * free-text `Other…` row, Escape skips the question, and Ctrl+C cancels the
- * whole ask.
+ * keeps its own answerers authoritative. Always allow records a per-tool grant
+ * on the app's own root Agent, covering every live descendant. Questions stay
+ * restricted to the app's own Agent because a delegated child cannot ask them.
+ * A timed question is claimed through the user-questions service so this
+ * surface owns the countdown; a window that closes without an answer settles
+ * the call as pending, leaving it answerable as a late reply. A question's
+ * options end in a free-text `Other…` row, Escape skips the question, and
+ * Ctrl+C cancels the whole ask.
  * @module @deepseek-ai/dsh-tui-app/interactions
  */
 
@@ -85,6 +86,8 @@ const OTHER_LABEL = 'Other…'
 
 /** Option value that allows one approved action. */
 const ALLOW = 'allow-once'
+/** Option value that allows the tool for the rest of the session and its subagents. */
+const ALWAYS = 'allow-always'
 /** Option value that refuses one action. */
 const REJECT = 'reject'
 
@@ -224,10 +227,21 @@ export function installApprovalAnswerer(ctx: Context, host: InteractionHost, own
     if (!answersFor(ctx, request.agent, owned)) return next()
     const items: SelectItem[] = [
       { value: ALLOW, label: 'Allow once', description: request.reason ?? request.toolName },
+      {
+        value: ALWAYS,
+        label: `Always allow ${request.toolName}`,
+        description: 'Remember for this session and its subagents',
+      },
       { value: REJECT, label: 'Reject', description: 'Deny this call' },
     ]
     return host.choose(approvalHeading(ctx, request, owned), items, request.signal).then((outcome): ApprovalOutcome => {
       if (outcome.kind !== 'answer') return 'cancelled'
+      if (outcome.value.value === ALWAYS) {
+        // The grant belongs to the app's own root so every live descendant,
+        // including the one that asked, resolves it through parentSession.
+        ctx.approval.grant(owned.session, request.toolName)
+        return 'allowed-once'
+      }
       return outcome.value.value === ALLOW ? 'allowed-once' : 'rejected'
     })
   })

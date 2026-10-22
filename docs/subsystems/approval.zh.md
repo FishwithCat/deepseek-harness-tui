@@ -2,7 +2,7 @@
 
 [English](approval.md) | 中文
 
-[dsh-user-approval](../../packages/interaction/user-approval) 的用户审批 seam 回答一个问题：这个具体操作是否可以继续？它拥有共享的请求/结果词汇、`ctx.approval` 分发服务、`approval/request` 应答者 waterfall（瀑布式事件）、仅记录日志的审计事件对，以及按会话的 `ask`/`never` 策略。UI 通道可以提供人类应答者；[ACP（Agent Client Protocol）自动化桥接层](../../packages/acp/acp)为其拥有的 agent（智能体）提供一次性机器决策。调用方如 [dsh-tools](../../packages/core/tools) 和 [dsh-tool-bash](../../packages/shell/tool-bash) 消费闭合的结果，除非结果为 `allowed-once`，否则一律拒绝。
+[dsh-user-approval](../../packages/interaction/user-approval) 的用户审批 seam 回答一个问题：这个具体操作是否可以继续？它拥有共享的请求/结果词汇、`ctx.approval` 分发服务、`approval/request` 应答者 waterfall（瀑布式事件）、仅记录日志的审计事件对、按会话的 `ask`/`never` 策略，以及按工具记住的授权。UI 通道可以提供人类应答者；[ACP（Agent Client Protocol）自动化桥接层](../../packages/acp/acp)为其拥有的 agent（智能体）提供一次性机器决策。调用方如 [dsh-tools](../../packages/core/tools) 和 [dsh-tool-bash](../../packages/shell/tool-bash) 消费闭合的结果，除非结果为 `allowed-once`，否则一律拒绝。
 
 源码：[`packages/interaction/user-approval/src/index.ts`](../../packages/interaction/user-approval/src/index.ts)
 
@@ -18,7 +18,7 @@
 type ApprovalRequestId = Branded<'ApprovalRequestId'>
 ```
 
-`ApprovalOutcome` 是闭合的，且失败时拒绝。`allowed-once` 仅授权所询问的那一个操作；调用方对 `rejected`、`cancelled` 和 `unavailable` 均执行拒绝。缺失、不负责该请求、抛异常或不合规的应答者会产生 `unavailable`，而非放行。
+`ApprovalOutcome` 是闭合的，且失败时拒绝。`allowed-once` 仅授权所询问的那一个操作；调用方对 `rejected`、`cancelled` 和 `unavailable` 均执行拒绝。缺失、不负责该请求、抛异常或不合规的应答者会产生 `unavailable`，而非放行。已记住的授权不增加结果值：被覆盖的询问仍返回 `allowed-once`，并在审计决定中标记为 `remembered`。
 
 ```ts type-equiv
 /**
@@ -47,6 +47,10 @@ type ApprovalPolicy = 'ask' | 'never'
 ```
 
 两种策略都会将各自完整的当前含义贡献给缓存安全的运行时上下文快照。带来源的 `user/message` 是持久化且模型可见的输入；审批状态变化时，会在保留的历史后追加一份新的完整快照，而不触碰承载渲染后系统提示词的 `system/message` 节点。
+
+## 已记住的授权
+
+`ApprovalService.grant(session, toolName)` 追加一条 `approval/grant` 事件；该会话已持有此工具的授权时不追加任何内容。`isGranted(agent, toolName)` 读取 Agent 自身会话以及通过 `parentSession` 可达的每个存活祖先；祖先消失即结束遍历，因此孤立子代理不会继承它无法证明的授权。服务在 `never` 之后、`ask` 下的应答者分发之前检查授权，因此被覆盖的询问不需提示即结算为 `allowed-once`，其 `approval/decided` 带有 `remembered: true`。授权是与界面无关的会话状态；TUI 是当前的写入方，并在其根 Agent 上为整个应用树记录授权。
 
 ## 审批请求
 
@@ -83,7 +87,7 @@ interface ApprovalRequest extends ApprovalRequestEvent {
 
 ## 分发与审计
 
-`ctx.approval.request(req)` 要求发起请求的会话处于一个尚未结束的轮次内。它追加 `approval/asked`，获取一个结果，追加对应的 `approval/decided`，然后以该结果完成。`never` 策略在服务内部、waterfall 分发之前强制执行，因此即使后来以 `prepend` 注册的应答者也无法绕过它。应答者在负责处理该请求时返回结果，否则调用 `next()` 委托；第一个应答占据唯一的决策槽位。
+`ctx.approval.request(req)` 要求发起请求的会话处于一个尚未结束的轮次内。它追加 `approval/asked`，获取一个结果，追加对应的 `approval/decided`，然后以该结果完成。`never` 策略在服务内部、waterfall 分发之前强制执行，已记住的授权紧随其后检查，因此即使后来以 `prepend` 注册的应答者也无法绕过 `never`，也无法让已覆盖的工具强制弹出提示。应答者在负责处理该请求时返回结果，否则调用 `next()` 委托；第一个应答占据唯一的决策槽位。
 
 审计事件仅写入日志，不进入模型 transcript（文本记录）。模型可见的行为是调用方派生的工具结果与当前运行时上下文快照。服务 dispose（资源释放）时会移除其上下文贡献；应答者监听器独立地通过 effect 绑定到其所属插件。
 
@@ -99,7 +103,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.approval` — `ApprovalService`
 
-Approval service that applies session policy before answerers and logs every ask/outcome pair to the requesting session. It exposes deterministic policy changes to the model through the runtime-context snapshot and switch notices.
+Approval service that applies session policy and remembered per-tool grants before answerers and logs every ask/outcome pair to the requesting session. It exposes deterministic policy changes to the model through the runtime-context snapshot and switch notices.
 
 ```ts cordis-catalog
 /**
@@ -114,10 +118,11 @@ setPolicy(agent: Agent, policy: ApprovalPolicy): void
 /**
  * Ask the composed answerers to decide one readonly same-process request.
  * The service borrows the request, agent, session, and live signal directly.
- * The request requires an open turn because the audit pair must be enclosed
- * by the durable log's commit/replay boundary; an idle ask rejects before
- * appending anything. The answerer phase always produces an outcome: an
- * aborted signal yields `'cancelled'`, a missing or throwing answerer yields
+ * A remembered grant for the tool resolves the ask `allowed-once` before any
+ * answerer sees it. The request requires an open turn because the audit pair
+ * must be enclosed by the durable log's commit/replay boundary; an idle ask
+ * rejects before appending anything. The answerer phase always produces an
+ * outcome: an aborted signal yields `'cancelled'`, a missing or throwing answerer yields
  * `'unavailable'` (fail closed), and a rogue non-vocabulary return value is
  * normalized to `'unavailable'`. A failure that prevents either audit append
  * from committing still rejects because returning an unlogged decision would
@@ -130,6 +135,38 @@ setPolicy(agent: Agent, policy: ApprovalPolicy): void
  *   append commit point.
  */
 async request(req: ApprovalRequest): Promise<ApprovalOutcome>
+
+/**
+ * Remember one tool's approval for a session and its live descendants. Every
+ * later ask for that tool resolves `allowed-once` without consulting an
+ * answerer while the effective policy is `ask`; `never` still rejects first.
+ * Recording nothing when the grant already exists keeps replay and repeated
+ * Always allow choices from growing the log.
+ * @param session - the session whose subtree the grant covers.
+ * @param toolName - the tool whose future asks the grant covers.
+ * @throws when the tool name is empty.
+ */
+grant(session: Session, toolName: string): void
+
+/**
+ * Whether a remembered grant covers this Agent's ask for the tool. The walk
+ * reads the Agent's session, then each live ancestor through `parentSession`;
+ * a vanished ancestor ends it, so an orphaned child never inherits a grant it
+ * cannot prove.
+ * @param agent - the asking Agent.
+ * @param toolName - the tool being asked about.
+ * @returns true when the Agent or a live ancestor holds the grant.
+ */
+isGranted(agent: Agent, toolName: string): boolean
+
+/**
+ * The session's effective policy: its own `approval/policy` fold, else the
+ * configured default (the schema already defaulted an omitted policy to
+ * `'ask'`; the `??` only narrows the optional-input TYPE).
+ * @param session - the exact accepted session whose policy applies.
+ * @returns the policy every ask for this session resolves under right now.
+ */
+effectivePolicy(session: Session): ApprovalPolicy
 
 /**
  * Read the session override without applying the configured default.

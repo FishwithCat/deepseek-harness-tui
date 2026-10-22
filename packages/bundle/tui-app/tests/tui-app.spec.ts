@@ -939,8 +939,68 @@ describe('TuiApp', () => {
     const decision = test.ctx.approval.request({ agent, toolName: 'bash' })
     await vi.waitFor(() => { expect(test.terminal.output).toContain('Allow bash?') })
     test.terminal.feed('\x1b[B')
+    test.terminal.feed('\x1b[B')
     test.terminal.feed('\r')
     await expect(decision).resolves.toBe('rejected')
+    await test.app.stop(0)
+  })
+
+  it('remembers Always allow for the session and its subagents', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const agent = owned(test)
+    agent.session.append('turn/start', { turn: 1 })
+    const choose = vi.spyOn(test.app, 'choose')
+    const first = test.ctx.approval.request({ agent, toolName: 'bash', reason: 'needs the workspace' })
+    await vi.waitFor(() => { expect(test.terminal.output).toContain('Always allow bash') })
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed('\r')
+    await expect(first).resolves.toBe('allowed-once')
+    await vi.waitFor(() => { expect(test.terminal.output).toContain('allowed always') })
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'approval/grant')).toMatchObject([
+      { data: { toolName: 'bash' } },
+    ])
+    choose.mockClear()
+
+    const second = test.ctx.approval.request({ agent, toolName: 'bash' })
+    await expect(second).resolves.toBe('allowed-once')
+    expect(choose).not.toHaveBeenCalled()
+
+    const child = await test.ctx.agents.create({
+      sessionId: SessionId('grant-child'),
+      parentAgent: agent,
+      meta: { parentSession: agent.session.id, origin: 'subagent', cwd: process.cwd() },
+    })
+    child.agent.session.append('turn/start', { turn: 1 })
+    const third = test.ctx.approval.request({ agent: child.agent, toolName: 'bash' })
+    await expect(third).resolves.toBe('allowed-once')
+    expect(choose).not.toHaveBeenCalled()
+    await test.app.stop(0)
+  })
+
+  it('remembers Always allow chosen on a descendant for the root session', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const root = owned(test)
+    const child = await test.ctx.agents.create({
+      sessionId: SessionId('grant-child-root'),
+      parentAgent: root,
+      meta: { parentSession: root.session.id, origin: 'subagent', cwd: process.cwd() },
+    })
+    child.agent.session.append('turn/start', { turn: 1 })
+    const choose = vi.spyOn(test.app, 'choose')
+    const childDecision = test.ctx.approval.request({ agent: child.agent, toolName: 'bash' })
+    await vi.waitFor(() => { expect(test.terminal.output).toContain('Always allow bash') })
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed('\r')
+    await expect(childDecision).resolves.toBe('allowed-once')
+    expect(root.session.snapshotEvents().filter(event => event.type === 'approval/grant')).toMatchObject([
+      { data: { toolName: 'bash' } },
+    ])
+    choose.mockClear()
+
+    root.session.append('turn/start', { turn: 1 })
+    const rootDecision = test.ctx.approval.request({ agent: root, toolName: 'bash' })
+    await expect(rootDecision).resolves.toBe('allowed-once')
+    expect(choose).not.toHaveBeenCalled()
     await test.app.stop(0)
   })
 
