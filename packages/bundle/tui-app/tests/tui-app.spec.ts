@@ -24,7 +24,8 @@ import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import SkillRegistry, { type SkillCandidate } from '@deepseek-ai/dsh-skill'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
-import { SubagentRunId } from '@deepseek-ai/dsh-subagent'
+import { SUBAGENT_DESCRIPTOR_VERSION, SubagentRunId } from '@deepseek-ai/dsh-subagent'
+import { subagentIdentityProjectionDefinition } from '@deepseek-ai/dsh-subagent/src/projection.ts'
 import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
@@ -200,7 +201,10 @@ async function bench(
   const ctx = new Context()
   contexts.push(ctx)
   await ctx.plugin(SessionStore)
-  if (options.projections !== false) await ctx.plugin(SessionProjectionRegistry)
+  if (options.projections !== false) {
+    await ctx.plugin(SessionProjectionRegistry)
+    ctx.sessionProjections.register(subagentIdentityProjectionDefinition)
+  }
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await ctx.plugin(LlmRuntime)
@@ -925,6 +929,152 @@ describe('TuiApp', () => {
     await vi.waitFor(() => { expect(test.terminal.output).toContain('Allow bash?') })
     test.terminal.feed('\r')
     await expect(decision).resolves.toBe('allowed-once')
+    await test.app.stop(0)
+  })
+
+  it('rejects an approval request from the modal list', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const agent = owned(test)
+    agent.session.append('turn/start', { turn: 1 })
+    const decision = test.ctx.approval.request({ agent, toolName: 'bash' })
+    await vi.waitFor(() => { expect(test.terminal.output).toContain('Allow bash?') })
+    test.terminal.feed('\x1b[B')
+    test.terminal.feed('\r')
+    await expect(decision).resolves.toBe('rejected')
+    await test.app.stop(0)
+  })
+
+  it('cancels a descendant approval on Escape', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const parent = owned(test)
+    const child = await test.ctx.agents.create({
+      sessionId: SessionId('cancel-child'),
+      parentAgent: parent,
+      meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
+    })
+    child.agent.session.append('turn/start', { turn: 1 })
+    const decision = test.ctx.approval.request({ agent: child.agent, toolName: 'bash' })
+    await vi.waitFor(() => { expect(test.terminal.output).toContain('Allow bash?') })
+    test.terminal.feed('\x1b')
+    await expect(decision).resolves.toBe('cancelled')
+    await test.app.stop(0)
+  })
+
+  it('answers a nested descendant approval under its subagent label', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const parent = owned(test)
+    const child = await test.ctx.agents.create({
+      sessionId: SessionId('approval-child'),
+      parentAgent: parent,
+      meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
+    })
+    const grandchild = await test.ctx.agents.create({
+      sessionId: SessionId('approval-grandchild'),
+      parentAgent: child.agent,
+      meta: {
+        parentSession: child.agent.session.id,
+        origin: 'subagent',
+        delegationDepth: 2,
+        cwd: process.cwd(),
+      },
+    })
+    grandchild.agent.session.append('subagent/descriptor', {
+      version: SUBAGENT_DESCRIPTOR_VERSION,
+      mode: 'one-shot',
+      provider: 'spawn',
+      label: 'explorer',
+    })
+    grandchild.agent.session.append('turn/start', { turn: 1 })
+    const decision = test.ctx.approval.request({
+      agent: grandchild.agent,
+      toolName: 'bash',
+      reason: 'needs the workspace',
+    })
+    await vi.waitFor(() => {
+      expect(test.terminal.output).toContain('subagent · explorer')
+      expect(test.terminal.output).toContain('Allow bash?')
+    })
+    test.terminal.feed('\r')
+    await expect(decision).resolves.toBe('allowed-once')
+    await test.app.stop(0)
+  })
+
+  it('falls back to the short id for a descendant without a descriptor', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const parent = owned(test)
+    const child = await test.ctx.agents.create({
+      sessionId: SessionId('child-y'),
+      parentAgent: parent,
+      meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
+    })
+    child.agent.session.append('turn/start', { turn: 1 })
+    const decision = test.ctx.approval.request({ agent: child.agent, toolName: 'bash' })
+    await vi.waitFor(() => {
+      expect(test.terminal.output).toContain('subagent · child-y')
+      expect(test.terminal.output).toContain('Allow bash?')
+    })
+    test.terminal.feed('\r')
+    await expect(decision).resolves.toBe('allowed-once')
+    await test.app.stop(0)
+  })
+
+  it('labels a descendant by its short id when no projection is composed', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { projections: false })
+    const parent = owned(test)
+    const child = await test.ctx.agents.create({
+      sessionId: SessionId('child-x'),
+      parentAgent: parent,
+      meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
+    })
+    child.agent.session.append('turn/start', { turn: 1 })
+    const decision = test.ctx.approval.request({ agent: child.agent, toolName: 'bash' })
+    await vi.waitFor(() => {
+      expect(test.terminal.output).toContain('subagent · child-x')
+      expect(test.terminal.output).toContain('Allow bash?')
+    })
+    test.terminal.feed('\r')
+    await expect(decision).resolves.toBe('allowed-once')
+    await test.app.stop(0)
+  })
+
+  it('delegates a child whose parent chain is no longer live', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const orphan = await test.ctx.agents.create({
+      sessionId: SessionId('orphan-child'),
+      meta: {
+        parentSession: SessionId('missing-parent'),
+        origin: 'subagent',
+        delegationDepth: 1,
+        cwd: process.cwd(),
+      },
+    })
+    orphan.agent.session.append('turn/start', { turn: 1 })
+    const decision = test.ctx.approval.request({ agent: orphan.agent, toolName: 'bash' })
+    await expect(decision).resolves.toBe('unavailable')
+    expect(test.terminal.output).not.toContain('Allow bash?')
+    await test.app.stop(0)
+  })
+
+  it('delegates an unrelated root approval instead of prompting', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const other = await test.ctx.agents.create({ sessionId: SessionId('other-root') })
+    other.agent.session.append('turn/start', { turn: 1 })
+    const decision = test.ctx.approval.request({ agent: other.agent, toolName: 'bash' })
+    await expect(decision).resolves.toBe('unavailable')
+    expect(test.terminal.output).not.toContain('Allow bash?')
+    await test.app.stop(0)
+  })
+
+  it('settles a queued prompt whose signal aborts before it opens', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const first = test.app.choose('First', [{ value: 'a', label: 'Alpha' }])
+    const controller = new AbortController()
+    const second = test.app.choose('Second', [{ value: 'b', label: 'Beta' }], controller.signal)
+    controller.abort()
+    await vi.waitFor(() => { expect(test.terminal.output).toContain('First') })
+    test.terminal.feed('\r')
+    await expect(first).resolves.toMatchObject({ kind: 'answer', value: { value: 'a' } })
+    await expect(second).resolves.toEqual({ kind: 'cancel' })
     await test.app.stop(0)
   })
 

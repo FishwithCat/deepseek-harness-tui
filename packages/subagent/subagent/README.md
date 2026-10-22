@@ -54,6 +54,10 @@ Set `maxActiveSubagents` on the host plugin to limit live and materializing chil
 
 The current `maxActiveSubagents` value is sampled before every new or cold-resumed Activation. Raising it admits more children in existing trees; lowering it leaves resident children running and refuses further admissions until usage is below the limit.
 
+### Delegated approval policy
+
+Every in-process child created with the approval capability composed records an `approval/policy` event with `source: 'delegation'` before publication. `delegatedApproval: 'never'` (the default) pins every ask to deterministic rejection, so an unattended child acts only inside the sandbox scope captured at delegation. `'inherit'` seeds the parent's current effective policy instead, letting a surface that also answers descendant Agents decide a child's escalation; the sandbox scope stays fixed and each grant remains one-shot. A parent running under `never` passes `never` to its children either way.
+
 At capacity, creation or cold resume rejects with `ACTIVATION_LIMIT_REACHED` (browser prompts receive `subagent/delivery-unavailable`): wait for a child to finish or continue using the existing agents. Admission does not queue, because a parent waiting for descendants must not wait for its own occupied slot. Slots are process-local and do not constrain cumulative Session history or token usage.
 
 ### Local and external children
@@ -151,6 +155,7 @@ Read these pages when the package-level contract is not enough. They move from t
 - [Continuable subagents](../../../.agents/notes/implemented/feature/2026-07-28-continuable-subagent-conversations.md) — durable children that accept follow-up turns.
 - [In-process spawn backend](../subagent-spawn-in-process/README.md) — the simplest provider to compose.
 - [Auto review](../../experimental/auto-review/README.md) — the current-session authorization mode inherited only by in-process DSH children.
+- [Interactive delegated approvals](../../../.agents/notes/implemented/architecture/2026-10-22-interactive-delegated-approvals.md) — why the TUI answers live descendants while the package default stays non-interactive.
 - [Out-of-process ACP backend](../subagent-acp/README.md) — children with their own runtime over the Agent Client Protocol.
 - [DeepSeek input conversion](../../llm/llm-deepseek/README.md#model-experience) — provider replay rules for saved settlement notices.
 - [tool-subagent-control README](../tool-subagent-control/README.md) — the follow-up, interrupt, and listing surface.
@@ -178,12 +183,18 @@ Append-only in the parent: the notice follows its reusable request prefix. Reach
 
 #### What the model sees
 
-Every in-process child's runtime-context snapshot carries the `subagent:delegation` statement below, after the sandbox-policy and approval-policy sentences.
+Every in-process child's runtime-context snapshot carries the `subagent:delegation` statement matching its effective approval policy, after the sandbox-policy and approval-policy sentences.
 
-##### The delegation-scope statement
+##### The delegation-scope statement under `never`
 
 ```markdown
 You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session — operations that require approval are rejected automatically. When the job needs access beyond that scope, do not retry the denied operation; state the limitation in your reply so the delegating agent can handle it.
+```
+
+##### The delegation-scope statement under `ask`
+
+```markdown
+You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session. An operation that needs access beyond that scope may request approval from the user, who can allow or reject it. Do not retry a rejected or denied operation; state the limitation in your reply so the delegating agent can handle it.
 ```
 
 #### Token effect

@@ -24,8 +24,11 @@
   en: 86c982223fab1a3a
   zh: 3d220d8ed84eab9a
 /deepseek-ai-dsh-subagent/use-this-package/activation-capacity:
-  en: 7c9548b9d02efe1f
-  zh: e23bd30b4c9cdabd
+  en: d6a567f0a6c3de68
+  zh: a189b92bb09f5ce2
+/deepseek-ai-dsh-subagent/use-this-package/delegated-approval-policy:
+  en: 74e2486bed4b9b20
+  zh: 32102b1847731d35
 /deepseek-ai-dsh-subagent/use-this-package/local-and-external-children:
   en: 013644290e74493e
   zh: 05014c3c3773edeb
@@ -60,8 +63,8 @@
   en: b74886a091a327d4
   zh: 2124546878ba1aa2
 /deepseek-ai-dsh-subagent/further-exploration:
-  en: 5b0f408dd901d90a
-  zh: e11866d5fd878327
+  en: 86a3e3ad13e29989
+  zh: e5138d34086252b2
 /deepseek-ai-dsh-subagent/model-experience:
   en: 215e7ba838619b7b
   zh: a311da3843709f90
@@ -81,11 +84,14 @@
   en: dc8544657916e194
   zh: b0feff0764b5d903
 /deepseek-ai-dsh-subagent/model-experience/child-delegation-scope-statement/what-the-model-sees:
-  en: 61906b6a7b656eeb
-  zh: 2fa94349714efc9f
-/deepseek-ai-dsh-subagent/model-experience/child-delegation-scope-statement/what-the-model-sees/the-delegation-scope-statement:
-  en: 960e4abc8393bcd1
-  zh: e125aa2bab1570d0
+  en: 6e96e474c7a8f95c
+  zh: b69a8bc8042c2dca
+/deepseek-ai-dsh-subagent/model-experience/child-delegation-scope-statement/what-the-model-sees/the-delegation-scope-statement-under-never:
+  en: 157378eaa0d5c0e6
+  zh: 45fb879d4c3e99c2
+/deepseek-ai-dsh-subagent/model-experience/child-delegation-scope-statement/what-the-model-sees/the-delegation-scope-statement-under-ask:
+  en: e7fdbf3fbafb700b
+  zh: 704da32c0e6d9ee7
 /deepseek-ai-dsh-subagent/model-experience/child-delegation-scope-statement/token-effect:
   en: 4e0b922b186dc2a9
   zh: 7453563417c5b9a2

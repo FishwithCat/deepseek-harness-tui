@@ -3327,16 +3327,27 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 
 - `inject`: `workingDirectory`
 - `refs`: `Volatile` (`@deepseek-ai/cordis`)
-- `source`: [`packages/subagent/subagent/src/index.ts:186`](../packages/subagent/subagent/src/index.ts)
+- `source`: [`packages/subagent/subagent/src/index.ts:187`](../packages/subagent/subagent/src/index.ts)
 
 ```ts config-catalog
 /** Host configuration for continuable subagent capacity. */
 export interface Config {
+  /**
+   * Approval policy seeded onto every in-process child when the approval
+   * capability is composed. `'never'` pins deterministic rejection;
+   * `'inherit'` seeds the parent's current effective policy so a surface that
+   * also answers descendant Agents can decide the child's asks. Defaults to
+   * `'never'`.
+   */
+  delegatedApproval: Volatile<DelegatedApprovalPolicy>
   /** Maximum live children sharing uninterrupted continuable parent links; defaults to 8. */
   maxActiveSubagents: Volatile<number>
   /** Default delegation depth for tools without an explicit limit; defaults to 1. */
   maxDepth: Volatile<number>
 }
+
+/** How a delegated child's approval policy is seeded at creation. */
+export type DelegatedApprovalPolicy = 'never' | 'inherit'
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-subagent -->
 

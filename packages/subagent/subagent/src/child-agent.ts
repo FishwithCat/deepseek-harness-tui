@@ -17,7 +17,7 @@ import type { ToolRestriction } from '@deepseek-ai/dsh-tools'
 // opportunistically (the documented `ctx.get` pattern), never as a hard dep —
 // and merge the inherited permission session-event payloads.
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
-import type {} from '@deepseek-ai/dsh-user-approval'
+import type { ApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-permission-presets'
 // Type-only: make `ctx.get('agentPresets')` resolve to the preset roster when
 // composed — a child inherits its parent's composition opportunistically (the
@@ -164,9 +164,10 @@ export interface ChildComposition {
 }
 
 /**
- * Model-facing delegation-scope statement for every in-process child. A
- * runtime-context contribution rather than a system-prompt section, so the
- * deployment's system prompt stays uniform across parents and children.
+ * Model-facing delegation-scope statement for an in-process child whose approval
+ * policy is `never`. A runtime-context contribution rather than a system-prompt
+ * section, so the deployment's system prompt stays uniform across parents and
+ * children.
  */
 export const SUBAGENT_DELEGATION_CONTEXT
   = 'You are a delegated subagent: your permission scope was fixed when you were started and cannot be '
@@ -175,18 +176,31 @@ export const SUBAGENT_DELEGATION_CONTEXT
     + 'limitation in your reply so the delegating agent can handle it.'
 
 /**
+ * Model-facing delegation-scope statement for an in-process child whose approval
+ * policy is `ask`: the scope stays fixed, but one operation may request a
+ * decision from the user who owns the answerers.
+ */
+export const SUBAGENT_DELEGATION_INTERACTIVE_CONTEXT
+  = 'You are a delegated subagent: your permission scope was fixed when you were started and cannot be '
+    + 'widened from inside this session. An operation that needs access beyond that scope may request '
+    + 'approval from the user, who can allow or reject it. Do not retry a rejected or denied operation; '
+    + 'state the limitation in your reply so the delegating agent can handle it.'
+
+/**
  * Compose a child before publication and restore historical descriptor overrides.
  * Explicit selection mounts the named preset; omission synchronously joins the
  * parent's current generation. Registrations belong to the child's scope.
  * @param childCtx - the child agent's scoped creation context.
  * @param parent - the delegating parent used when no preset is selected.
  * @param composition - independent preset and any overrides read from a historical descriptor.
+ * @param approvalPolicy - the child's effective approval policy, selecting its delegation statement.
  * @returns A promise when mounting an independent preset; otherwise completes synchronously.
  */
 export function applyChildComposition(
   childCtx: Context,
   parent: Agent,
   composition: ChildComposition,
+  approvalPolicy: ApprovalPolicy | undefined,
 ): void | Promise<void> {
   if (composition.agentPreset !== undefined) {
     const presets = childCtx.get('agentPresets')
@@ -194,18 +208,24 @@ export function applyChildComposition(
       throw new SubagentError('selecting a child agent preset requires the agent-presets service', 'PRESET_UNAVAILABLE')
     }
     return presets.mount(childCtx, composition.agentPreset).then(() => {
-      applyChildOverrides(childCtx, composition)
+      applyChildOverrides(childCtx, composition, approvalPolicy)
     })
   }
   childCtx.get('agentPresets')?.composeFrom(childCtx, parent.ctx)
-  applyChildOverrides(childCtx, composition)
+  applyChildOverrides(childCtx, composition, approvalPolicy)
 }
 
-function applyChildOverrides(childCtx: Context, composition: ChildComposition): void {
+function applyChildOverrides(
+  childCtx: Context,
+  composition: ChildComposition,
+  approvalPolicy: ApprovalPolicy | undefined,
+): void {
   childCtx.systemPrompt.context({
     name: 'subagent:delegation',
     order: childCtx.systemPrompt.getContextOrder('SUBAGENT_DELEGATION'),
-    text: SUBAGENT_DELEGATION_CONTEXT,
+    text: approvalPolicy === 'ask'
+      ? SUBAGENT_DELEGATION_INTERACTIVE_CONTEXT
+      : SUBAGENT_DELEGATION_CONTEXT,
   })
   if (composition.persona !== undefined) {
     childCtx.systemPrompt.section({
@@ -217,21 +237,25 @@ function applyChildOverrides(childCtx: Context, composition: ChildComposition): 
   if (composition.toolFilter !== undefined) childCtx.tools.restrict(composition.toolFilter)
 }
 
+/** How a delegated child's approval policy is seeded at creation. */
+export type DelegatedApprovalPolicy = 'never' | 'inherit'
+
 /** Policy seeded onto a child session's log at the delegation boundary. */
 export interface DelegatedPolicyOverrides {
   /**
    * The parent's current preset identity when it runs in Auto or Full access;
-   * the child keeps it under the pinned `never` approval policy.
+   * the child keeps it under the delegated approval policy.
    */
   readonly permissionPreset: 'auto' | 'danger-full-access' | undefined
   /** The parent session's explicit sandbox-mode override, or `undefined` without one. */
   readonly sandboxMode: SandboxMode | undefined
   /**
-   * `'never'` whenever the approval capability is composed, `undefined`
-   * otherwise: a delegated child acts only within the sandbox scope fixed at
-   * delegation, so its asks are rejected deterministically.
+   * The policy to append to the child's own log, or `undefined` without an
+   * approval capability. `'never'` keeps every ask deterministic; `'ask'`
+   * inherits an interactive parent's policy so a composed answerer may decide
+   * the child's requests.
    */
-  readonly approvalPolicy: 'never' | undefined
+  readonly approvalPolicy: ApprovalPolicy | undefined
 }
 
 /**
@@ -240,17 +264,26 @@ export interface DelegatedPolicyOverrides {
  * parent's future, not to this child. Auto and Full access identities are
  * inherited only through the in-process DSH path so either can replace a stale
  * same-bundle fork value. Only the parent session's explicit sandbox override
- * is captured — never deployment defaults or one-shot grants — and the approval
- * policy is pinned to `'never'` regardless of the parent's own policy.
+ * is captured — never deployment defaults or one-shot grants. Approval is
+ * pinned to `'never'` by default; `'inherit'` seeds the parent's current
+ * effective policy instead, which only a surface that also answers descendant
+ * Agents can turn into a prompt.
  * @param parent - the delegating parent agent.
- * @returns the sandbox override (or `undefined` without one) and the approval pin.
+ * @param delegatedApproval - `'never'` to pin rejection, `'inherit'` to seed the parent's effective policy.
+ * @returns the sandbox override (or `undefined` without one) and the approval policy seed.
  */
-export function captureDelegatedPolicyOverrides(parent: Agent): DelegatedPolicyOverrides {
+export function captureDelegatedPolicyOverrides(
+  parent: Agent,
+  delegatedApproval: DelegatedApprovalPolicy,
+): DelegatedPolicyOverrides {
   const preset = parent.ctx.get('permissionPresets')?.current(parent.session)
+  const approval = parent.ctx.get('approval')
   return {
     permissionPreset: preset === 'auto' || preset === 'danger-full-access' ? preset : undefined,
     sandboxMode: parent.ctx.get('sandboxPolicy')?.overrideOf(parent.session),
-    approvalPolicy: parent.ctx.get('approval') === undefined ? undefined : 'never',
+    approvalPolicy: approval === undefined
+      ? undefined
+      : delegatedApproval === 'inherit' ? approval.effectivePolicy(parent.session) : 'never',
   }
 }
 

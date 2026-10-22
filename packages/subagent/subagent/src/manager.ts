@@ -23,7 +23,7 @@ import {
   appendDelegatedPolicyOverrides, applyChildComposition, captureDelegatedPolicyOverrides,
   childSessionMeta, resolveChildAgentOptions, resolveChildDepth,
 } from './child-agent.ts'
-import type { ChildComposition, DelegatedPolicyOverrides } from './child-agent.ts'
+import type { ChildComposition, DelegatedApprovalPolicy, DelegatedPolicyOverrides } from './child-agent.ts'
 import { createAgentMessage, withContinuableReturnGuidance, createSettlementMessage } from './continuation-messages.ts'
 import { assertSubagentMaxDepth } from './depth.ts'
 import { foldSubagentDescriptor, snapshotSubagentDescriptor } from './descriptor.ts'
@@ -152,11 +152,13 @@ export class SubagentManager {
    * @param ctx - context providing Agents, Sessions, and teardown ownership.
    * @param host - provider dispatch and lifecycle observation owned by the service.
    * @param maxActiveSubagents - the current configured child capacity.
+   * @param delegatedApproval - the configured approval policy seed for each local child.
    */
   constructor(
     private readonly ctx: Context,
     private readonly host: SubagentHost,
     private readonly maxActiveSubagents: () => number,
+    private readonly delegatedApproval: () => DelegatedApprovalPolicy,
   ) {
     // Ordinary Cordis owner effects unwind in reverse registration order, which
     // cannot express the dynamic child graph. Register the private scope's
@@ -401,7 +403,7 @@ export class SubagentManager {
     })
     // Capture before the first await: a later parent switch belongs to the
     // parent's future, not to this child.
-    const delegatedPolicies = captureDelegatedPolicyOverrides(parent)
+    const delegatedPolicies = captureDelegatedPolicyOverrides(parent, this.delegatedApproval())
 
     // An idle continuation-managed parent must not settle while a caller is
     // still creating its child. A turn-scoped delegation does not need this,
@@ -880,8 +882,12 @@ export class SubagentManager {
       const setup = async (childCtx: Context, child: Agent): Promise<void> => {
         // Only fresh creation appends the descriptor and delegated policy after
         // the inherited marker; a cold resume replays those persisted events.
+        // Fresh creation knows the captured policy; a resumed child reads the
+        // policy its replayed log already folded.
+        const approvalPolicy = create?.delegatedPolicies.approvalPolicy
+          ?? childCtx.get('approval')?.effectivePolicy(child.session)
         if (inputs.composition.agentPreset !== undefined) {
-          await applyChildComposition(childCtx, parent, inputs.composition)
+          await applyChildComposition(childCtx, parent, inputs.composition, approvalPolicy)
         }
         if (create !== undefined) {
           if (inputs.composition.agentPreset !== undefined) {
@@ -893,7 +899,9 @@ export class SubagentManager {
           if (workingDirectory === undefined) throw new Error('local subagents require the working-directory service')
           await workingDirectory.set(child, create.cwd, inputs.signal)
         }
-        if (inputs.composition.agentPreset === undefined) await applyChildComposition(childCtx, parent, inputs.composition)
+        if (inputs.composition.agentPreset === undefined) {
+          await applyChildComposition(childCtx, parent, inputs.composition, approvalPolicy)
+        }
         if (inputs.outputSchema !== undefined) {
           structured = attachStructuredRuntime(childCtx, inputs.outputSchema, () =>
             this.resident.get(childId)?.ownedChildren.size === 0

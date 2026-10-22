@@ -1,0 +1,34 @@
+# Bilingual-pair consistency record for 2026-10-22-interactive-delegated-approvals.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-22-interactive-delegated-approvals.md
+/agent-note-the-tui-answers-live-descendant-approvals:
+  en: 9de8f7520a92d5dd
+  zh: 0d8636ea412e65cd
+/agent-note-the-tui-answers-live-descendant-approvals/problem:
+  en: 78ac6257cfcf7211
+  zh: 66765f50f3e9eb5f
+/agent-note-the-tui-answers-live-descendant-approvals/decision:
+  en: a15c7c13f167e5ac
+  zh: ff261e3705c47ff0
+/agent-note-the-tui-answers-live-descendant-approvals/decision/approval-policy-is-a-delegation-setting-with-a-non-interactive-default:
+  en: 72de784265953af3
+  zh: 2c407d73bbc2b936
+/agent-note-the-tui-answers-live-descendant-approvals/decision/the-child-s-model-facing-statement-follows-its-policy:
+  en: 5b318f5b61fd9836
+  zh: e34d4ded59d28987
+/agent-note-the-tui-answers-live-descendant-approvals/decision/the-tui-answers-its-own-agent-and-live-descendants:
+  en: abef8c5ba14c3bf4
+  zh: 4106d194f00f6f97
+/agent-note-the-tui-answers-live-descendant-approvals/decision/approval-audit-becomes-visible:
+  en: 301ceb3016c9b2cf
+  zh: 8435e2c98781c9c7
+/agent-note-the-tui-answers-live-descendant-approvals/alternatives-considered:
+  en: 817b2e296efc7d68
+  zh: e1d19d19d5ab2515
+/agent-note-the-tui-answers-live-descendant-approvals/consequences:
+  en: 149e2be3cea82f79
+  zh: 6f4fb3917f815a98
+/agent-note-the-tui-answers-live-descendant-approvals/verification:
+  en: a798a24ebb3ffb6d
+  zh: 5eaae5198d8db161

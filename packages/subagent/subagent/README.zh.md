@@ -54,6 +54,10 @@ kind: "package-reference"
 
 每次新建或冷恢复 Activation 前都会读取当前 `maxActiveSubagents`。调高后已有树可接纳更多子代理；调低后驻留子代理继续运行，使用量降至上限以下前拒绝新接纳。
 
+### 委派审批策略
+
+每个在组合了审批能力时创建的进程内子级都会在发布前记录一条带 `source: 'delegation'` 的 `approval/policy` 事件。`delegatedApproval: 'never'`（默认值）把所有审批请求固定为确定性拒绝，因此无人值守的子代理只能在委派时捕获的沙箱范围内行动。`'inherit'` 改为写入父会话当前生效的策略，让同时应答后代 Agent 的界面可以决定子代理的升级请求；沙箱范围仍然固定，每次批准也只生效一次。无论哪种配置，运行在 `never` 下的父级都会把 `never` 传给子级。
+
 容量耗尽时，新建或冷恢复以 `ACTIVATION_LIMIT_REACHED` 拒绝（浏览器消息返回 `subagent/delivery-unavailable`）：等待子代理完成，或继续使用现有代理。接纳不会排队，避免等待后代的父代理又等待自己占用的名额。名额仅存在于当前进程，不限制累计 Session 历史或 token 用量。
 
 ### 本地与外部子级
@@ -151,6 +155,7 @@ kind: "package-reference"
 - [可继续的 subagent](../../../.agents/notes/implemented/feature/2026-07-28-continuable-subagent-conversations.zh.md)——接受后续轮次的持久子级。
 - [进程内 spawn 后端](../subagent-spawn-in-process/README.zh.md)——最容易组合的提供方。
 - [Auto review](../../experimental/auto-review/README.zh.md)——只有进程内 DSH 子级继承的当前会话授权模式。
+- [交互式委派审批](../../../.agents/notes/implemented/architecture/2026-10-22-interactive-delegated-approvals.zh.md)——TUI 为何应答存活后代，而包默认值保持非交互。
 - [进程外 ACP 后端](../subagent-acp/README.zh.md)——经 Agent Client Protocol 拥有自有运行时的子级。
 - [DeepSeek 输入转换](../../llm/llm-deepseek/README.zh.md#model-experience)——已保存结算通知的提供方回放规则。
 - [tool-subagent-control README](../tool-subagent-control/README.zh.md)——后续消息、中断与列举面。
@@ -178,12 +183,18 @@ kind: "package-reference"
 
 #### 模型看到什么
 
-每个进程内子 agent 的运行时上下文快照都携带下方的 `subagent:delegation` 声明，位于沙箱策略与审批策略语句之后。
+每个进程内子 agent 的运行时上下文快照都携带与其生效审批策略匹配的 `subagent:delegation` 声明，位于沙箱策略与审批策略语句之后。
 
-##### 委派范围声明
+##### `never` 下的委派范围声明
 
 ```markdown
 You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session — operations that require approval are rejected automatically. When the job needs access beyond that scope, do not retry the denied operation; state the limitation in your reply so the delegating agent can handle it.
+```
+
+##### `ask` 下的委派范围声明
+
+```markdown
+You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session. An operation that needs access beyond that scope may request approval from the user, who can allow or reject it. Do not retry a rejected or denied operation; state the limitation in your reply so the delegating agent can handle it.
 ```
 
 #### Token 影响

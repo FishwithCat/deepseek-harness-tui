@@ -18,6 +18,7 @@ import type {} from '@deepseek-ai/dsh-user-questions'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import SessionStore, { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { FileDiff, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
+import { ApprovalRequestId } from '@deepseek-ai/dsh-user-approval'
 import { TerminalTranscript } from '../src/transcript.ts'
 import type { ToolPresentationResolver } from '../src/tool-view.ts'
 import { PROMPT_PANEL_CHROME_ROWS, PROMPT_TITLE_MAX_ROWS, DetailBody, KeyboardSelectList, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptPanelRows, sessionStatsParts, summarizeToolArguments } from '../src/views.ts'
@@ -465,6 +466,56 @@ describe('TerminalTranscript', () => {
       session.append('turn/end', { turn: 2, reason: { kind: 'max-tokens' } })
     })).toBe(true)
     expect(transcript.entries().at(-1)).toMatchObject({ kind: 'notice', level: 'info', text: 'the model reached its output limit' })
+  })
+
+  it('folds an approval ask and its decision into one durable row', async () => {
+    const session = await makeSession()
+    const transcript = new TerminalTranscript()
+    const appendAndFold = folder(transcript, session)
+    appendAndFold(() => { session.append('turn/start', { turn: 1 }) })
+    expect(appendAndFold(() => {
+      session.append('approval/asked', {
+        id: ApprovalRequestId('approval-1'),
+        toolName: 'bash',
+        reason: 'needs the workspace',
+      })
+    })).toBe(true)
+    expect(transcript.entries().at(-1)).toMatchObject({
+      kind: 'approval',
+      toolName: 'bash',
+      reason: 'needs the workspace',
+    })
+
+    expect(appendAndFold(() => {
+      session.append('approval/decided', { id: ApprovalRequestId('approval-1'), outcome: 'allowed-once' })
+    })).toBe(true)
+    expect(transcript.entries()).toHaveLength(1)
+    expect(transcript.entries().at(-1)).toMatchObject({
+      kind: 'approval',
+      toolName: 'bash',
+      outcome: 'allowed-once',
+    })
+    const rendered = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
+      .render(80)
+      .join('\n')
+    expect(rendered).toContain('· approval · bash — allowed once · needs the workspace')
+  })
+
+  it('renders a reasonless pending approval and ignores a decision without its ask', async () => {
+    const session = await makeSession()
+    const transcript = new TerminalTranscript()
+    const appendAndFold = folder(transcript, session)
+    appendAndFold(() => { session.append('turn/start', { turn: 1 }) })
+    appendAndFold(() => {
+      session.append('approval/asked', { id: ApprovalRequestId('approval-pending'), toolName: 'read' })
+    })
+    const rendered = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' }))
+      .render(80)
+      .join('\n')
+    expect(rendered).toContain('· approval · read — waiting')
+    expect(appendAndFold(() => {
+      session.append('approval/decided', { id: ApprovalRequestId('approval-missing'), outcome: 'rejected' })
+    })).toBe(false)
   })
 })
 

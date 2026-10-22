@@ -16,6 +16,13 @@
   config:
     enabled: false
 
+# This surface answers approvals for its own Agent and every live descendant, so
+# in-process children may ask the user instead of failing closed. A child whose
+# parent runs under `never` still inherits the deterministic rejection.
+- id: subagent
+  config:
+    delegatedApproval: inherit
+
 - insert:
     # The model-facing question tool in its timed form: the app owns a bounded
     # countdown, and a window that closes unanswered returns the tool's pending

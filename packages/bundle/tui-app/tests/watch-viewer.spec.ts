@@ -11,6 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-session-query'
 import { Session, SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import { ApprovalRequestId } from '@deepseek-ai/dsh-user-approval'
 import { internals } from '../src/app.ts'
 import { createTheme } from '../src/ansi.ts'
 import { publishWatchRecord, watchRecordPath } from '../src/watch/record.ts'
@@ -529,6 +530,32 @@ describe('WatchApp protocol guards', () => {
       { seq: 1, type: 'tool/call', time: 1, data: { turn: 1, step: 1, callId: 'call-1', name: 'read', arguments: '{}' } } as SessionEvent,
     ])
     expect(Reflect.get(app, 'cursor')).toBe(1)
+  })
+
+  it('shows the child approval audit in the read-only viewer', async () => {
+    const session = childSession()
+    const approvalId = ApprovalRequestId('approval-1')
+    const { app } = await bootHistory(session.header, [
+      turnStart(0),
+      {
+        seq: 1,
+        type: 'approval/asked',
+        time: 1,
+        data: { id: approvalId, toolName: 'bash', reason: 'needs access' },
+      } as SessionEvent,
+      {
+        seq: 2,
+        type: 'approval/decided',
+        time: 2,
+        data: { id: approvalId, outcome: 'rejected' },
+      } as SessionEvent,
+    ])
+    const transcript = Reflect.get(app, 'transcript') as { entries(): readonly unknown[] }
+    expect(transcript.entries().at(-1)).toMatchObject({
+      kind: 'approval',
+      toolName: 'bash',
+      outcome: 'rejected',
+    })
   })
 
   it('ignores later updates after a failure and after teardown', async () => {

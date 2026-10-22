@@ -11,6 +11,7 @@ import { expandAssistantStream } from '@deepseek-ai/dsh-llm'
 import type { AssistantStreamRecord, ContentBlock, MessageSource, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
+import type { ApprovalOutcome, ApprovalRequestId } from '@deepseek-ai/dsh-user-approval'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { imageMarker } from './images.ts'
 import type { ToolPresentationResolver } from './tool-view.ts'
@@ -83,8 +84,27 @@ export interface NoticeEntry {
   text: string
 }
 
+/**
+ * One approval request and its settled outcome, folded from the durable audit
+ * pair. The decision replaces the pending row in place so the request keeps one
+ * identity on screen.
+ */
+export interface ApprovalEntry {
+  kind: 'approval'
+  /** Row identity, stable across the decision. */
+  id: number
+  /** Request identity pairing the ask with its decision. */
+  requestId: ApprovalRequestId
+  /** Tool the decision is about. */
+  toolName: string
+  /** The asker's explanation, when it supplied one. */
+  reason?: string
+  /** Settled outcome; absent while the request is still waiting. */
+  outcome?: ApprovalOutcome
+}
+
 /** One rendered row of the transcript. */
-export type TranscriptEntry = UserEntry | AssistantEntry | ReasoningEntry | ToolEntry | NoticeEntry
+export type TranscriptEntry = UserEntry | AssistantEntry | ReasoningEntry | ToolEntry | NoticeEntry | ApprovalEntry
 
 /** Live assistant text row identity, below every durable row. */
 const LIVE_ASSISTANT_ID = -2
@@ -225,6 +245,7 @@ function isPendingQuestionResult(text: string): boolean {
 export class TerminalTranscript {
   private rows: TranscriptEntry[] = []
   private readonly toolByCallId = new Map<string, ToolEntry>()
+  private readonly approvalById = new Map<ApprovalRequestId, ApprovalEntry>()
   private nextId = 1
   private liveText = ''
   private liveReasoning = ''
@@ -272,6 +293,7 @@ export class TerminalTranscript {
   reset(): void {
     this.rows = []
     this.toolByCallId.clear()
+    this.approvalById.clear()
     this.liveText = ''
     this.liveReasoning = ''
     this.attempt = false
@@ -295,6 +317,10 @@ export class TerminalTranscript {
         return this.applyToolCall(event.data)
       case 'tool/result':
         return this.applyToolResult(event.data)
+      case 'approval/asked':
+        return this.applyApprovalAsked(event.data)
+      case 'approval/decided':
+        return this.applyApprovalDecided(event.data)
       case 'turn/end':
         return this.applyTurnEnd(event.data)
       default:
@@ -464,6 +490,28 @@ export class TerminalTranscript {
     if (!isError && row.name === 'ask_user_question' && isPendingQuestionResult(row.result)) {
       this.notice('info', 'question waiting — /questions answers it')
     }
+    return this.changed()
+  }
+
+  private applyApprovalAsked(data: SessionEvent<'approval/asked'>['data']): boolean {
+    const row: ApprovalEntry = {
+      kind: 'approval',
+      id: this.nextId++,
+      requestId: data.id,
+      toolName: data.toolName,
+      ...data.reason === undefined ? {} : { reason: data.reason },
+    }
+    this.rows.push(row)
+    this.approvalById.set(data.id, row)
+    return this.changed()
+  }
+
+  private applyApprovalDecided(data: SessionEvent<'approval/decided'>['data']): boolean {
+    const pending = this.approvalById.get(data.id)
+    if (pending === undefined) return false
+    const row: ApprovalEntry = { ...pending, outcome: data.outcome }
+    this.rows[this.rows.indexOf(pending)] = row
+    this.approvalById.set(data.id, row)
     return this.changed()
   }
 

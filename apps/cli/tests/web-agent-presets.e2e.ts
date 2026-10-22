@@ -926,7 +926,7 @@ describe('a delegated child', () => {
       meta: childSessionMeta(parent.agent, 1, seeded),
       ...(seeded ? { seed: [], inheritedEventCount: SessionLogOffset(0) } : {}),
       setup: (agentCtx) => {
-        return applyChildComposition(agentCtx, parent.agent, {})
+        return applyChildComposition(agentCtx, parent.agent, {}, undefined)
       },
     })
     try {
@@ -967,7 +967,7 @@ describe('a delegated child', () => {
       sessionId: SessionId('preset-child-switch'),
       meta: childSessionMeta(parent.agent, 1, false),
       setup: (agentCtx) => {
-        return applyChildComposition(agentCtx, parent.agent, {})
+        return applyChildComposition(agentCtx, parent.agent, {}, undefined)
       },
     })
     try {

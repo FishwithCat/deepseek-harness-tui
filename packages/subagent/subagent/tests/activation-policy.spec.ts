@@ -37,12 +37,15 @@ afterEach(async () => {
   await rm(workspace, { recursive: true, force: true })
 })
 
-async function setupWalled(script: Script): Promise<{ ctx: Context; parent: Agent }> {
+async function setupWalled(
+  script: Script,
+  subagents: { delegatedApproval?: 'never' | 'inherit' } = {},
+): Promise<{ ctx: Context; parent: Agent }> {
   const ctx = new Context()
   contexts.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
   await mountLocalActivations(ctx)
-  await ctx.plugin(SubagentRuntime)
+  await ctx.plugin(SubagentRuntime, subagents)
   await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: workspace })
   await ctx.plugin(SandboxedFileSystem, { cwd: workspace })
   await ctx.plugin(ToolFs)
@@ -315,6 +318,56 @@ describe('in-process policy inheritance', () => {
       )
       expect(asked?.data.toolName).toBe('write')
       expect(decided?.data).toMatchObject({ id: asked?.data.id, outcome: 'rejected' })
+    } finally {
+      await run.dispose()
+    }
+  })
+
+  it('inherits an interactive parent policy when the deployment opts in', async () => {
+    const script: Script = []
+    const { ctx, parent } = await setupWalled(script, { delegatedApproval: 'inherit' })
+    let consulted = false
+    ctx.on('approval/request', () => {
+      consulted = true
+      return Promise.resolve('allowed-once' as const)
+    })
+    const allowed = join(workspace, 'escalation-allowed.txt')
+    setSandboxMode(parent.session, 'read-only')
+    script.push(
+      toolCallResponse('write', 'write', {
+        file_path: allowed,
+        content: 'escaped',
+        sandbox_permissions: 'workspace-write',
+        justification: 'test escalation from a delegated child',
+      }),
+      textResponse('child done'),
+    )
+
+    const run = await startPreparedActivation(spawnRequest(parent), {})
+    try {
+      await run.result
+      const child = run.localAgent
+
+      expect(await readFile(allowed, 'utf8')).toBe('escaped')
+      expect(consulted).toBe(true)
+      expect(ctx.approval.overrideOf(child.session)).toBe('ask')
+      const asked = child.session.snapshotEvents().find(
+        (event): event is SessionEvent<'approval/asked'> => event.type === 'approval/asked',
+      )
+      const decided = child.session.snapshotEvents().find(
+        (event): event is SessionEvent<'approval/decided'> => event.type === 'approval/decided',
+      )
+      expect(asked?.data.toolName).toBe('write')
+      expect(decided?.data).toMatchObject({ id: asked?.data.id, outcome: 'allowed-once' })
+      const runtimeContext = child.session.snapshotEvents().find(
+        (event): event is SessionEvent<'user/message'> => event.type === 'user/message'
+          && event.data.source.kind === 'runtime-context',
+      )
+      const contextText = runtimeContext?.data.content
+        .filter((block): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
+        .map(block => block.text)
+        .join('\n')
+      expect(contextText).toContain('may request approval from the user')
     } finally {
       await run.dispose()
     }

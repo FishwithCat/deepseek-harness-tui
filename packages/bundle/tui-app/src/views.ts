@@ -15,7 +15,7 @@ import { markdownTheme } from './ansi.ts'
 import type { Styler, TuiTheme } from './ansi.ts'
 import { buildDiffCard } from './diff.ts'
 import type { DiffCard, DiffRow } from './diff.ts'
-import type { ToolEntry, TranscriptEntry, UserEntry } from './transcript.ts'
+import type { ApprovalEntry, ToolEntry, TranscriptEntry, UserEntry } from './transcript.ts'
 import { TerminalTranscript, textOfBlocks } from './transcript.ts'
 
 /** Indent applied to a Tool row's result body. */
@@ -219,6 +219,19 @@ function toolBody(text: string, width: number, style: Styler): string[] {
 }
 
 /**
+ * One approval audit row's text: the tool, its settlement, and the asker's
+ * reason. A still-pending request reads as waiting because the log can end
+ * between the ask and its decision.
+ * @param entry - the folded approval row.
+ * @returns the row text.
+ */
+function approvalText(entry: ApprovalEntry): string {
+  const state = entry.outcome === undefined ? 'waiting' : entry.outcome.replace('-', ' ')
+  const reason = entry.reason === undefined ? '' : ` · ${entry.reason}`
+  return `approval · ${entry.toolName} — ${state}${reason}`
+}
+
+/**
  * The transcript document. It renders every row it holds and reuses the rows an
  * earlier revision already rendered; the surrounding viewport (an
  * alternate-screen scroll view, or the terminal's own scrollback) owns
@@ -305,6 +318,8 @@ export class TranscriptView implements Component {
         return prefixBody(entry.text, width, this.theme.reasoning('✻ '), this.theme.reasoning('  '))
       case 'tool':
         return this.toolLines(entry, width)
+      case 'approval':
+        return prefixBody(approvalText(entry), width, this.theme.notice('· '), '  ')
       case 'notice':
         return prefixBody(
           entry.text,

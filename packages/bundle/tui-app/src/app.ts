@@ -1131,6 +1131,12 @@ export class TuiApp implements InteractionHost {
     wire: (list: L, settle: PromptSettler<T>) => void,
   ): Promise<PromptOutcome<T>> {
     return this.enqueuePrompt(() => new Promise<PromptOutcome<T>>((resolve) => {
+      // The signal may have aborted while this prompt waited behind another;
+      // no listener observes that past event once the prompt finally opens.
+      if (signal?.aborted === true) {
+        resolve({ kind: 'cancel' })
+        return
+      }
       const detailed = detail !== undefined
       const capacity = this.promptRows(detailed) - this.headingRows(title) - 1 - reservedRows
       // A list longer than the panel budget scrolls, and the scroll indicator
@@ -1173,6 +1179,10 @@ export class TuiApp implements InteractionHost {
    */
   ask(title: InteractionTitle, signal?: AbortSignal, detail?: string): Promise<PromptOutcome<string>> {
     return this.enqueuePrompt(() => new Promise<PromptOutcome<string>>((resolve) => {
+      if (signal?.aborted === true) {
+        resolve({ kind: 'cancel' })
+        return
+      }
       const input = new Input()
       const detailed = detail !== undefined
       const capacity = this.promptRows(detailed) - this.headingRows(title) - 1

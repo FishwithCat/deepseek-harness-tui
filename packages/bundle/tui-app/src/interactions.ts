@@ -1,9 +1,11 @@
 /**
  * Terminal answerers for the two interaction seams the Agent pauses on: tool
- * approvals and structured user questions. Both delegate anything that does not
- * belong to the app's own Agent, so a composition that also mounts subagents or
- * another surface keeps its own answerers authoritative. A timed question is
- * claimed through the user-questions service so this surface owns the
+ * approvals and structured user questions. Approvals are answered for the
+ * app's own Agent and its live subagent descendants; every other Agent's
+ * request is delegated, so a composition that also mounts another surface
+ * keeps its own answerers authoritative. Questions stay restricted to the
+ * app's own Agent because a delegated child cannot ask them. A timed question
+ * is claimed through the user-questions service so this surface owns the
  * countdown; a window that closes without an answer settles the call as
  * pending, leaving it answerable as a late reply. A question's options end in a
  * free-text `Other…` row, Escape skips the question, and Ctrl+C cancels the
@@ -15,12 +17,15 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SelectItem } from '@earendil-works/pi-tui'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm'
-import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
-import type {} from '@deepseek-ai/dsh-user-approval'
+import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import type { AskUserQuestionAnswer, AskUserQuestionAnswerItem, AskUserQuestionItem } from '@deepseek-ai/dsh-user-questions'
 import type {} from '@deepseek-ai/dsh-user-questions'
+// Type-only: merges the subagent identity projection state this surface reads
+// for a child's prompt label.
+import type {} from '@deepseek-ai/dsh-subagent/client'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import type { PromptHeading, PromptTitle } from './views.ts'
 
 /** A heading that is a fixed value, or a provider the surface re-evaluates as it repaints. */
@@ -82,6 +87,55 @@ const OTHER_LABEL = 'Other…'
 const ALLOW = 'allow-once'
 /** Option value that refuses one action. */
 const REJECT = 'reject'
+
+/**
+ * Whether one approval belongs to the app's Agent or a live descendant of it.
+ * The chain is read from the durable `parentSession` header through the live
+ * Agent registry, so a request from an unrelated root, or from a child whose
+ * parent is no longer live, stays delegated.
+ * @param ctx - context carrying the Agent registry.
+ * @param agent - the asking Agent.
+ * @param owned - the app's own root Agent.
+ * @returns true when the app answers this Agent's approvals.
+ */
+function answersFor(ctx: Context, agent: Agent, owned: Agent): boolean {
+  if (agent === owned) return true
+  let current: Agent = agent
+  for (;;) {
+    const parentId = current.session.header.parentSession
+    if (parentId === undefined) return false
+    if (parentId === owned.id) return true
+    const parent = ctx.agents.get(parentId)
+    if (parent === undefined) return false
+    current = parent
+  }
+}
+
+/**
+ * Read a child's durable creation label from the subagent identity projection.
+ * @param ctx - context carrying the projection registry.
+ * @param agent - the asking child.
+ * @returns the label, or undefined when the projection is absent or carries none.
+ */
+function subagentLabel(ctx: Context, agent: Agent): string | undefined {
+  const projections = ctx.get('sessionProjections')
+  if (projections === undefined) return undefined
+  return projections.snapshot(agent.session, ['subagent']).values.subagent?.label
+}
+
+/**
+ * Compose the heading of one approval prompt, naming a delegated child so
+ * concurrent requests stay attributable.
+ * @param ctx - context carrying the projection registry.
+ * @param request - the pending approval.
+ * @param owned - the app's own root Agent.
+ * @returns the prompt heading.
+ */
+function approvalHeading(ctx: Context, request: ApprovalRequest, owned: Agent): InteractionTitle {
+  if (request.agent === owned) return `Allow ${request.toolName}?`
+  const label = subagentLabel(ctx, request.agent) ?? String(request.agent.id).slice(0, 8)
+  return { header: `subagent · ${label}`, question: `Allow ${request.toolName}?` }
+}
 
 /**
  * Longest delay one platform timer accepts. A longer remaining window re-arms
@@ -157,7 +211,9 @@ async function claimTimedWait(ctx: Context, owned: Agent, callId: ToolCallId): P
 }
 
 /**
- * Answer approvals for one owned Agent, one request at a time.
+ * Answer approvals for the app's Agent and its live subagent descendants, one
+ * request at a time. Any other Agent's request is delegated so a composition
+ * that also mounts other surfaces keeps their answerers authoritative.
  * @param ctx - the plugin context whose waterfall carries approval requests.
  * @param host - the terminal prompt surface.
  * @param owned - the Agent this app answers for.
@@ -165,12 +221,12 @@ async function claimTimedWait(ctx: Context, owned: Agent, callId: ToolCallId): P
  */
 export function installApprovalAnswerer(ctx: Context, host: InteractionHost, owned: Agent): () => void {
   return ctx.on('approval/request', (request, next) => {
-    if (request.agent !== owned) return next()
+    if (!answersFor(ctx, request.agent, owned)) return next()
     const items: SelectItem[] = [
       { value: ALLOW, label: 'Allow once', description: request.reason ?? request.toolName },
       { value: REJECT, label: 'Reject', description: 'Deny this call' },
     ]
-    return host.choose(`Allow ${request.toolName}?`, items, request.signal).then((outcome): ApprovalOutcome => {
+    return host.choose(approvalHeading(ctx, request, owned), items, request.signal).then((outcome): ApprovalOutcome => {
       if (outcome.kind !== 'answer') return 'cancelled'
       return outcome.value.value === ALLOW ? 'allowed-once' : 'rejected'
     })
