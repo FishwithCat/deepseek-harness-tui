@@ -93,12 +93,12 @@ export class WatchStatusBar implements Component {
   /**
    * Render the footer.
    * @param width - the viewport width in columns.
-   * @returns identity and usage lines within `width`.
+   * @returns a blank margin, separator, identity, and usage lines within `width`.
    */
   render(width: number): string[] {
     const left = this.theme.dim(`watch ${this.sessionId}`)
     const right = `${this.connectionText()}${this.executionText()}`
-    return [this.pairLine(left, right, width), this.usage.renderUsage(width)]
+    return ['', this.theme.border('─'.repeat(Math.max(0, width))), this.pairLine(left, right, width), this.usage.renderUsage(width)]
   }
 
   private connectionText(): string {

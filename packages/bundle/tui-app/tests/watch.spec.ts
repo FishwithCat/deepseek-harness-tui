@@ -948,11 +948,17 @@ describe('watch client and viewer', () => {
   it('renders the watch footer', () => {
     const bar = new WatchStatusBar(createTheme({ enabled: false, palette: 'dark' }))
     bar.set({ sessionId: 'session-child', connection: 'online', execution: 'running' })
-    expect(bar.render(80)[0]).toContain('watch session-child')
-    expect(bar.render(80)[0]).toContain('online')
-    expect(bar.render(80)[0]).toContain('running')
+    expect(bar.render(20).slice(0, 2)).toMatchInlineSnapshot(`
+      [
+        "",
+        "────────────────────",
+      ]
+    `)
+    expect(bar.render(80)[2]).toContain('watch session-child')
+    expect(bar.render(80)[2]).toContain('online')
+    expect(bar.render(80)[2]).toContain('running')
     bar.set({ sessionId: 'session-child', connection: 'disconnected' })
-    expect(bar.render(80)[0]).toContain('disconnected')
+    expect(bar.render(80)[2]).toContain('disconnected')
   })
 
   it.each(['online', 'history', 'seeded history'] as const)('shows committed child usage in %s mode', async (connection) => {
@@ -991,7 +997,7 @@ describe('watch client and viewer', () => {
     try {
       app = await WatchApp.boot({ ctx, config: { screen: 'alternate', colorScheme: 'dark' }, watch: child.id, exit: () => {} })
       const footer = Reflect.get(app, 'statusBar') as WatchStatusBar
-      expect(footer.render(100)[1]?.trim()).toMatchInlineSnapshot(`
+      expect(footer.render(100)[3]?.trim()).toMatchInlineSnapshot(`
         "1.1%/1.0M                                                                       35k tok  91.1% cache"
       `)
       for (const width of [1, 12, 40, 100]) {
@@ -1001,10 +1007,10 @@ describe('watch client and viewer', () => {
         const event = appendUsage(2)
         history.push(event)
         ctx.emit('session/event', child, event)
-        await vi.waitFor(() => { expect(footer.render(100)[1]).toContain('70k tok') })
+        await vi.waitFor(() => { expect(footer.render(100)[3]).toContain('70k tok') })
         await hub.close()
-        await vi.waitFor(() => { expect(footer.render(100)[0]).toContain('disconnected') })
-        expect(footer.render(100)[1]).toContain('70k tok')
+        await vi.waitFor(() => { expect(footer.render(100)[2]).toContain('disconnected') })
+        expect(footer.render(100)[3]).toContain('70k tok')
       }
     } finally {
       app?.stop(0)
