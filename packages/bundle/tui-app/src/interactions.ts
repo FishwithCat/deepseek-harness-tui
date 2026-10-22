@@ -216,7 +216,9 @@ async function claimTimedWait(ctx: Context, owned: Agent, callId: ToolCallId): P
 /**
  * Answer approvals for the app's Agent and its live subagent descendants, one
  * request at a time. Any other Agent's request is delegated so a composition
- * that also mounts other surfaces keeps their answerers authoritative.
+ * that also mounts other surfaces keeps their answerers authoritative. A
+ * request withdrawn while the prompt settles is answered `cancelled` and
+ * records no grant.
  * @param ctx - the plugin context whose waterfall carries approval requests.
  * @param host - the terminal prompt surface.
  * @param owned - the Agent this app answers for.
@@ -235,6 +237,10 @@ export function installApprovalAnswerer(ctx: Context, host: InteractionHost, own
       { value: REJECT, label: 'Reject', description: 'Deny this call' },
     ]
     return host.choose(approvalHeading(ctx, request, owned), items, request.signal).then((outcome): ApprovalOutcome => {
+      // The request can be withdrawn between the prompt settling and this
+      // callback running. The service has already settled it `cancelled`, so a
+      // choice arriving now must not record a grant that ask never authorized.
+      if (request.signal?.aborted === true) return 'cancelled'
       if (outcome.kind !== 'answer') return 'cancelled'
       if (outcome.value.value === ALWAYS) {
         // The grant belongs to the app's own root so every live descendant,

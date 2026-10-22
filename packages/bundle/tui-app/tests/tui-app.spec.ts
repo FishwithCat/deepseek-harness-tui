@@ -18,6 +18,7 @@ import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { LlmModelInfo, LlmModelReasoningInfo, LlmResolvedModelInfo, ModelModality, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { FileDiff } from '@deepseek-ai/dsh-tools'
+import type { SelectItem } from '@earendil-works/pi-tui'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -37,6 +38,7 @@ import UserApprovalService from '@deepseek-ai/dsh-user-approval'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import * as AskUserTool from '@deepseek-ai/dsh-tool-ask-user'
 import { TuiApp, internals, reservesCtrlV, wheelScroll } from '../src/app.ts'
+import type { PromptOutcome } from '../src/interactions.ts'
 import { copyClipboardText } from '../src/clipboard.ts'
 import { readWatchRecord } from '../src/watch/record.ts'
 import type { ClipboardImage } from '../src/clipboard.ts'
@@ -1001,6 +1003,30 @@ describe('TuiApp', () => {
     const rootDecision = test.ctx.approval.request({ agent: root, toolName: 'bash' })
     await expect(rootDecision).resolves.toBe('allowed-once')
     expect(choose).not.toHaveBeenCalled()
+    await test.app.stop(0)
+  })
+
+  it('does not grant Always allow when the request is cancelled as the prompt settles', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    const agent = owned(test)
+    agent.session.append('turn/start', { turn: 1 })
+    let respond: ((outcome: PromptOutcome<SelectItem>) => void) | undefined
+    vi.spyOn(test.app, 'choose').mockImplementation(() => new Promise<PromptOutcome<SelectItem>>((resolve) => {
+      respond = resolve
+    }))
+    const withdraw = new AbortController()
+    const decision = test.ctx.approval.request({ agent, toolName: 'bash', signal: withdraw.signal })
+    await vi.waitFor(() => { expect(respond).toBeDefined() })
+
+    // Resolve the prompt and withdraw the request before the answerer's
+    // continuation runs: the service settles `cancelled`, so the choice must
+    // not still be written as a remembered grant.
+    respond!({ kind: 'answer', value: { value: 'allow-always', label: 'Always allow bash' } })
+    withdraw.abort()
+
+    await expect(decision).resolves.toBe('cancelled')
+    expect(test.ctx.approval.isGranted(agent, 'bash')).toBe(false)
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'approval/grant')).toEqual([])
     await test.app.stop(0)
   })
 
