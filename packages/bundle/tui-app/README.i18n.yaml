@@ -18,14 +18,17 @@
   en: 88c14b005e03bf78
   zh: 0b9ad8bc5a690a3c
 /deepseek-ai-dsh-tui-app/use-this-package/composing-prompting-and-interrupting:
-  en: 8fb93d0fd8a2ee78
-  zh: 756a013f34ccaf36
+  en: 0bc848b77b216c5b
+  zh: fa71999a0000a4be
 /deepseek-ai-dsh-tui-app/use-this-package/watching-a-subagent:
   en: da2d1f52db9863df
   zh: 6000565b5ab06ae4
 /deepseek-ai-dsh-tui-app/use-this-package/commands:
   en: 39e96c52dda57e65
   zh: d2aade8d44940539
+/deepseek-ai-dsh-tui-app/use-this-package/local-shell-commands:
+  en: b410979abef87262
+  zh: 8951a763c4054fc5
 /deepseek-ai-dsh-tui-app/use-this-package/settings:
   en: 091f286d20d6c617
   zh: 626a2a502fe56357

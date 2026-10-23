@@ -15,8 +15,9 @@ import { markdownTheme } from './ansi.ts'
 import type { Styler, TuiTheme } from './ansi.ts'
 import { buildDiffCard } from './diff.ts'
 import type { DiffCard, DiffRow } from './diff.ts'
-import type { ApprovalEntry, ToolEntry, TranscriptEntry, UserEntry } from './transcript.ts'
+import type { ApprovalEntry, ShellEntry, ToolEntry, TranscriptEntry, UserEntry } from './transcript.ts'
 import { TerminalTranscript, textOfBlocks } from './transcript.ts'
+import { shellLabel, shellStatusLine } from './shell.ts'
 
 /** Indent applied to a Tool row's result body. */
 const TOOL_BODY_INDENT = '    '
@@ -38,6 +39,10 @@ const USER_RULE = '│ '
 const ASSISTANT_MARKER = '◆ '
 /** Continuation glyph of an assistant message row. */
 const ASSISTANT_RULE = '│ '
+/** Narrowest gap between a shell row's command and its right-aligned label. */
+const SHELL_LABEL_GAP = 2
+/** Glyph every streamed shell output line starts with. */
+const SHELL_OUTPUT_PREFIX = '> '
 
 /**
  * The presentation one Tool row draws, after the call and result views are
@@ -194,6 +199,28 @@ function prefixBody(text: string, width: number, first: string, rest: string): s
 }
 
 /**
+ * Place a right-aligned label against a left side on one line.
+ *
+ * The right side yields first: it is shortened, then dropped, so a long command
+ * keeps its head on a narrow terminal.
+ * @param left - the already styled left side.
+ * @param right - the already styled right side.
+ * @param width - the viewport width in columns.
+ * @returns one line within `width`.
+ */
+function edgeLine(left: string, right: string, width: number): string {
+  const leftWidth = visibleWidth(left)
+  const available = width - leftWidth - SHELL_LABEL_GAP
+  const rightWidth = visibleWidth(right)
+  if (rightWidth <= available) return left + ' '.repeat(width - leftWidth - rightWidth) + right
+  if (available > 0) {
+    const truncated = truncateToWidth(right, available, '')
+    return left + ' '.repeat(width - leftWidth - visibleWidth(truncated)) + truncated
+  }
+  return truncateToWidth(left, width)
+}
+
+/**
  * One prompt row's visible body: the markers of its attached images, then its text.
  * @param entry - the prompt row.
  * @returns the row's body on one logical line.
@@ -322,6 +349,8 @@ export class TranscriptView implements Component {
         return prefixBody(entry.text, width, this.theme.reasoning('✻ '), this.theme.reasoning('  '))
       case 'tool':
         return this.toolLines(entry, width)
+      case 'shell':
+        return this.shellLines(entry, width)
       case 'approval':
         return prefixBody(approvalText(entry), width, this.theme.notice('· '), '  ')
       case 'notice':
@@ -349,6 +378,39 @@ export class TranscriptView implements Component {
       cached.component.setText(text)
     }
     return cached.component.render(width)
+  }
+
+  /**
+   * One local shell row: the command with its local/sandbox label, the streamed
+   * output, then the state line. A command may span lines when it was pasted,
+   * so every line after the first starts under the bare indent.
+   */
+  private shellLines(entry: ShellEntry, width: number): string[] {
+    const [head = '', ...rest] = entry.command.split('\n')
+    const lines = [edgeLine(this.theme.tool(`! ${head}`), this.theme.dim(shellLabel(entry)), width)]
+    for (const line of rest) lines.push(...wrap(`  ${line}`, width).map(row => this.theme.tool(row)))
+    const output = entry.output.replace(/\n+$/, '')
+    if (output !== '') {
+      lines.push(...prefixBody(output, width, this.theme.toolResult(SHELL_OUTPUT_PREFIX), this.theme.toolResult(SHELL_OUTPUT_PREFIX)))
+    }
+    if (entry.lossy === true) {
+      const note = entry.spillPath === undefined
+        ? '[output truncated]'
+        : `[output truncated — full output: ${entry.spillPath}]`
+      lines.push(...wrap(note, width).map(row => this.theme.dim(row)))
+    }
+    if (entry.sandboxDenied === true) {
+      lines.push(...wrap(`[sandbox: file access denied under ${entry.mode ?? 'the standing mode'}]`, width)
+        .map(row => this.theme.error(row)))
+      lines.push(...wrap('widen with DSH_PERMISSION_MODE=danger-full-access', width)
+        .map(row => this.theme.dim(row)))
+    }
+    const status = shellStatusLine(entry)
+    const style = entry.status === 'error'
+      ? this.theme.error
+      : entry.status === 'timedout' ? this.theme.warning : this.theme.dim
+    lines.push(...wrap(`  ${status}`, width).map(row => style(row)))
+    return lines
   }
 
   private toolLines(entry: ToolEntry, width: number): string[] {
@@ -1139,10 +1201,11 @@ export interface TuiStatus {
   /** Workspace directory, abbreviated against the home directory. */
   workspace: string
   /**
-   * Agent lifecycle state, or `compacting` while a compaction transaction runs
-   * outside the turn lifecycle and the Agent itself stays idle.
+   * Agent lifecycle state, `compacting` while a compaction transaction runs
+   * outside the turn lifecycle and the Agent itself stays idle, or `shell`
+   * while a local `!` command occupies the surface.
    */
-  state: 'idle' | 'running' | 'compacting'
+  state: 'idle' | 'running' | 'compacting' | 'shell'
   /** Display label for the routed model, provider-qualified when the deployment registers several. */
   model: string
   /** Reasoning effort in force, when the route declares one. */
@@ -1344,6 +1407,7 @@ export class StatusBar implements Component {
     switch (this.status.state) {
       case 'running': return this.theme.accent('● running')
       case 'compacting': return this.theme.accent('● compacting')
+      case 'shell': return this.theme.accent('● shell')
       case 'idle': return this.theme.dim('○ idle')
       /* v8 ignore next -- closed-union exhaustiveness guard */
       default: return assertNever(this.status.state, 'footer state')

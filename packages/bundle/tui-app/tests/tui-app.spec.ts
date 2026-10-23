@@ -23,6 +23,8 @@ import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
 import SessionStore, { Session, SessionId, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import LocalBashExecutor from '@deepseek-ai/dsh-bash-local'
+import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import SkillRegistry, { type SkillCandidate } from '@deepseek-ai/dsh-skill'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { SUBAGENT_DESCRIPTOR_VERSION, SubagentRunId } from '@deepseek-ai/dsh-subagent'
@@ -211,6 +213,8 @@ async function bench(
     reasoning?: LlmModelReasoningInfo
     /** Mount a scripted subagent service so delegated work can be reported and stopped. */
     subagents?: boolean
+    /** Mount the local bash executor over the local subprocess provider; `read-only` adds a confining policy. */
+    shell?: boolean | 'read-only'
   } = {},
 ): Promise<Fixture> {
   const ctx = new Context()
@@ -244,6 +248,17 @@ async function bench(
   if (options.sessionStats === true) await ctx.plugin(SessionStatsPlugin)
   if (options.compaction === true) await ctx.plugin(BasicCompactionEngine, { auto: true })
   await ctx.plugin(UserApprovalService, { policy: 'ask' })
+  if (options.shell !== undefined) {
+    await ctx.plugin(LocalSubprocessRuntime)
+    if (options.shell === 'read-only') {
+      await ctx.plugin(ReadOnlyBashExecutor)
+      ctx.provide('sandboxPolicy', {
+        resolve: () => ({ mode: 'read-only', workspaceRoot: process.cwd() }),
+      } as never)
+    } else {
+      await ctx.plugin(LocalBashExecutor)
+    }
+  }
   const exits: number[] = []
   const submitted: UserMessage[] = []
   const steered: UserMessage[] = []
@@ -3362,5 +3377,228 @@ describe('wheelScroll', () => {
     expect(wheelScroll('\x1b[<66;10;5M')).toBeUndefined()
     expect(wheelScroll(`\x1b[M${String.fromCharCode(32)}!!`)).toBeUndefined()
     expect(wheelScroll('x')).toBeUndefined()
+  })
+})
+
+/** A bash executor advertising confinement, so the app resolves a policy for each run. */
+class ReadOnlyBashExecutor extends LocalBashExecutor {
+  override get sandboxMode() {
+    return 'read-only' as const
+  }
+}
+
+describe('local shell commands', () => {
+  /** A two-by-two PNG the mounted attachment store decodes. */
+  function clipboardImage(): ClipboardImage {
+    return { data: Buffer.from(PNG_BASE64, 'base64'), mediaType: 'image/png' }
+  }
+
+  /** Substitute the image the app reads from the clipboard. */
+  function pasteClipboard(image: ClipboardImage | undefined): void {
+    internals.readClipboardImage = () => Promise.resolve(image)
+  }
+
+  it('runs a ! command locally without reaching the model', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true })
+    expect(plain(test.terminal.output)).toContain('! shell')
+    test.terminal.feed('!echo local-output')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('[exit code: 0]')
+    })
+    const frame = plain(test.terminal.output)
+    expect(frame).toContain('! echo local-output')
+    expect(frame).toContain('> local-output')
+    expect(frame).toContain('local')
+    expect(test.submitted).toHaveLength(0)
+    expect(test.steered).toHaveLength(0)
+    await test.app.stop(0)
+  })
+
+  it('runs a confined ! command under the mounted sandbox policy', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: 'read-only' })
+    test.terminal.feed('!echo sandboxed')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[exit code: 0]') })
+    const frame = plain(test.terminal.output)
+    expect(frame).toContain('local · read-only')
+    expect(frame).toContain('> sandboxed')
+    await test.app.stop(0)
+  })
+
+  it('reaches the model when the leading ! is escaped', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true })
+    test.terminal.feed('\\!ls')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(test.submitted).toHaveLength(1) })
+    expect(test.submitted[0]?.content).toEqual([{ type: 'text', text: '!ls' }])
+    expect(plain(test.terminal.output)).not.toContain('[exit code:')
+    await test.app.stop(0)
+  })
+
+  it('refuses an empty ! and keeps the draft', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true })
+    test.terminal.feed('!')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('write a command after !')
+    })
+    expect(test.submitted).toHaveLength(0)
+    const rendered = plain(test.terminal.output)
+    expect(rendered.lastIndexOf('!')).toBeGreaterThan(rendered.lastIndexOf('write a command after !'))
+    await test.app.stop(0)
+  })
+
+  it('refuses a ! line carrying an image and keeps the draft', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true, attachments: true, modalities: ['text', 'image'] })
+    pasteClipboard(clipboardImage())
+    test.terminal.feed('\x16')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+    test.terminal.feed('!echo hi')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('a shell command cannot carry an image')
+    })
+    expect(test.submitted).toHaveLength(0)
+    // The held image and the refused text stay in the composer.
+    const rendered = plain(test.terminal.output)
+    expect(rendered.lastIndexOf('[Image #1]')).toBeGreaterThan(rendered.lastIndexOf('a shell command cannot carry an image'))
+    await test.app.stop(0)
+  })
+
+  it('sends an escaped ! line with its image to the model', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true, attachments: true, modalities: ['text', 'image'] })
+    pasteClipboard(clipboardImage())
+    test.terminal.feed('\x16')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[Image #1]') })
+    test.terminal.feed('\\!what is this')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(test.submitted).toHaveLength(1) })
+    expect(test.submitted[0]?.content).toEqual([
+      { type: 'text', text: '!what is this' },
+      expect.objectContaining({ type: 'image' }),
+    ])
+    await test.app.stop(0)
+  })
+
+  it('refuses ! while a turn runs and keeps the draft', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true })
+    test.setRunning(true)
+    test.terminal.feed('!echo hi')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('a turn is running')
+    })
+    expect(test.submitted).toHaveLength(0)
+    const rendered = plain(test.terminal.output)
+    expect(rendered.lastIndexOf('!echo hi')).toBeGreaterThan(rendered.lastIndexOf('a turn is running'))
+    await test.app.stop(0)
+  })
+
+  it('refuses ! while a compaction runs', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true })
+    Reflect.set(test.app, 'compacting', true)
+    test.terminal.feed('!ls')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('a compaction is running')
+    })
+    expect(test.submitted).toHaveLength(0)
+    await test.app.stop(0)
+  })
+
+  it('refuses a prompt while a shell runs, then cancels the shell with Ctrl+C', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true })
+    test.terminal.feed('!sleep 30')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('● shell') })
+    expect(plain(test.terminal.output)).toContain('Ctrl+C stop shell')
+
+    test.terminal.feed('hello there')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('a shell command is still running')
+    })
+    expect(test.submitted).toHaveLength(0)
+    expect(test.steered).toHaveLength(0)
+    const rendered = plain(test.terminal.output)
+    expect(rendered.lastIndexOf('hello there')).toBeGreaterThan(rendered.lastIndexOf('a shell command is still running'))
+
+    test.terminal.feed('\x03')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[cancelled]') })
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('○ idle') })
+    expect(test.exits).toEqual([])
+    await test.app.stop(0)
+  })
+
+  it('refuses a second ! while a shell runs', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true })
+    test.terminal.feed('!sleep 30')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('● shell') })
+    test.terminal.feed('!ls')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('a shell command is still running')
+    })
+    const rendered = plain(test.terminal.output)
+    expect(rendered.lastIndexOf('!ls')).toBeGreaterThan(rendered.lastIndexOf('a shell command is still running'))
+    test.terminal.feed('\x03')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[cancelled]') })
+    await test.app.stop(0)
+  })
+
+  it('keeps commands available while a shell runs', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true })
+    test.terminal.feed('!sleep 30')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('● shell') })
+    test.terminal.feed('/help')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('List available commands')
+    })
+    test.terminal.feed('\x03')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('[cancelled]') })
+    await test.app.stop(0)
+  })
+
+  it('drops a running shell when the session is replaced', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true })
+    test.terminal.feed('!sleep 30')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('● shell') })
+    test.terminal.feed('/new')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('started a new session')
+    })
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('○ idle') })
+    const rendered = plain(test.terminal.output)
+    const afterNew = rendered.slice(rendered.lastIndexOf('started a new session'))
+    expect(afterNew).not.toContain('● shell')
+    await test.app.stop(0)
+  })
+
+  it('stops a running shell when the application exits', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { shell: true })
+    test.terminal.feed('!sleep 30')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('● shell') })
+    await test.app.stop(0)
+    expect(test.exits).toEqual([0])
+  })
+
+  it('reports a deployment without a shell executor', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    test.terminal.feed('!ls')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('this deployment mounts no shell executor')
+    })
+    expect(test.submitted).toHaveLength(0)
+    const rendered = plain(test.terminal.output)
+    expect(rendered.lastIndexOf('!ls')).toBeGreaterThan(rendered.lastIndexOf('this deployment mounts no shell executor'))
+    await test.app.stop(0)
   })
 })

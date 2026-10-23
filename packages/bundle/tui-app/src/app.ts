@@ -59,6 +59,7 @@ import type { AskUserQuestionAnswerItem, PendingUserQuestion } from '@deepseek-a
 import type {} from '@deepseek-ai/dsh-user-questions'
 import { TuiSession } from './session.ts'
 import type { TuiSessionOptions } from './session.ts'
+import { ShellRunner } from './shell.ts'
 import { SubagentPanel } from './subagents.ts'
 import type { TuiStartupValues } from './startup.ts'
 import { createToolPresentationResolver } from './tool-view.ts'
@@ -182,6 +183,8 @@ export class TuiApp implements InteractionHost {
   private readonly transcript: TerminalTranscript
   private readonly transcriptView: TranscriptView
   private readonly statusBar: StatusBar
+  /** Local `!` commands; owns the single foreground execution and its row. */
+  private readonly shell: ShellRunner
   /** Local subagent watch service; owns the HTTP listener and runtime records. */
   private readonly watch: SubagentWatchHub
   private readonly editor: Editor
@@ -224,6 +227,13 @@ export class TuiApp implements InteractionHost {
       palette: resolveColorScheme(options.config.colorScheme, process.env),
     })
     this.transcript = new TerminalTranscript(createToolPresentationResolver(options.ctx, () => this.session.agent))
+    this.shell = new ShellRunner({
+      ctx: options.ctx,
+      transcript: this.transcript,
+      session: () => this.session.session,
+      cwd: () => this.workingDirectory(),
+      changed: () => { this.refresh() },
+    })
     this.watch = new SubagentWatchHub(options.ctx)
     this.providerCount = options.ctx.llm.listProviders().length
     this.autoCompaction = options.ctx.get('compaction')?.autoCompactionEnabled ?? false
@@ -308,6 +318,7 @@ export class TuiApp implements InteractionHost {
   async stop(code: number): Promise<void> {
     if (this.leaving) return
     this.leaving = true
+    await this.shell.dispose()
     this.teardown()
     await this.watch.close().catch((error: unknown) => {
       this.options.ctx.logger.warn(`subagent watch: cleanup failed: ${String(error)}`)
@@ -440,6 +451,12 @@ export class TuiApp implements InteractionHost {
       if (matchesKey(data, Key.ctrl('c'))) {
         // A focused prompt owns Ctrl+C as its own cancel gesture.
         if (this.promptActive) return undefined
+        // A local command is the foreground occupant; the turn cannot be
+        // running at the same time, because a prompt submitted then is refused.
+        if (this.shell.running) {
+          this.shell.cancel()
+          return { consume: true }
+        }
         if (this.session.busy) {
           this.interrupt()
           return { consume: true }
@@ -519,8 +536,10 @@ export class TuiApp implements InteractionHost {
   /**
    * Route one composer submission.
    *
-   * A line citing images the composer holds becomes a prompt carrying those
-   * images; every other line runs a command or reaches the Agent as text.
+   * A `!` line runs locally, a `\!` line reaches the Agent with the backslash
+   * removed, a line citing held images becomes a prompt carrying them, and
+   * every other line runs a command or reaches the Agent as text. A refused
+   * line leaves the composer and its held images untouched.
    * @param text - the submitted text.
    */
   private submit(text: string): void {
@@ -532,18 +551,80 @@ export class TuiApp implements InteractionHost {
       return image === undefined ? [] : [image]
     })
     const prompt = marked.text.trim()
-    if (prompt !== '') this.editor.addToHistory(prompt)
+    const refusal = this.refusal(prompt, images.length > 0)
+    if (refusal !== undefined) {
+      // The editor clears itself before handing the text over, so a refused
+      // line is put back with the markers its held images are cited by.
+      this.editor.setText(value)
+      this.notice(refusal.level, refusal.text)
+      return
+    }
+    if (prompt.startsWith('!')) {
+      const start = this.shell.submit(prompt.slice(1).trim())
+      if (!start.started) {
+        this.editor.setText(value)
+        this.notice('error', start.reason)
+        return
+      }
+      this.editor.addToHistory(prompt)
+      this.editor.setText('')
+      this.refresh()
+      return
+    }
+    // The escape keeps the line out of the shell path; it is not part of what
+    // the Agent reads.
+    const escaped = prompt.startsWith('\\!')
+    const line = escaped ? `!${prompt.slice(2)}` : prompt
+    if (line !== '') this.editor.addToHistory(line)
     this.editor.setText('')
     if (images.length === 0) {
-      this.runLine(value)
+      // An escaped line is a prompt even when it names a slash command.
+      if (escaped) this.promptLine(line)
+      else this.runLine(line)
       return
     }
     // The markers name images this draft owns; this submission consumes them.
     this.pendingImages.clear()
-    this.sendImages(prompt, images).catch((error: unknown) => {
+    this.sendImages(line, images).catch((error: unknown) => {
       this.restoreDraft(value, images)
       this.notice('error', error instanceof Error ? error.message : String(error))
     })
+  }
+
+  /**
+   * Why one submission cannot run now, or undefined when it may proceed.
+   *
+   * The local shell refuses a second command, and a prompt while it runs; a
+   * running turn refuses `!` but still accepts steering text. Commands stay
+   * available because they run in-process.
+   * @param value - the trimmed line.
+   * @param hasImages - whether the line cites held images.
+   * @returns the refusal to report, or undefined.
+   */
+  private refusal(value: string, hasImages: boolean): { level: 'info' | 'error'; text: string } | undefined {
+    const shellBusy = 'a shell command is still running — Ctrl+C stops it'
+    if (value.startsWith('!')) {
+      if (hasImages) return { level: 'error', text: 'a shell command cannot carry an image' }
+      if (value.slice(1).trim() === '') return { level: 'error', text: 'write a command after !' }
+      if (this.shell.running) return { level: 'info', text: shellBusy }
+      if (this.session.busy) return { level: 'info', text: 'a turn is running — wait for it, or press Esc to stop it' }
+      if (this.compacting) return { level: 'info', text: 'a compaction is running — wait for it to finish' }
+      return undefined
+    }
+    if (!this.shell.running) return undefined
+    // Slash commands run in-process, so they stay available while the shell runs.
+    return this.isCommandLine(value) ? undefined : { level: 'info', text: shellBusy }
+  }
+
+  /**
+   * Whether the line names a command the composer dispatches instead of the Agent.
+   * @param value - the trimmed line.
+   * @returns whether the registry or the app owns the line.
+   */
+  private isCommandLine(value: string): boolean {
+    const parsed = parseCommand(value)
+    return parsed !== undefined
+      && commandCatalog(this.options.ctx, this.agent).some(command => command.value === `/${parsed.name}`)
   }
 
   /**
@@ -552,14 +633,24 @@ export class TuiApp implements InteractionHost {
    * @param value - the trimmed line.
    */
   private runLine(value: string): void {
-    const parsed = parseCommand(value)
-    if (parsed !== undefined && commandCatalog(this.options.ctx, this.agent).some(command => command.value === `/${parsed.name}`)) {
+    if (this.isCommandLine(value)) {
+      const parsed = parseCommand(value)
+      /* v8 ignore next -- a known command line always parses */
+      if (parsed === undefined) return
       void this.runCommand(parsed.name, parsed.input, value).catch((error: unknown) => {
         this.notice('error', error instanceof Error ? error.message : String(error))
       })
       return
     }
-    const content: ContentBlock[] = [{ type: 'text', text: value }]
+    this.promptLine(value)
+  }
+
+  /**
+   * Hand one line to the Agent, steering while a turn runs.
+   * @param line - the model-visible prompt text.
+   */
+  private promptLine(line: string): void {
+    const content: ContentBlock[] = [{ type: 'text', text: line }]
     if (this.session.running) this.session.steer(content)
     else this.session.submit(content)
     this.refresh()
@@ -1010,6 +1101,9 @@ export class TuiApp implements InteractionHost {
       if (!isTeardown(error)) throw error
     }
     const next = await open()
+    // A local command cannot outlive the transcript it wrote to, and its row
+    // would otherwise vanish under a still-running process.
+    await this.shell.dispose()
     // Only the session subscriptions retire with the old session; the global
     // key bindings stay installed for the replacement.
     for (const dispose of this.sessionDisposers.splice(0)) dispose()
@@ -1038,7 +1132,7 @@ export class TuiApp implements InteractionHost {
     const busy = session.busy
     const status: TuiStatus = {
       workspace: this.workspaceLabel(),
-      state: this.compacting ? 'compacting' : busy ? 'running' : 'idle',
+      state: busy ? 'running' : this.shell.running ? 'shell' : this.compacting ? 'compacting' : 'idle',
       model: modelLabel(route.provider, route.model, this.providerCount),
       effort: route.reasoningEffort,
       context: measured.context,
@@ -1053,14 +1147,21 @@ export class TuiApp implements InteractionHost {
   }
 
   /**
-   * The footer's workspace label. The model can change the Session's effective
-   * directory during a turn, so this reads the working-directory service on
-   * every refresh and falls back to the launch directory when it is unmounted.
-   * @returns the display path with the home directory abbreviated.
+   * The directory the session currently works in. The model can change it
+   * during a turn, so this reads the working-directory service on every read
+   * and falls back to the launch directory when it is unmounted.
+   * @returns the absolute working directory.
+   */
+  private workingDirectory(): string {
+    return this.options.ctx.get('workingDirectory')?.get(this.session.session) ?? this.options.cwd
+  }
+
+  /**
+   * The footer's workspace label, abbreviated against the home directory.
+   * @returns the display path.
    */
   private workspaceLabel(): string {
-    const directory = this.options.ctx.get('workingDirectory')?.get(this.session.session) ?? this.options.cwd
-    return directory.replace(homedir(), '~')
+    return this.workingDirectory().replace(homedir(), '~')
   }
 
   /**
@@ -1126,11 +1227,13 @@ export class TuiApp implements InteractionHost {
    * @param planAvailable - whether the deployment mounts plan mode.
    */
   private hints(busy: boolean, planAvailable: boolean, questionWaiting: boolean): string {
-    const parts: string[] = [this.session.running ? 'Enter steer' : 'Enter send']
+    const parts: string[] = [this.shell.running ? 'shell running' : this.session.running ? 'Enter steer' : 'Enter send']
     if (questionWaiting) parts.push('/questions answer')
     if (planAvailable) parts.push('Shift+Tab plan')
+    if (!busy && !this.shell.running) parts.push('! shell')
     parts.push(`${this.altPaste ? 'Alt+V' : 'Ctrl+V'} image`)
     if (busy) parts.push('Esc/Ctrl+C cancel')
+    if (this.shell.running) parts.push('Ctrl+C stop shell')
     if (this.viewport !== undefined) parts.push('PgUp/PgDn scroll')
     parts.push('/help commands', 'Ctrl+D quit')
     if (this.viewport !== undefined && !this.viewport.isFollowingOutput) parts.push('scrolled up')
@@ -1393,6 +1496,9 @@ export class TuiApp implements InteractionHost {
   private teardown(): void {
     if (this.stopped) return
     this.stopped = true
+    // Teardown can arrive without `stop()` (composition disposal); the process
+    // must not outlive the surface.
+    this.shell.cancel()
     this.editor.setText('')
     for (const dispose of this.disposers.splice(0)) dispose()
     for (const dispose of this.sessionDisposers.splice(0)) dispose()

@@ -49,7 +49,7 @@ Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is 
 | `Esc` | Interrupt the running turn and the session's live subagents; at a prompt, skip the question |
 | `Shift+Tab` | Toggle plan mode |
 | `Ctrl+V` | Attach the image on the system clipboard to the draft (`Alt+V` on Windows and WSL, where the terminal owns Ctrl+V) |
-| `Ctrl+C` | Cancel the running turn and the session's live subagents; at a prompt, cancel the whole ask; with neither working, exit |
+| `Ctrl+C` | Cancel the running turn and the session's live subagents, or stop a local `!` command; at a prompt, cancel the whole ask; with neither working, exit |
 | `Ctrl+D` | Exit |
 | `PageUp` / `PageDown` | Scroll the transcript, or a question's overflowing detail |
 | `Up` / `Down` | Scroll a question's overflowing detail; otherwise move its picker |
@@ -90,6 +90,14 @@ A line beginning with a known `/command` runs that command instead of reaching t
 | `/effort [id]` | Choose the routed model's declared reasoning effort, or switch directly |
 | `/questions` | Answer a question whose foreground window closed, from the picker of calls still waiting |
 | `/quit` | Exit |
+
+### Local shell commands
+
+A line beginning with `!` runs locally instead of reaching the Agent: `!git status` executes through the mounted shell executor under the same sandbox policy as the agent's `bash` tool, without an approval prompt. Each line is a fresh shell in the session's working directory, so `cd` and exported variables do not carry to the next line. The command asks for the executor's upper bound (600 seconds by default), and output beyond the per-stream cap stays a tail whose spill file the row names. The footer reads `● shell` while it runs.
+
+The row is local only. Its command and output never enter the session log, are never sent to the model, and disappear on `/new`, `/resume`, and exit, so a later turn cannot cite them. `\!ls` sends the literal text `!ls` to the Agent instead.
+
+One local command runs at a time: while it runs, the composer refuses prompts and further `!` lines and keeps the draft, and while a turn or a compaction runs a `!` line is refused the same way. Ctrl+C stops the running command, keeps the output it already produced, and leaves the turn alone; the closing line reports `[exit code: N]`, `[cancelled]`, or `[timed out after 600s]`, and a sandbox denial names the mode that blocked it. Slash commands still run while a local command works. A deployment that mounts no shell executor refuses `!` lines and says so.
 
 ### Settings
 

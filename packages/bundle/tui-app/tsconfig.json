@@ -42,6 +42,12 @@
       "path": "../../plan/plan-mode"
     },
     {
+      "path": "../../sandbox/sandbox-policy"
+    },
+    {
+      "path": "../../shell/shell"
+    },
+    {
       "path": "../../interaction/commands"
     },
     {

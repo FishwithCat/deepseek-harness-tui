@@ -85,6 +85,39 @@ export interface NoticeEntry {
 }
 
 /**
+ * One local `!` shell command and its streamed output. The row belongs to this
+ * process only: it never enters the session log, so a new or resumed session
+ * drops it, and nothing in it reaches a model request.
+ */
+export interface ShellEntry {
+  kind: 'shell'
+  /** Row identity, stable while the row updates in place. */
+  id: number
+  /** The command text the user typed after `!`. */
+  command: string
+  /** Whether the command still runs or how it settled. */
+  status: 'running' | 'ok' | 'error' | 'cancelled' | 'timedout'
+  /** Combined stdout and stderr streamed so far. */
+  output: string
+  /** Sandbox mode the command ran under; absent when the executor does not confine. */
+  mode?: string | undefined
+  /** Process exit code; absent while running and while a signal ended it. */
+  exitCode?: number | null | undefined
+  /** Terminating signal, when a signal ended the command. */
+  signal?: string | undefined
+  /** Wall-clock time from submission to settlement; absent while running. */
+  durationMs?: number | undefined
+  /** Bound the executor applied, read by the timeout status line. */
+  timeoutMs?: number | undefined
+  /** True when the executor dropped output the row cannot show. */
+  lossy?: boolean | undefined
+  /** Spill file holding the complete output, when truncation produced one. */
+  spillPath?: string | undefined
+  /** True when the sandbox denied a file operation the command attempted. */
+  sandboxDenied?: boolean | undefined
+}
+
+/**
  * One approval request and its settled outcome, folded from the durable audit
  * pair. The decision replaces the pending row in place so the request keeps one
  * identity on screen.
@@ -106,7 +139,7 @@ export interface ApprovalEntry {
 }
 
 /** One rendered row of the transcript. */
-export type TranscriptEntry = UserEntry | AssistantEntry | ReasoningEntry | ToolEntry | NoticeEntry | ApprovalEntry
+export type TranscriptEntry = UserEntry | AssistantEntry | ReasoningEntry | ToolEntry | NoticeEntry | ShellEntry | ApprovalEntry
 
 /** Live assistant text row identity, below every durable row. */
 const LIVE_ASSISTANT_ID = -2
@@ -538,6 +571,44 @@ export class TerminalTranscript {
   notice(level: NoticeEntry['level'], text: string): boolean {
     this.rows.push({ kind: 'notice', id: this.nextId++, level, text })
     return this.changed()
+  }
+
+  /**
+   * Append one local shell row in its running state.
+   * @param command - the command text after `!`.
+   * @param mode - the sandbox mode the executor will apply, when it confines.
+   * @returns the row identity later updates address.
+   */
+  appendShell(command: string, mode: string | undefined): number {
+    const id = this.nextId++
+    this.rows.push({
+      kind: 'shell',
+      id,
+      command,
+      status: 'running',
+      output: '',
+      ...mode === undefined ? {} : { mode },
+    })
+    this.changed()
+    return id
+  }
+
+  /**
+   * Replace one shell row with its next state.
+   *
+   * The fold replaces the row object instead of mutating it: the view caches a
+   * row's rendered lines against that object, so a fresh object is what makes
+   * streamed output repaint.
+   * @param id - the row appended by {@link appendShell}.
+   * @param patch - fields to replace; omitted fields keep their current value.
+   */
+  updateShell(id: number, patch: Partial<Omit<ShellEntry, 'kind' | 'id'>>): void {
+    const index = this.rows.findIndex(row => row.kind === 'shell' && row.id === id)
+    /* v8 ignore next -- callers hold a row identity this model handed out and resets are bracketed by disposal */
+    if (index < 0) return
+    const row = this.rows[index] as ShellEntry
+    this.rows[index] = { ...row, ...patch }
+    this.changed()
   }
 
   private changed(): boolean {
