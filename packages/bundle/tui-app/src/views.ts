@@ -1114,6 +1114,14 @@ export interface TuiContextStatus {
   automatic: boolean
 }
 
+/** Delegated subagents the footer summarizes. */
+export interface TuiSubagentStatus {
+  /** Children this session's catalogs record, at any depth. */
+  total: number
+  /** Children whose activation is still running. */
+  running: number
+}
+
 /** Whole-log token figures the footer's bottom-right group reports. */
 export interface TuiSessionStats {
   /** Decode throughput averaged over decode-timed steps; absent until one is timed. */
@@ -1148,6 +1156,8 @@ export interface TuiStatus {
   pasting?: boolean | undefined
   /** Context occupancy, absent until the meter reports both a pressure and a capacity. */
   context?: TuiContextStatus | undefined
+  /** Delegated children the session's catalogs record, absent while it has none. */
+  subagents?: TuiSubagentStatus | undefined
   /** Whole-log throughput and token totals; absent when the frame carries no measurement. */
   stats?: TuiSessionStats | undefined
 }
@@ -1273,8 +1283,27 @@ export class StatusBar implements Component {
    */
   renderUsage(width: number): string {
     const right = this.statsRight()
-    const left = this.contextPart()
+    const left = this.usageLeft()
     return right === '' ? truncateToWidth(left, width) : this.pairLine(left, right, width)
+  }
+
+  /** The usage line's left side: occupancy, then the delegated-work marker while any child is recorded. */
+  private usageLeft(): string {
+    const context = this.contextPart()
+    const subagents = this.subagentsPart()
+    if (context === '') return subagents
+    return subagents === '' ? context : `${context}  ${subagents}`
+  }
+
+  /**
+   * The delegated-work marker: `●` while at least one child runs, `○` once every
+   * recorded child has settled, with the count as running of total.
+   */
+  private subagentsPart(): string {
+    const delegated = this.status.subagents
+    if (delegated === undefined) return ''
+    const counts = `subagents (${String(delegated.running)}/${String(delegated.total)})`
+    return delegated.running > 0 ? this.theme.accent(`● ${counts}`) : this.theme.dim(`○ ${counts}`)
   }
 
   /**

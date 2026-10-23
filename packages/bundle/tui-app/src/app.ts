@@ -60,7 +60,7 @@ import { SubagentPanel } from './subagents.ts'
 import type { TuiStartupValues } from './startup.ts'
 import { createToolPresentationResolver } from './tool-view.ts'
 import { DetailBody, KeyboardSelectList, MULTI_SELECT_HINT_ROWS, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptHeadingRows, promptPanelRows } from './views.ts'
-import type { PromptTitle, TuiStatus } from './views.ts'
+import type { PromptTitle, TuiStatus, TuiSubagentStatus } from './views.ts'
 import { TerminalTranscript } from './transcript.ts'
 import { SubagentWatchHub } from './watch/server.ts'
 
@@ -205,6 +205,8 @@ export class TuiApp implements InteractionHost {
   private compacting = false
   /** Footer measurement cached against the session and log position it was read at. */
   private measurementCache: { session: Session; seq: number; value: TuiMeasurement } | undefined
+  /** Footer subagent counts cached against the session and log position they were read at. */
+  private subagentsCache: { session: Session; seq: number; value: TuiSubagentStatus | undefined } | undefined
 
   private constructor(
     private readonly options: TuiAppOptions,
@@ -362,8 +364,16 @@ export class TuiApp implements InteractionHost {
     }))
     // A continuable child becomes resident before its first turn and is disposed
     // at settlement, so the lifecycle edges bracket states no status flip covers.
-    this.sessionDisposers.push(this.options.ctx.on('subagent/start', () => { this.refresh() }))
-    this.sessionDisposers.push(this.options.ctx.on('subagent/end', () => { this.refresh() }))
+    this.sessionDisposers.push(this.options.ctx.on('subagent/start', () => {
+      // A lifecycle edge moves the running count without appending to this
+      // session's log, so the footer's cached counts must be re-read.
+      this.subagentsCache = undefined
+      this.refresh()
+    }))
+    this.sessionDisposers.push(this.options.ctx.on('subagent/end', () => {
+      this.subagentsCache = undefined
+      this.refresh()
+    }))
     this.sessionDisposers.push(installApprovalAnswerer(this.options.ctx, this, owned))
     this.sessionDisposers.push(installQuestionAnswerer(this.options.ctx, this, owned))
     if (!loading) return
@@ -998,6 +1008,7 @@ export class TuiApp implements InteractionHost {
       effort: route.reasoningEffort,
       context: measured.context,
       stats: measured.stats,
+      subagents: this.delegatedSubagents(session),
       plan,
       pasting: this.pasteReads > 0,
     }
@@ -1049,6 +1060,28 @@ export class TuiApp implements InteractionHost {
       ?.snapshot(session, ['contextPressure', 'tokenUsage', 'sessionStats']).values
     const value = measureUsage(values, this.autoCompaction)
     this.measurementCache = { session, seq: session.seq, value }
+    return value
+  }
+
+  /**
+   * The delegated-work counts the footer reports, read from the session's
+   * catalogs on the first frame after a log position or lifecycle edge that
+   * can move them. A deployment without the projection registry exposes no
+   * subagent catalog, so the footer omits the marker rather than failing a
+   * frame the way `/subagents` reports the gap.
+   * @param session - the session whose catalogs are walked.
+   * @returns the counts, or `undefined` while no child is recorded or the registry is absent.
+   */
+  private delegatedSubagents(session: TuiSession): TuiSubagentStatus | undefined {
+    if (this.options.ctx.get('sessionProjections') === undefined) return undefined
+    const root = session.session
+    const cached = this.subagentsCache
+    if (cached !== undefined && cached.session === root && cached.seq === root.seq) return cached.value
+    const rows = session.subagents()
+    const value = rows.length === 0
+      ? undefined
+      : { total: rows.length, running: rows.filter(row => row.running).length }
+    this.subagentsCache = { session: root, seq: root.seq, value }
     return value
   }
 

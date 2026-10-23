@@ -742,13 +742,41 @@ describe('TuiApp', () => {
 
   it('shows a non-Error catalog failure in the subagent panel', async () => {
     const test = await bench({ afterPrompt: () => {} })
-    test.ctx.sessionProjections.snapshot = () => { throw 'catalog unavailable' }
+    const registry = test.ctx.sessionProjections
+    const readCatalog = registry.snapshot.bind(registry)
+    registry.snapshot = () => { throw 'catalog unavailable' }
     test.terminal.feed('/subagents')
     test.terminal.feed('\r')
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('catalog unavailable') })
     const transcript = Reflect.get(test.app, 'transcript') as { entries(): readonly TranscriptEntry[] }
     expect(transcript.entries().some(entry => entry.kind === 'notice')).toBe(false)
+    // The footer reads the same catalog to keep its delegated-work marker current,
+    // so restore the registry before closing the panel; the panel is the one
+    // surface that reports the failure.
+    registry.snapshot = readCatalog
     test.terminal.feed('\x1b')
+    await test.app.stop(0)
+  })
+
+  it('reports delegated subagents beside the footer occupancy as they start and settle', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
+    expect(screen(test.app).some(row => row.includes('subagents ('))).toBe(false)
+    const root = owned(test).session
+    const child = SessionId('session-footer-child')
+    const leaf = SessionId('session-footer-leaf')
+    root.append('subagent/catalog', {
+      version: 0, childId: child, childCreatedAt: 1, mode: 'continuable', label: 'footer task',
+    })
+    const resident = test.ctx.sessions.create(child)
+    resident.append('subagent/catalog', { version: 1, childId: leaf, childCreatedAt: 2, mode: 'one-shot' })
+    test.startSubagent(child)
+    test.startSubagent(leaf)
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('● subagents (2/2)'))).toBe(true) })
+    test.endSubagent(leaf)
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('● subagents (1/2)'))).toBe(true) })
+    test.endSubagent(child)
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('○ subagents (0/2)'))).toBe(true) })
     await test.app.stop(0)
   })
 

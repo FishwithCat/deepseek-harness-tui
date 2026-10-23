@@ -991,6 +991,43 @@ describe('StatusBar', () => {
     }
   })
 
+  it('marks delegated work after the occupancy once a child is recorded', () => {
+    const status = { ...populated(131_072, 262_144, true), subagents: { total: 2, running: 0 } }
+    expect(bar(status).render(80)[1]).toBe('50.0%/262k (auto)  ○ subagents (0/2)')
+  })
+
+  it('switches the delegated-work marker with the running state', () => {
+    const running = { ...populated(131_072, 262_144), subagents: { total: 2, running: 1 } }
+    expect(bar(running, true).render(80)[1]).toContain('\x1b[38;5;45m● subagents (1/2)\x1b[0m')
+    const settled = { ...populated(131_072, 262_144), subagents: { total: 2, running: 0 } }
+    expect(bar(settled, true).render(80)[1]).toContain('\x1b[38;5;243m○ subagents (0/2)\x1b[0m')
+  })
+
+  it('omits the delegated-work marker while no child is recorded', () => {
+    expect(bar(populated(131_072, 262_144)).render(80)[1]).toBe('50.0%/262k')
+  })
+
+  it('reports delegated work on a frame without occupancy', () => {
+    const status: TuiStatus = { workspace: '~/Workspace/Nutkin', state: 'idle', model: 'deepseek-flash', subagents: { total: 1, running: 1 } }
+    expect(bar(status).render(40)[1]).toBe('● subagents (1/1)')
+  })
+
+  it('keeps the delegated-work marker beside the occupancy as the line narrows', () => {
+    const view = bar({
+      ...populated(131_072, 262_144),
+      subagents: { total: 2, running: 0 },
+      stats: { tokensPerSecond: 34.4, promptTokens: 1_000, outputTokens: 50, cacheReadTokens: 900 },
+    })
+    const wide = view.render(40)[1] ?? ''
+    expect(wide).toContain('50.0%/262k')
+    expect(wide).toContain('○ subagents (0/2)')
+    expect(visibleWidth(wide)).toBeLessThanOrEqual(40)
+    const narrow = view.render(20)[1] ?? ''
+    expect(narrow).toContain('50.0%/262k')
+    expect(narrow).not.toContain('tok/s')
+    expect(visibleWidth(narrow)).toBeLessThanOrEqual(20)
+  })
+
   it('yields the model before the identity on a narrow terminal', () => {
     const [head, stats] = bar(populated(131_072, 262_144)).render(30)
     expect(head).toContain('~/Workspace/Nutkin  ○ idle')
