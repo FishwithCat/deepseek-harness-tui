@@ -27,6 +27,7 @@ import SkillRegistry, { type SkillCandidate } from '@deepseek-ai/dsh-skill'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { SUBAGENT_DESCRIPTOR_VERSION, SubagentRunId } from '@deepseek-ai/dsh-subagent'
 import { subagentIdentityProjectionDefinition } from '@deepseek-ai/dsh-subagent/src/projection.ts'
+import { subagentCatalogProjectionDefinition } from '@deepseek-ai/dsh-subagent/src/catalog.ts'
 import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
@@ -595,11 +596,168 @@ describe('TuiApp', () => {
     await test.app.stop(0)
   })
 
+  it('shows delegated subagents in a pinned live panel without touching the running turn', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    test.setRunning(true)
+    test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
+    const root = owned(test).session
+    const child = SessionId('session-subagent-child')
+    const leaf = SessionId('session-subagent-leaf')
+    const external = SessionId('session-subagent-external')
+    root.append('subagent/catalog', {
+      version: 0, childId: child, childCreatedAt: 1, mode: 'continuable', label: 'explore',
+    })
+    const resident = test.ctx.sessions.create(child)
+    resident.append('subagent/catalog', {
+      version: 1, childId: leaf, childCreatedAt: 2, mode: 'one-shot',
+    })
+    // A repeated catalog row is one child: the walk visits it once.
+    resident.append('subagent/catalog', {
+      version: 1, childId: leaf, childCreatedAt: 2, mode: 'one-shot',
+    })
+    root.append('subagent/catalog', {
+      version: 2, childId: external, childCreatedAt: 3, mode: 'external', label: 'remote review',
+    })
+    test.startSubagent(child)
+    test.terminal.feed('/subagents')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('● explore'))).toBe(true) })
+    const panel = screen(test.app).join('\n')
+    expect(panel).toContain('subagents · 3 total · 1 running')
+    expect(screen(test.app).some(row => row.trim() === 'Subagents')).toBe(false)
+    const rows = screen(test.app)
+    const summary = rows.findIndex(row => row.includes('subagents · 3 total · 1 running'))
+    expect(rows[summary + 1]).toContain('● explore')
+    expect(panel).toContain('↳ ○')
+    expect(panel).toContain('· one-shot · dsh watch session-subagent-leaf')
+    expect(panel).toContain('◇ remote review · external · no local session')
+    // Pinned: a transcript frame lands behind the panel and the panel stays put.
+    appendAnsweredTurn(root, createUserMessage({
+      content: [{ type: 'text', text: 'behind the panel' }],
+      source: { kind: 'user' },
+    }), 'streamed while open')
+    await vi.waitFor(() => { expect(screen(test.app).join('\n')).toContain('streamed while open') })
+    expect(screen(test.app).some(row => row.includes('● explore'))).toBe(true)
+    // Live: a child started while the panel is open joins the list.
+    const late = SessionId('session-subagent-late')
+    root.append('subagent/catalog', {
+      version: 0, childId: late, childCreatedAt: 4, mode: 'one-shot', label: 'late task',
+    })
+    test.startSubagent(late)
+    await vi.waitFor(() => { expect(screen(test.app).join('\n')).toContain('late task') })
+    // The panel never writes a transcript row.
+    const transcript = Reflect.get(test.app, 'transcript') as { entries(): readonly TranscriptEntry[] }
+    expect(transcript.entries().some(entry => entry.kind === 'notice' && entry.text.includes('subagents'))).toBe(false)
+    // The command is local: it neither cancels the turn nor steers it as text.
+    expect(test.cancelled()).toBe(0)
+    expect(test.steered).toHaveLength(0)
+    expect(test.submitted).toHaveLength(0)
+    test.terminal.feed('\x1b')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('● explore'))).toBe(false) })
+    // Ctrl+C closes the panel rather than cancelling the turn behind it.
+    test.terminal.feed('/subagents')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('● explore'))).toBe(true) })
+    test.terminal.feed('\x03')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('● explore'))).toBe(false) })
+    expect(test.cancelled()).toBe(0)
+    expect(test.steered).toHaveLength(0)
+    expect(test.submitted).toHaveLength(0)
+    await test.app.stop(0)
+  })
+
+  it('scrolls a long subagent panel without writing a transcript row', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
+    const root = owned(test).session
+    for (let index = 0; index < 20; index += 1) {
+      root.append('subagent/catalog', {
+        version: 0,
+        childId: SessionId(`session-scroll-${String(index)}`),
+        childCreatedAt: index,
+        mode: 'one-shot',
+        label: `task-${String(index)}`,
+      })
+    }
+    test.terminal.feed('/subagents')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('showing 1-16 of 20'))).toBe(true)
+    })
+    test.terminal.feed('\x1b[B')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('showing 2-17 of 20'))).toBe(true)
+    })
+    test.terminal.feed('\x1b[6~')
+    await vi.waitFor(() => {
+      expect(screen(test.app).some(row => row.includes('showing 5-20 of 20'))).toBe(true)
+    })
+    const transcript = Reflect.get(test.app, 'transcript') as { entries(): readonly TranscriptEntry[] }
+    expect(transcript.entries().some(entry => entry.kind === 'notice')).toBe(false)
+    test.terminal.feed('\x1b')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('showing 5-20 of 20'))).toBe(false) })
+    await test.app.stop(0)
+  })
+
+  it('opens the subagent panel on the inline screen', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
+    const root = owned(test).session
+    root.append('subagent/catalog', {
+      version: 0, childId: SessionId('session-inline-child'), childCreatedAt: 1, mode: 'one-shot', label: 'inline task',
+    })
+    test.terminal.feed('/subagents')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('inline task') })
+    const transcript = Reflect.get(test.app, 'transcript') as { entries(): readonly TranscriptEntry[] }
+    expect(transcript.entries().some(entry => entry.kind === 'notice' && entry.text.includes('subagents'))).toBe(false)
+    test.terminal.feed('\x1b')
+    await test.app.stop(0)
+  })
+
+  it('shows an empty subagent panel without a transcript row', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    test.terminal.feed('/subagents')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('no subagents in this session'))).toBe(true) })
+    const transcript = Reflect.get(test.app, 'transcript') as { entries(): readonly TranscriptEntry[] }
+    expect(transcript.entries().some(entry => entry.kind === 'notice' && entry.text.includes('subagents'))).toBe(false)
+    test.terminal.feed('\x1b')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('no subagents in this session'))).toBe(false) })
+    await test.app.stop(0)
+  })
+
+  it('shows a missing projection registry in the subagent panel', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { projections: false })
+    test.terminal.feed('/subagents')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => {
+      expect(plain(test.terminal.output)).toContain('listing subagents requires the session projection registry')
+    })
+    const transcript = Reflect.get(test.app, 'transcript') as { entries(): readonly TranscriptEntry[] }
+    expect(transcript.entries().some(entry => entry.kind === 'notice')).toBe(false)
+    test.terminal.feed('\x1b')
+    await test.app.stop(0)
+  })
+
+  it('shows a non-Error catalog failure in the subagent panel', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    test.ctx.sessionProjections.snapshot = () => { throw 'catalog unavailable' }
+    test.terminal.feed('/subagents')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('catalog unavailable') })
+    const transcript = Reflect.get(test.app, 'transcript') as { entries(): readonly TranscriptEntry[] }
+    expect(transcript.entries().some(entry => entry.kind === 'notice')).toBe(false)
+    test.terminal.feed('\x1b')
+    await test.app.stop(0)
+  })
+
   it('lists commands for /help without submitting a model prompt', async () => {
     const test = await bench({ afterPrompt: () => {} })
     test.terminal.feed('/help')
     test.terminal.feed('\r')
     await vi.waitFor(() => { expect(test.terminal.output).toContain('/quit') })
+    expect(plain(test.terminal.output)).toContain('/subagents')
     expect(plain(test.terminal.output)).toContain('/effort')
     expect(test.submitted).toHaveLength(0)
     await test.app.stop(0)

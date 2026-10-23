@@ -29,6 +29,7 @@ export const LOCAL_COMMANDS: readonly LocalCommand[] = [
   { name: 'help', description: 'List available commands', takesInput: false },
   { name: 'new', description: 'Start a new session', takesInput: false },
   { name: 'sessions', description: 'List stored sessions', takesInput: false },
+  { name: 'subagents', description: 'List this session\'s delegated subagents', takesInput: false },
   { name: 'resume', description: 'Resume a stored session by id', takesInput: true },
   { name: 'model', description: 'Show or switch the model route', takesInput: true },
   { name: 'effort', description: 'Show or switch reasoning effort', takesInput: true },

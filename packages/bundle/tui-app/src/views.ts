@@ -803,9 +803,10 @@ export function promptHeadingRows(value: string | PromptHeading, width: number):
 }
 
 /**
- * A modal panel: a heading, a blank row, and the control that handles keys. The
- * renderer focuses the component passed to `showOverlay`, and a bare container
- * does not forward keys, so the panel is the focused component.
+ * A modal panel: an optional heading, a blank row when a heading is present,
+ * and the control that handles keys. The renderer focuses the component passed
+ * to `showOverlay`, and a bare container does not forward keys, so the panel is
+ * the focused component.
  *
  * Escape is intercepted here instead of by the control: the control binds it
  * together with Ctrl+C to one cancel action, so a prompt that offers a skip
@@ -825,17 +826,18 @@ export class PromptPanel implements Component, Focusable {
   /** Called when the user presses Escape to move past the prompt without answering. */
   onSkip?: () => void
 
-  /** Heading rows the last render drew, so a mouse event keeps the control's own coordinates. */
-  private headingRows = 1
+  /** Heading and separator rows the last render drew, so a mouse event keeps the control's own coordinates. */
+  private chromeRows = 0
 
   /**
-   * @param title - the heading, or a provider evaluated on every render for a
-   * heading that changes while the panel is open, such as a countdown.
+   * @param title - the heading, a provider evaluated on every render for a
+   * heading that changes while the panel is open, such as a countdown, or
+   * undefined for a body that supplies its own first line.
    * @param theme - the surface theme.
    * @param body - the control that handles keys.
    */
   constructor(
-    private readonly title: PromptTitle,
+    private readonly title: PromptTitle | undefined,
     private readonly theme: TuiTheme,
     private readonly body: Component,
   ) {}
@@ -861,7 +863,7 @@ export class PromptPanel implements Component, Focusable {
    * @returns the body's result, when it handled the event.
    */
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-    const chrome = this.headingRows + 1
+    const chrome = this.chromeRows
     if (event.y < chrome) return undefined
     return this.body.handleMouse?.({
       ...event,
@@ -876,24 +878,26 @@ export class PromptPanel implements Component, Focusable {
   }
 
   /**
-   * Render the heading and body, filling every row the overlay covers.
+   * Render the optional heading and the body, filling every row the overlay
+   * covers.
    * @param width - the viewport width in columns.
    * @returns the panel lines, each exactly `width` columns wide.
    */
   render(width: number): string[] {
     const available = Math.max(1, width)
     const heading = this.heading(available)
-    this.headingRows = heading.length
-    const lines = [...heading, '', ...this.body.render(available)]
+    this.chromeRows = heading.length === 0 ? 0 : heading.length + 1
+    const lines = [...heading, ...(heading.length === 0 ? [] : ['']), ...this.body.render(available)]
     return lines.map(line => this.row(line, available))
   }
 
   /**
    * Wrap the heading into at most {@link PROMPT_TITLE_MAX_ROWS} rows.
    * @param width - the available columns.
-   * @returns the styled heading rows.
+   * @returns the styled heading rows, or none when the panel has no heading.
    */
   private heading(width: number): string[] {
+    if (this.title === undefined) return []
     const value = typeof this.title === 'function' ? this.title() : this.title
     const wrapped = wrapHeading(value, width)
     const rows: string[] = []

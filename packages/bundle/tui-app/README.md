@@ -69,6 +69,8 @@ When a local subagent starts, the TUI publishes a loopback connection record and
 
 The earlier `dsh tui --watch <session-id>` spelling also works.
 
+`/subagents` opens a pinned panel listing the session's delegated children and, for a live child, its own children, each with its activation state and the exact watch command. The panel re-reads live Session projections on every render, so children that start or settle while it is open join or leave the list; the list never writes a transcript row, and the main Agent keeps streaming underneath without moving it. Up and Down or PageUp and PageDown scroll a list taller than the panel, and Enter, Esc, or Ctrl+C closes it without cancelling the Agent.
+
 Run that command in another terminal to follow the child. The viewer is read-only: it has no composer and does not send prompts, approve Tools, or cancel the child. It shows the committed transcript plus the text, reasoning, Tool calls, and approval audit rows currently streaming, so opening it in the middle of a response shows the prefix already generated. PageUp/PageDown, the mouse wheel, selection copy, the palette, and the configured screen mode behave as they do in the interactive surface. Esc, Ctrl+C, and Ctrl+D only leave the viewer. Completing a model response keeps the connection open. A finished execution keeps its screen and the stream stays open for a later execution of the same child; a lost connection keeps the last trusted screen and reports the disconnect instead of reconnecting.
 
 A blank line and a horizontal rule separate the transcript from the footer. The footer names the child session id, its execution state, and the connection state: `online`, `history`, or `disconnected`. Its second line shows available context occupancy, decode throughput, total billed tokens, and cache-hit share from the child's committed events, in both online and history modes; disconnecting preserves the last figures. When no live service is published, or the published service is gone, the viewer opens the stored log through the persistence read handle and marks `history`; it takes no write lock, restores no Agent, and issues no model request. A bad token, an incompatible protocol, or a corrupt record is reported rather than silently downgraded to history. Both terminals must use the same user, the same `$DSH_HOME`, and compatible TUI persistence settings.
@@ -82,6 +84,7 @@ A line beginning with a known `/command` runs that command instead of reaching t
 | `/help` | List the app's commands and every registered command |
 | `/new` | Flush the session, start a fresh one, then close the previous |
 | `/sessions` | List stored sessions, newest first |
+| `/subagents` | Open a pinned, live panel of delegated children with their activation state and watch command |
 | `/resume [id]` | Resume a stored session by id, or choose one from a picker; naming the live session keeps it |
 | `/model [provider/model]` | Choose a model from the live catalog, or switch directly |
 | `/effort [id]` | Choose the routed model's declared reasoning effort, or switch directly |

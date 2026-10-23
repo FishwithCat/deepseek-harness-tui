@@ -56,6 +56,7 @@ import type { AskUserQuestionAnswerItem, PendingUserQuestion } from '@deepseek-a
 import type {} from '@deepseek-ai/dsh-user-questions'
 import { TuiSession } from './session.ts'
 import type { TuiSessionOptions } from './session.ts'
+import { SubagentPanel } from './subagents.ts'
 import type { TuiStartupValues } from './startup.ts'
 import { createToolPresentationResolver } from './tool-view.ts'
 import { DetailBody, KeyboardSelectList, MULTI_SELECT_HINT_ROWS, MultiSelectList, PlaceholderEditor, PromptPanel, StatusBar, TranscriptView, modelLabel, promptHeadingRows, promptPanelRows } from './views.ts'
@@ -645,6 +646,9 @@ export class TuiApp implements InteractionHost {
       case 'sessions':
         await this.listSessions()
         return
+      case 'subagents':
+        this.subagentsCommand()
+        return
       case 'resume':
         await this.resumeCommand(input)
         return
@@ -715,6 +719,34 @@ export class TuiApp implements InteractionHost {
       .slice(0, SESSION_LIST_LIMIT)
       .map(snapshot => describeSession(snapshot.header))
     this.notice('info', lines.join('\n'))
+  }
+
+  /**
+   * Show the session's delegated children in a pinned panel.
+   *
+   * The panel reads live projections on every render, so the Agent keeps
+   * streaming and new children appear without writing a transcript row. A
+   * catalog read failure is shown in the panel instead of an empty list.
+   */
+  private subagentsCommand(): void {
+    // Queue with the interaction prompts so an approval arriving while the
+    // panel is open waits instead of stacking a second overlay over it.
+    void this.enqueuePrompt(() => new Promise<void>((resolve) => {
+      const capacity = Math.max(1, this.promptRows(false))
+      const panel = new SubagentPanel(
+        () => this.session.subagents(),
+        capacity,
+        this.theme,
+        () => { this.tui.requestRender() },
+      )
+      const prompt = this.showPrompt(undefined, panel, false)
+      const close = (): void => {
+        this.dismissPrompt(prompt.handle)
+        resolve()
+      }
+      panel.onClose = close
+      prompt.panel.onSkip = close
+    }))
   }
 
   /**
@@ -1215,13 +1247,14 @@ export class TuiApp implements InteractionHost {
    * The alternate-screen layout pins the composer and the footer, so the panel
    * is anchored directly above them and reads as the transcript's next lines;
    * the inline layout has no fixed footer position, so the panel is centered.
-   * @param title - the heading, or a provider re-evaluated on every repaint.
+   * @param title - the heading, a provider re-evaluated on every repaint, or
+   * undefined when the body supplies its own first line.
    * @param body - the component that owns input while the modal is up.
    * @param detailed - whether the body carries scrollable detail, which lets the
    * panel take every row above the pinned footer instead of the picker's cap.
    * @returns the overlay handle and the panel that draws the heading.
    */
-  private showPrompt(title: PromptTitle, body: Component, detailed: boolean): ShownPrompt {
+  private showPrompt(title: PromptTitle | undefined, body: Component, detailed: boolean): ShownPrompt {
     const place = this.viewport === undefined
       ? { anchor: 'center' as const }
       : { anchor: 'bottom-center' as const, margin: { bottom: PINNED_FOOTER_ROWS } }

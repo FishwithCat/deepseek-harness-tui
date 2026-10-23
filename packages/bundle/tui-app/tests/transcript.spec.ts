@@ -1519,6 +1519,7 @@ describe('PromptPanel', () => {
   it('routes a mouse event past its chrome and drops one on the chrome', () => {
     const handleMouse = vi.fn(() => ({ handled: true as const }))
     const view = new PromptPanel('title', createTheme({ enabled: false, palette: 'dark' }), { render: () => ['x'], invalidate: () => {}, handleMouse })
+    view.render(40)
     expect(view.handleMouse(mouseEvent('click', { y: 2, height: 10 }))).toEqual({ handled: true })
     expect(handleMouse).toHaveBeenCalledWith(expect.objectContaining({ y: 0, height: 8 }))
     expect(view.handleMouse(mouseEvent('click', { y: 1 }))).toBeUndefined()

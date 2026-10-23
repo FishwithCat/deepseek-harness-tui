@@ -15,7 +15,23 @@ import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import type {} from '@deepseek-ai/dsh-subagent'
+import type {} from '@deepseek-ai/dsh-subagent/client'
+
+/** One delegated child as the `/subagents` listing reports it. */
+export interface TuiSubagent {
+  /** Durable child session id, also the argument `dsh watch` takes. */
+  readonly id: SessionId
+  /** Catalog mode recorded by the parent when the child was created. */
+  readonly mode: 'one-shot' | 'continuable' | 'external' | 'unknown'
+  /** Durable creation label; absent for an unlabeled one-shot or external child. */
+  readonly label?: string
+  /** Edge distance from this session; direct children are 1. */
+  readonly depth: number
+  /** Whether the child's current local activation is still running. */
+  readonly running: boolean
+}
 
 /** Invocation facts and route overrides for a session this app opens. */
 export interface TuiSessionOptions {
@@ -153,6 +169,41 @@ export class TuiSession {
    */
   hasRunningSubagents(): boolean {
     return this.runningSubagents.size > 0
+  }
+
+  /**
+   * List the delegated children this session's catalogs record, in depth-first
+   * catalog order. The read uses the live projection of every resident Session
+   * and starts no turn, so it cannot steer or settle the Agent. A child whose
+   * Session is no longer resident contributes its own catalog row, but its
+   * descendants are not reached without a storage query.
+   * @returns the rows in depth-first catalog order; empty when none were delegated.
+   * @throws when the deployment mounts no session projection registry.
+   */
+  subagents(): TuiSubagent[] {
+    const projections = this.ctx.get('sessionProjections')
+    if (projections === undefined) {
+      throw new Error('listing subagents requires the session projection registry')
+    }
+    const rows: TuiSubagent[] = []
+    const visited = new Set<SessionId>([this.session.id])
+    const visit = (session: Session, depth: number): void => {
+      for (const child of projections.snapshot(session, ['subagentCatalog']).values.subagentCatalog ?? []) {
+        if (visited.has(child.id)) continue
+        visited.add(child.id)
+        rows.push({
+          id: child.id,
+          mode: child.mode,
+          ...child.label === undefined ? {} : { label: child.label },
+          depth,
+          running: this.runningSubagents.has(child.id),
+        })
+        const resident = this.ctx.sessions.get(child.id)
+        if (resident !== undefined) visit(resident, depth + 1)
+      }
+    }
+    visit(this.session, 1)
+    return rows
   }
 
   /**
