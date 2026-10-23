@@ -57,7 +57,7 @@ Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is 
 | `Space` | Check or uncheck an option in a multi-select question |
 | `Ctrl+L` | Repaint from scratch |
 
-Exiting — Ctrl+C with nothing running, Ctrl+D, or `/quit` — restores the terminal and prints the session id as a `dsh --resume <session-id>` command, so a later invocation continues the same conversation. Resuming — that command at startup, or `/resume` in the composer — restores the stored conversation into the transcript before the composer accepts the next prompt, so the earlier prompts, replies, and Tool rows are back on screen instead of only their effects on the model. The hint is printed only where the deployment mounts a session-persistence backend; without one there is nothing for `--resume` to open.
+Exiting — Ctrl+C with nothing running, Ctrl+D, or `/quit` — restores the terminal and prints the session id as a `dsh --resume <session-id>` command, so a later invocation continues the same conversation. Resuming — that command at startup, or `/resume` in the composer — restores the stored conversation into the transcript before the composer accepts the next prompt, so the earlier prompts, replies, and Tool rows are back on screen instead of only their effects on the model. The `/resume` picker and `/sessions` label each stored session with its title — the leading words of the first human message, a generated title, or an explicit rename — beside its id, start time, and workspace. The hint is printed only where the deployment mounts a session-persistence backend; without one there is nothing for `--resume` to open.
 
 ### Watching a subagent
 
@@ -83,7 +83,7 @@ A line beginning with a known `/command` runs that command instead of reaching t
 |---|---|
 | `/help` | List the app's commands and every registered command |
 | `/new` | Flush the session, start a fresh one, then close the previous |
-| `/sessions` | List stored sessions, newest first |
+| `/sessions` | List stored sessions by title, newest first |
 | `/subagents` | Open a pinned, live panel of delegated children with their activation state and watch command |
 | `/resume [id]` | Resume a stored session by id, or choose one from a picker; naming the live session keeps it |
 | `/model [provider/model]` | Choose a model from the live catalog, or switch directly |

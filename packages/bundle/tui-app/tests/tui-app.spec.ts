@@ -21,8 +21,8 @@ import type { FileDiff } from '@deepseek-ai/dsh-tools'
 import type { SelectItem } from '@earendil-works/pi-tui'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
-import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import SessionStore, { Session, SessionId, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import SkillRegistry, { type SkillCandidate } from '@deepseek-ai/dsh-skill'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { SUBAGENT_DESCRIPTOR_VERSION, SubagentRunId } from '@deepseek-ai/dsh-subagent'
@@ -194,6 +194,18 @@ async function bench(
     resume?: string
     /** Reject the scripted `resume` factory with this message, to exercise a failed session replacement. */
     resumeError?: string
+    /** Stored sessions the picker lists, each with the title the query service folds for it. */
+    storedList?: readonly {
+      id: string
+      createdAt: number
+      cwd?: string
+      /** Folded title; absent exercises the short-id fallback. */
+      title?: string
+      /** Fail this session's title read, to exercise the per-row fallback. */
+      titleFailure?: boolean
+    }[]
+    /** Leave the session-query service unmounted, to exercise the id-only list. */
+    withoutSessionQuery?: boolean
     models?: readonly LlmModelInfo[]
     modalities?: readonly ModelModality[]
     reasoning?: LlmModelReasoningInfo
@@ -304,7 +316,59 @@ async function bench(
   }
   // Only the service's presence is under test for the exit hint; a `stored`
   // fixture additionally serves the read a resumed boot folds into the transcript.
-  if (options.stored !== undefined) {
+  if (options.storedList !== undefined) {
+    const entries = options.storedList
+    const headerOf = (entry: (typeof entries)[number]): SessionHeader => ({
+      version: SESSION_FORMAT_VERSION,
+      id: SessionId(entry.id),
+      createdAt: entry.createdAt,
+      ...entry.cwd === undefined ? {} : { cwd: entry.cwd },
+      isSeeded: false,
+    })
+    ctx.provide('sessionPersistence', {
+      async list() {
+        return entries.map(entry => ({ header: headerOf(entry), revision: 'test-revision' }))
+      },
+      async open(_id: string) {
+        return {
+          async read() {
+            return { eventState: 'shared-frozen' as const, events: [] }
+          },
+          close: () => Promise.resolve(),
+        }
+      },
+    } as never)
+    if (options.withoutSessionQuery !== true) {
+      ctx.provide('sessionQuery', {
+        async readTitleSnapshots(ids: readonly SessionId[]) {
+          return ids.map((id) => {
+            const entry = entries.find(candidate => candidate.id === id)
+            /* v8 ignore next -- the picker only requests ids this list returned */
+            if (entry === undefined) throw new Error(`no stored session ${id}`)
+            if (entry.titleFailure === true) {
+              return { sessionId: id, status: 'rejected' as const, reason: new Error(`no title for ${id}`) }
+            }
+            return {
+              sessionId: id,
+              status: 'fulfilled' as const,
+              value: {
+                session: headerOf(entry),
+                ...entry.title === undefined ? {} : {
+                  title: {
+                    title: entry.title,
+                    messageSeqs: [],
+                    source: { kind: 'fallback' as const },
+                    eventSeq: 1,
+                    updatedAt: entry.createdAt,
+                  },
+                },
+              },
+            }
+          })
+        },
+      } as never)
+    }
+  } else if (options.stored !== undefined) {
     const stored = options.stored
     ctx.provide('sessionPersistence', {
       async open(id: string) {
@@ -1601,6 +1665,108 @@ describe('TuiApp', () => {
     test.terminal.feed('/resume session-1')
     test.terminal.feed('\r')
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('this deployment stores no sessions') })
+    await test.app.stop(0)
+  })
+
+  it('reports an empty stored-session list from the resume picker', async () => {
+    internals.stderr = { write: () => true }
+    const test = await bench({ afterPrompt: () => {} }, { storedList: [] })
+    test.terminal.feed('/resume')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('no stored sessions') })
+    await test.app.stop(0)
+  })
+
+  it('reports the resume picker usage when the deployment stores no sessions', async () => {
+    const test = await bench({ afterPrompt: () => {} })
+    test.terminal.feed('/resume')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('usage: /resume <session-id>') })
+    await test.app.stop(0)
+  })
+
+  it('labels the resume picker with each stored session title, newest first', async () => {
+    internals.stderr = { write: () => true }
+    const test = await bench({ afterPrompt: () => {} }, {
+      screen: 'alternate',
+      storedList: [
+        { id: 'session-older', createdAt: Date.UTC(2026, 0, 2, 3, 4), cwd: '/work/older', title: 'Fix the parser' },
+        { id: 'session-newer', createdAt: Date.UTC(2026, 0, 3, 3, 4), cwd: '/work/newer', title: 'Add resume labels' },
+      ],
+    })
+    test.terminal.feed('/resume')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('Add resume labels'))).toBe(true) })
+
+    const rows = screen(test.app)
+    const newest = rows.find(row => row.includes('Add resume labels'))
+    expect(newest).toContain('2026-01-03 03:04')
+    expect(newest).toContain('/work/newer')
+    // The stored order is newer first, and each row keeps a readable title.
+    expect(rows.findIndex(row => row.includes('Add resume labels')))
+      .toBeLessThan(rows.findIndex(row => row.includes('Fix the parser')))
+
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('resumed session-newer') })
+    await test.app.stop(0)
+  })
+
+  it('falls back to the short id for a stored session without a readable title', async () => {
+    internals.stderr = { write: () => true }
+    const test = await bench({ afterPrompt: () => {} }, {
+      screen: 'alternate',
+      storedList: [
+        { id: 'session-00000000-0000-4000-8000-000000000001', createdAt: 0, cwd: '/work/empty' },
+        {
+          id: 'session-00000000-0000-4000-8000-000000000002',
+          createdAt: 0,
+          titleFailure: true,
+        },
+      ],
+    })
+    test.terminal.feed('/resume')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(screen(test.app).some(row => row.includes('000000000001'))).toBe(true) })
+
+    const rows = screen(test.app)
+    const untitled = rows.find(candidate => candidate.includes('000000000001'))
+    expect(untitled).toContain('1970-01-01 00:00')
+    expect(untitled).toContain('/work/empty')
+    expect(rows.some(candidate => candidate.includes('000000000002'))).toBe(true)
+    // The second row has no workspace, so its row keeps the explicit empty detail.
+    expect(rows.find(candidate => candidate.includes('000000000002'))).toContain('(no workspace)')
+    await test.app.stop(0)
+  })
+
+  it('lists stored sessions by short id when the deployment mounts no session query', async () => {
+    internals.stderr = { write: () => true }
+    const test = await bench({ afterPrompt: () => {} }, {
+      withoutSessionQuery: true,
+      storedList: [
+        { id: 'session-00000000-0000-4000-8000-000000000003', createdAt: 0, cwd: '/work/plain', title: 'Unused title' },
+      ],
+    })
+    test.terminal.feed('/sessions')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('000000000003') })
+    expect(plain(test.terminal.output)).toContain('/work/plain')
+    expect(plain(test.terminal.output)).not.toContain('Unused title')
+    await test.app.stop(0)
+  })
+
+  it('lists stored sessions by title in /sessions', async () => {
+    internals.stderr = { write: () => true }
+    const test = await bench({ afterPrompt: () => {} }, {
+      storedList: [
+        { id: 'session-older', createdAt: Date.UTC(2026, 0, 2, 3, 4), cwd: '/work/older', title: 'Fix the parser' },
+        { id: 'session-untitled', createdAt: Date.UTC(2026, 0, 1, 3, 4), cwd: '/work/untitled' },
+      ],
+    })
+    test.terminal.feed('/sessions')
+    test.terminal.feed('\r')
+    await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('Fix the parser') })
+    expect(plain(test.terminal.output)).toContain('/work/older')
+    expect(plain(test.terminal.output)).toContain('/work/untitled')
     await test.app.stop(0)
   })
 

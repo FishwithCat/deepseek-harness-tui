@@ -78,7 +78,7 @@ A line beginning with a known `/command` runs that command instead of reaching t
 |---|---|
 | `/help` | List the app's commands and every registered command |
 | `/new` | Flush and close the session, then start a fresh one |
-| `/sessions` | List stored sessions, newest first |
+| `/sessions` | List stored sessions by title, newest first |
 | `/resume [id]` | Resume a stored session by id, or choose one from a picker |
 | `/model [provider/model]` | Choose a model from the live catalog, or switch directly |
 | `/effort [id]` | Choose the routed model's declared reasoning effort, or switch directly |

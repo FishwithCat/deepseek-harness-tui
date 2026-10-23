@@ -19,14 +19,17 @@ import {
   VStack,
   isKeyRelease,
   matchesKey,
+  truncateToWidth,
 } from '@earendil-works/pi-tui'
 import type { Component, OverlayHandle, SelectItem, SelectListLayoutOptions, TUI, Terminal } from '@earendil-works/pi-tui'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 // Empty type import carries the optional attachment service read by image paste.
 import type {} from '@deepseek-ai/dsh-attachment'
 // Empty type import carries the optional persistence read used by `/resume`.
 import type {} from '@deepseek-ai/dsh-session-persistence'
+// Empty type import carries the optional title read that labels stored sessions.
+import type {} from '@deepseek-ai/dsh-session-query'
 // Empty type import carries the optional compaction policy read used by the footer.
 import type {} from '@deepseek-ai/dsh-compaction'
 // Empty type import carries the optional plan-mode service read by the mode toggle.
@@ -66,6 +69,8 @@ import { SubagentWatchHub } from './watch/server.ts'
 
 /** Longest stored-session list rendered by `/sessions`. */
 const SESSION_LIST_LIMIT = 20
+/** Widest session-title column in a stored-session row, leaving room for its id and workspace. */
+const SESSION_TITLE_COLUMNS = 60
 /** Selectable items shown at once in a prompt overlay. */
 const PROMPT_VISIBLE_ITEMS = 10
 /** Repaint interval for a prompt whose heading counts down; the heading reads whole seconds. */
@@ -719,16 +724,42 @@ export class TuiApp implements InteractionHost {
       this.notice('error', 'this deployment stores no sessions')
       return
     }
-    const snapshots = await persistence.list()
+    const snapshots = [...await persistence.list()]
+      .sort((left, right) => right.header.createdAt - left.header.createdAt)
+      .slice(0, SESSION_LIST_LIMIT)
     if (snapshots.length === 0) {
       this.notice('info', 'no stored sessions')
       return
     }
-    const lines = [...snapshots]
-      .sort((left, right) => right.header.createdAt - left.header.createdAt)
-      .slice(0, SESSION_LIST_LIMIT)
-      .map(snapshot => describeSession(snapshot.header))
+    const titles = await this.sessionTitles(snapshots.map(snapshot => snapshot.header.id))
+    const lines = snapshots.map((snapshot) => {
+      const detail = describeSession(snapshot.header)
+      const title = titles.get(snapshot.header.id)
+      return title === undefined ? detail : `${sessionTitleLabel(title)}  ${detail}`
+    })
     this.notice('info', lines.join('\n'))
+  }
+
+  /**
+   * Fold the stored title of each listed session.
+   *
+   * The title is the client-visible label the other surfaces use: the leading
+   * words of the first eligible human message, a generated title, or an
+   * explicit rename. A failed read leaves that one row on its short id, and a
+   * deployment without the query service keeps the previous id-only list.
+   * @param ids - stored session ids to read.
+   * @returns title text by session id.
+   */
+  private async sessionTitles(ids: readonly SessionId[]): Promise<Map<SessionId, string>> {
+    const titles = new Map<SessionId, string>()
+    const query = this.options.ctx.get('sessionQuery')
+    if (query === undefined) return titles
+    for (const result of await query.readTitleSnapshots(ids)) {
+      if (result.status === 'rejected') continue
+      const title = result.value.title?.title
+      if (title !== undefined) titles.set(result.sessionId, title)
+    }
+    return titles
   }
 
   /**
@@ -781,11 +812,15 @@ export class TuiApp implements InteractionHost {
       this.notice('info', 'no stored sessions')
       return
     }
-    const items: SelectItem[] = snapshots.map(snapshot => ({
-      value: snapshot.header.id,
-      label: shortId(snapshot.header.id),
-      description: describeSession(snapshot.header),
-    }))
+    const titles = await this.sessionTitles(snapshots.map(snapshot => snapshot.header.id))
+    const items: SelectItem[] = snapshots.map((snapshot) => {
+      const title = titles.get(snapshot.header.id)
+      return {
+        value: snapshot.header.id,
+        label: title === undefined ? shortId(snapshot.header.id) : sessionTitleLabel(title),
+        description: describeSession(snapshot.header),
+      }
+    })
     const chosen = await this.choose('Resume which session?', items)
     if (chosen.kind !== 'answer') return
     await this.resumeSession(chosen.value.value)
@@ -1434,7 +1469,16 @@ function shortId(id: string): string {
 }
 
 /**
- * One stored-session line for the picker and `/sessions`.
+ * Primary label for one stored session.
+ * @param title - the folded session title.
+ * @returns the title cut to its display column, with an ellipsis when shortened.
+ */
+function sessionTitleLabel(title: string): string {
+  return truncateToWidth(title, SESSION_TITLE_COLUMNS, '…')
+}
+
+/**
+ * One stored-session row shared by the picker description and `/sessions`.
  * @param header - the stored session header.
  * @returns `id  created  workspace`.
  */
