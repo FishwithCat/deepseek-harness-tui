@@ -9,15 +9,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, CreateAgentOptions, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, CreateAgentOptions, Model, ResumeAgentOptions } from '@deepseek-ai/dsh-agent'
 import AgentDefaultModelConfig from '@deepseek-ai/dsh-agent-default-model'
-import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
 import LlmRuntime, { LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { createInboxStub } from '@deepseek-ai/dsh-agent-loop-testkit'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { LlmModelInfo, LlmModelReasoningInfo, LlmResolvedModelInfo, ModelModality, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
-import type { FileDiff } from '@deepseek-ai/dsh-tools'
+import type { FileDiff, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import type { SelectItem } from '@earendil-works/pi-tui'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
@@ -34,6 +33,7 @@ import * as SessionStatsPlugin from '@deepseek-ai/dsh-session-stats'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import BasicCompactionEngine from '@deepseek-ai/dsh-compaction-basic'
 import { CompactionId } from '@deepseek-ai/dsh-compaction'
 import CommandRuntime from '@deepseek-ai/dsh-commands'
@@ -222,17 +222,18 @@ async function bench(
   await ctx.plugin(SessionStore)
   if (options.projections !== false) {
     await ctx.plugin(SessionProjectionRegistry)
-    ctx.sessionProjections.register(subagentIdentityProjectionDefinition)
+    await ctx.sessionProjections.register(subagentIdentityProjectionDefinition)
   }
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
   await ctx.plugin(LlmRuntime)
   if (options.planMode === true || options.tools === true) {
-    // `set()` folds the turn boundary to decide commit-versus-queue; the loop
-    // itself is not mounted because the scripted Agent owns the lifecycle.
-    if (options.planMode === true) ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
+    // `set()` folds the turn boundary to decide commit-versus-queue; the Agent
+    // registry above owns that projection, while the scripted Agent owns the
+    // lifecycle in place of the loop.
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
     if (options.planMode === true) await ctx.plugin(PlanModeController, { section: 'Test plan mode instructions.' })
   }
   if (options.questions === true) await ctx.plugin(UserQuestionService)
@@ -273,6 +274,7 @@ async function bench(
     const agent: Agent = {
       id: session.id,
       options: request.agentOptions ?? {},
+      model: createAgentModel(request.agentOptions ?? {}),
       session,
       inbox,
       get status() { return observed.running ? 'running' : 'idle' },
@@ -322,12 +324,39 @@ async function bench(
     subagentRuns.delete(id)
     ctx.emit('subagent/end', { runId, provider: 'spawn', id, local: true, stopReason: 'aborted' })
   }
-  if (options.subagents === true) {
-    // The surface tracks running delegated work from the lifecycle pair and
-    // stops each tracked child under the root Agent's ancestor authority.
-    ctx.provide('subagents', {
-      interrupt: (id: SessionId) => { interruptedSubagents.push(id) },
-    } as never)
+  // The real service owns catalog observation; this bench keeps the same
+  // contract over the projections its fixtures append, including the failure a
+  // composition without `sessionQuery` reports.
+  const listDescendants = async (rootId: SessionId): Promise<Array<Record<string, unknown>>> => {
+    if (ctx.get('sessionQuery') === undefined) {
+      throw new Error('listing subagents requires the sessionQuery service (load @deepseek-ai/dsh-session-query)')
+    }
+    const rows: Array<Record<string, unknown>> = []
+    const visited = new Set<SessionId>([rootId])
+    const visit = (id: SessionId, depth: number): void => {
+      const session = ctx.sessions.get(id)
+      if (session === undefined) return
+      const entries = ctx.sessionProjections.snapshot(session, ['subagentCatalog']).values.subagentCatalog ?? []
+      for (const entry of entries) {
+        if (visited.has(entry.id)) continue
+        visited.add(entry.id)
+        rows.push({ ...entry, kind: 'child', parentId: id, depth, activity: 'inactive', hasChildren: false })
+        visit(entry.id, depth + 1)
+      }
+    }
+    visit(rootId, 1)
+    return rows
+  }
+  // The surface tracks running delegated work from the lifecycle pair and
+  // stops each tracked child under the root Agent's ancestor authority.
+  ctx.provide('subagents', {
+    interrupt: (id: SessionId) => { interruptedSubagents.push(id) },
+    listDescendants,
+  } as never)
+  if (options.withoutSessionQuery !== true && options.storedList === undefined) {
+    // The listing stub only requires the service to exist; stored-session
+    // fixtures mount their own richer query below.
+    ctx.provide('sessionQuery', {} as never)
   }
   // Only the service's presence is under test for the exit hint; a `stored`
   // fixture additionally serves the read a resumed boot folds into the transcript.
@@ -355,6 +384,21 @@ async function bench(
     } as never)
     if (options.withoutSessionQuery !== true) {
       ctx.provide('sessionQuery', {
+        observeSession(id: SessionId) {
+          const session = ctx.sessions.get(id)
+          return {
+            source: 'live' as const,
+            header: session?.header,
+            inheritedEventCount: 0,
+            events: [],
+            cursor: 0,
+            projections: session === undefined
+              ? { asOfSeq: 0, values: {} }
+              : ctx.sessionProjections.snapshot(session, ['subagentCatalog']),
+            dispose() {},
+            [Symbol.dispose]() {},
+          }
+        },
         async readTitleSnapshots(ids: readonly SessionId[]) {
           return ids.map((id) => {
             const entry = entries.find(candidate => candidate.id === id)
@@ -497,6 +541,42 @@ function storedTurn(prompt: string, reply: string): SessionEvent[] {
     source: { kind: 'user' },
   }), reply)
   return [...session.ownEvents()]
+}
+
+/** A structural Agent Model over the route the fake Agent was created with. */
+function createAgentModel(options: { provider?: string | undefined; model?: string | undefined }): Model {
+  let current = options.provider === undefined || options.model === undefined
+    ? undefined
+    : { provider: options.provider, model: options.model }
+  return {
+    current: () => current === undefined ? undefined : { ...current },
+    select: (selection) => { current = { ...selection } },
+  }
+}
+
+/** Execute one model-shaped call through the batch executor and return its result. */
+async function executeTool(
+  ctx: Context,
+  agent: Agent,
+  call: { readonly id: ToolCallId; readonly name: string; readonly arguments: Record<string, unknown> },
+  signal: AbortSignal = new AbortController().signal,
+): Promise<ToolExecutionResult> {
+  const modelSelection = agent.model.current()
+  if (modelSelection === undefined) throw new Error('the test Agent has no model selection')
+  const toolSet = await ctx.tools.resolve({ agent, modelSelection, signal })
+  try {
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: call.id, name: call.name, arguments: JSON.stringify(call.arguments) }],
+      signal,
+      agent,
+      toolSet,
+    })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
+    return result
+  } finally {
+    toolSet.dispose()
+  }
 }
 
 describe('TuiApp', () => {
@@ -678,7 +758,7 @@ describe('TuiApp', () => {
   it('shows delegated subagents in a pinned live panel without touching the running turn', async () => {
     const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
     test.setRunning(true)
-    test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
+    await test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
     const root = owned(test).session
     const child = SessionId('session-subagent-child')
     const leaf = SessionId('session-subagent-leaf')
@@ -747,7 +827,7 @@ describe('TuiApp', () => {
 
   it('scrolls a long subagent panel without writing a transcript row', async () => {
     const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
-    test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
+    await test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
     const root = owned(test).session
     for (let index = 0; index < 20; index += 1) {
       root.append('subagent/catalog', {
@@ -780,7 +860,7 @@ describe('TuiApp', () => {
 
   it('opens the subagent panel on the inline screen', async () => {
     const test = await bench({ afterPrompt: () => {} })
-    test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
+    await test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
     const root = owned(test).session
     root.append('subagent/catalog', {
       version: 0, childId: SessionId('session-inline-child'), childCreatedAt: 1, mode: 'one-shot', label: 'inline task',
@@ -806,12 +886,12 @@ describe('TuiApp', () => {
     await test.app.stop(0)
   })
 
-  it('shows a missing projection registry in the subagent panel', async () => {
-    const test = await bench({ afterPrompt: () => {} }, { projections: false })
+  it('shows a missing session query in the subagent panel', async () => {
+    const test = await bench({ afterPrompt: () => {} }, { withoutSessionQuery: true })
     test.terminal.feed('/subagents')
     test.terminal.feed('\r')
     await vi.waitFor(() => {
-      expect(plain(test.terminal.output)).toContain('listing subagents requires the session projection registry')
+      expect(plain(test.terminal.output)).toContain('listing subagents requires the sessionQuery service')
     })
     const transcript = Reflect.get(test.app, 'transcript') as { entries(): readonly TranscriptEntry[] }
     expect(transcript.entries().some(entry => entry.kind === 'notice')).toBe(false)
@@ -819,27 +899,27 @@ describe('TuiApp', () => {
     await test.app.stop(0)
   })
 
-  it('shows a non-Error catalog failure in the subagent panel', async () => {
+  it('shows a non-Error listing failure in the subagent panel', async () => {
     const test = await bench({ afterPrompt: () => {} })
-    const registry = test.ctx.sessionProjections
-    const readCatalog = registry.snapshot.bind(registry)
-    registry.snapshot = () => { throw 'catalog unavailable' }
+    const subagents = test.ctx.subagents
+    const list = subagents.listDescendants.bind(subagents)
+    subagents.listDescendants = () => { throw 'catalog unavailable' }
     test.terminal.feed('/subagents')
     test.terminal.feed('\r')
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('catalog unavailable') })
     const transcript = Reflect.get(test.app, 'transcript') as { entries(): readonly TranscriptEntry[] }
     expect(transcript.entries().some(entry => entry.kind === 'notice')).toBe(false)
-    // The footer reads the same catalog to keep its delegated-work marker current,
-    // so restore the registry before closing the panel; the panel is the one
+    // The footer reads the same cache to keep its delegated-work marker current,
+    // so restore the service before closing the panel; the panel is the one
     // surface that reports the failure.
-    registry.snapshot = readCatalog
+    subagents.listDescendants = list
     test.terminal.feed('\x1b')
     await test.app.stop(0)
   })
 
   it('reports delegated subagents beside the footer occupancy as they start and settle', async () => {
     const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
-    test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
+    await test.ctx.sessionProjections.register(subagentCatalogProjectionDefinition)
     expect(screen(test.app).some(row => row.includes('subagents ('))).toBe(false)
     const root = owned(test).session
     const child = SessionId('session-footer-child')
@@ -1112,16 +1192,6 @@ describe('TuiApp', () => {
       parentAgent: parent,
       meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
     })
-    test.ctx.provide('sessionQuery', {
-      async observeSession() {
-        return {
-          header: child.agent.session.header,
-          events: [],
-          cursor: -1,
-          [Symbol.dispose]() {},
-        }
-      },
-    } as never)
     test.startSubagent(child.agent.id)
 
     await vi.waitFor(() => {
@@ -1370,7 +1440,7 @@ describe('TuiApp', () => {
   })
 
   it('labels a descendant by its short id when no projection is composed', async () => {
-    const test = await bench({ afterPrompt: () => {} }, { projections: false })
+    const test = await bench({ afterPrompt: () => {} })
     const parent = owned(test)
     const child = await test.ctx.agents.create({
       sessionId: SessionId('child-x'),
@@ -1900,7 +1970,7 @@ describe('TuiApp', () => {
   })
 
   it('omits the occupancy when the composition mounts no measurement service', async () => {
-    const test = await bench({ afterPrompt: () => {} }, { projections: false })
+    const test = await bench({ afterPrompt: () => {} })
     expect(plain(test.terminal.output)).toContain('Enter send')
     expect(plain(test.terminal.output)).not.toContain('%')
     await test.app.stop(0)
@@ -2265,6 +2335,7 @@ describe('TuiApp as a Cordis plugin', () => {
         const agent: Agent = {
           id: session.id,
           options: createOptions.agentOptions ?? {},
+          model: createAgentModel(createOptions.agentOptions ?? {}),
           session,
           inbox: createInboxStub(),
           status: 'idle',
@@ -2320,13 +2391,7 @@ describe('TuiApp question detail', () => {
     const agent = owned(test)
     test.ctx.planMode.set(agent, true)
     const plan = '# Widget migration\n\nMove the widget to its own module.\n\nThen update every caller.'
-    const execution = test.ctx.tools.execute({
-      callId: ToolCallId('call-exit-1'),
-      name: 'exit_plan_mode',
-      arguments: { plan },
-      signal: new AbortController().signal,
-      agent,
-    })
+    const execution = executeTool(test.ctx, agent, { id: ToolCallId('call-exit-1'), name: 'exit_plan_mode', arguments: { plan } })
     // The review shares the plan verbatim: the model is told not to repeat it
     // as a plain reply, so an unrendered detail would leave nothing to review.
     await vi.waitFor(() => {
@@ -2344,13 +2409,7 @@ describe('TuiApp question detail', () => {
     const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
     const agent = owned(test)
     test.ctx.planMode.set(agent, true)
-    const execution = test.ctx.tools.execute({
-      callId: ToolCallId('call-exit-skip'),
-      name: 'exit_plan_mode',
-      arguments: { plan: '# Widget migration\n\nMove the widget.' },
-      signal: new AbortController().signal,
-      agent,
-    })
+    const execution = executeTool(test.ctx, agent, { id: ToolCallId('call-exit-skip'), name: 'exit_plan_mode', arguments: { plan: '# Widget migration\n\nMove the widget.' } })
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('→ Approve'))).toBe(true)
     })
@@ -2363,13 +2422,7 @@ describe('TuiApp question detail', () => {
     const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
     const agent = owned(test)
     test.ctx.planMode.set(agent, true)
-    const execution = test.ctx.tools.execute({
-      callId: ToolCallId('call-exit-other'),
-      name: 'exit_plan_mode',
-      arguments: { plan: '# Widget migration\n\nMove the widget.' },
-      signal: new AbortController().signal,
-      agent,
-    })
+    const execution = executeTool(test.ctx, agent, { id: ToolCallId('call-exit-other'), name: 'exit_plan_mode', arguments: { plan: '# Widget migration\n\nMove the widget.' } })
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('→ Approve'))).toBe(true)
     })
@@ -2399,13 +2452,7 @@ describe('TuiApp question detail', () => {
     const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
     const agent = owned(test)
     test.ctx.planMode.set(agent, true)
-    const execution = test.ctx.tools.execute({
-      callId: ToolCallId('call-exit-note-skip'),
-      name: 'exit_plan_mode',
-      arguments: { plan: '# Widget migration\n\nMove the widget.' },
-      signal: new AbortController().signal,
-      agent,
-    })
+    const execution = executeTool(test.ctx, agent, { id: ToolCallId('call-exit-note-skip'), name: 'exit_plan_mode', arguments: { plan: '# Widget migration\n\nMove the widget.' } })
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('→ Approve'))).toBe(true)
     })
@@ -2430,13 +2477,7 @@ describe('TuiApp question detail', () => {
     const test = await bench({ afterPrompt: () => {} }, { planMode: true, questions: true, screen: 'alternate' })
     const agent = owned(test)
     test.ctx.planMode.set(agent, true)
-    const execution = test.ctx.tools.execute({
-      callId: ToolCallId('call-exit-note-empty'),
-      name: 'exit_plan_mode',
-      arguments: { plan: '# Widget migration\n\nMove the widget.' },
-      signal: new AbortController().signal,
-      agent,
-    })
+    const execution = executeTool(test.ctx, agent, { id: ToolCallId('call-exit-note-empty'), name: 'exit_plan_mode', arguments: { plan: '# Widget migration\n\nMove the widget.' } })
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('→ Approve'))).toBe(true)
     })
@@ -2465,13 +2506,7 @@ describe('TuiApp question detail', () => {
       { length: 30 },
       (_, index) => `Step ${String(index + 1).padStart(2, '0')} of the migration.`,
     ).join('\n\n')}`
-    const execution = test.ctx.tools.execute({
-      callId: ToolCallId('call-exit-2'),
-      name: 'exit_plan_mode',
-      arguments: { plan },
-      signal: new AbortController().signal,
-      agent,
-    })
+    const execution = executeTool(test.ctx, agent, { id: ToolCallId('call-exit-2'), name: 'exit_plan_mode', arguments: { plan } })
     await vi.waitFor(() => {
       expect(screen(test.app).some(row => row.includes('Step 01'))).toBe(true)
     })

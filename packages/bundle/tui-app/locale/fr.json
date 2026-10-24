@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Interface de terminal",
+    "description": "Surface de terminal interactive en plein écran qui pilote un Agent et une Session sur dsh-base."
+  }
+}

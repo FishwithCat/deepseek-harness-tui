@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Terminal-Oberfläche",
+    "description": "Interaktive Vollbild-Terminaloberfläche, die einen Agent und eine Session über dsh-base steuert."
+  }
+}

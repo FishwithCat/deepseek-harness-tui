@@ -60,7 +60,7 @@ describe('SubagentPanel', () => {
         running: false,
       } satisfies TuiSubagent,
     ]
-    const panel = new SubagentPanel(() => rows, 16, theme, () => {})
+    const panel = new SubagentPanel(() => rows, () => undefined, 16, theme, () => {})
     const rendered = panel.render(100)
     expect(rendered[0]).toContain('subagents · 4 total · 1 running')
     expect(rendered[1]).toContain('● explore · continuable · dsh watch session-child-1')
@@ -73,7 +73,7 @@ describe('SubagentPanel', () => {
   })
 
   it('keeps a multiline label on one row', () => {
-    const panel = new SubagentPanel(() => [row(1, { label: 'multi\nline' })], 6, theme, () => {})
+    const panel = new SubagentPanel(() => [row(1, { label: 'multi\nline' })], () => undefined, 6, theme, () => {})
     const rendered = panel.render(100)
     expect(rendered).toHaveLength(2)
     expect(rendered[1]).toContain('multi line')
@@ -82,7 +82,7 @@ describe('SubagentPanel', () => {
 
   it('renders a catalog failure instead of rows and still closes', () => {
     const close = vi.fn()
-    const panel = new SubagentPanel(() => { throw new Error('catalog unavailable') }, 6, theme, () => {})
+    const panel = new SubagentPanel(() => [], () => 'catalog unavailable', 6, theme, () => {})
     expect(panel.render(100)).toEqual(['! catalog unavailable'])
     expect(panel.render(12)[0]).toContain('…')
     panel.onClose = close
@@ -91,14 +91,14 @@ describe('SubagentPanel', () => {
   })
 
   it('renders an empty session', () => {
-    const panel = new SubagentPanel(() => [], 16, theme, () => {})
+    const panel = new SubagentPanel(() => [], () => undefined, 16, theme, () => {})
     expect(panel.render(40)).toEqual(['no subagents in this session'])
   })
 
   it('scrolls the overflowing list by row and by page, clamping at both ends', () => {
     const rows = Array.from({ length: 8 }, (_, index) => row(index + 1))
     const repaint = vi.fn()
-    const panel = new SubagentPanel(() => rows, 6, theme, repaint)
+    const panel = new SubagentPanel(() => rows, () => undefined, 6, theme, repaint)
     expect(panel.render(80)).toHaveLength(6)
     expect(panel.render(80).at(-1)).toContain('showing 1-4 of 8')
     panel.handleInput('\x1b[B')
@@ -121,14 +121,14 @@ describe('SubagentPanel', () => {
   })
 
   it('scrolls with the wheel only while the list overflows', () => {
-    const short = new SubagentPanel(() => [row(1), row(2)], 6, theme, () => {})
+    const short = new SubagentPanel(() => [row(1), row(2)], () => undefined, 6, theme, () => {})
     short.handleInput('\x1b[6~')
     expect(short.handleMouse(wheel(1))).toBeUndefined()
     expect(short.handleMouse(wheel(undefined))).toBeUndefined()
     expect(short.handleMouse({ ...wheel(1), type: 'click' })).toBeUndefined()
     const rows = Array.from({ length: 8 }, (_, index) => row(index + 1))
     const repaint = vi.fn()
-    const panel = new SubagentPanel(() => rows, 6, theme, repaint)
+    const panel = new SubagentPanel(() => rows, () => undefined, 6, theme, repaint)
     expect(panel.handleMouse(wheel(3))).toEqual({ handled: true })
     expect(panel.render(80).at(-1)).toContain('showing 4-7 of 8')
     expect(repaint).toHaveBeenCalledTimes(1)
@@ -136,7 +136,7 @@ describe('SubagentPanel', () => {
 
   it('closes on Enter and Ctrl+C and leaves other keys alone', () => {
     const close = vi.fn()
-    const panel = new SubagentPanel(() => [row(1)], 6, theme, () => {})
+    const panel = new SubagentPanel(() => [row(1)], () => undefined, 6, theme, () => {})
     panel.onClose = close
     panel.handleInput('\r')
     panel.handleInput('\x03')
@@ -149,7 +149,7 @@ describe('SubagentPanel', () => {
 
   it('reads the provider on every render so rows appear and disappear live', () => {
     const rows: TuiSubagent[] = [row(1)]
-    const panel = new SubagentPanel(() => rows, 6, theme, () => {})
+    const panel = new SubagentPanel(() => rows, () => undefined, 6, theme, () => {})
     expect(panel.render(80).join('\n')).toContain('task-1')
     expect(panel.render(80).join('\n')).not.toContain('task-2')
     rows.push(row(2))

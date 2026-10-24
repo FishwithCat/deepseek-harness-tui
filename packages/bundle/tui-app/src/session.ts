@@ -9,7 +9,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, ModelSelection, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, ModelSelection } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { brandString } from '@deepseek-ai/dsh-brand'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -58,18 +58,23 @@ function initialSelection(ctx: Context, options: TuiSessionOptions): ModelSelect
 
 /** One live interactive session and the Agent behind it. */
 export class TuiSession {
-  private readonly selection: ModelSelectionRef
   /** Child session ids whose current local activation has not settled yet. */
   private readonly runningSubagents = new Set<SessionId>()
+  /** Cached descendants, refreshed through the mounted subagent service. */
+  private readonly subagentRows: TuiSubagent[] = []
+  /** Failure from the last descendant read; `/subagents` reports it. */
+  private subagentError: string | undefined
+  /** In-flight descendant refresh shared by concurrent callers. */
+  private subagentRefresh: Promise<void> | undefined
+  /** A refresh was requested while one was already running. */
+  private subagentRefreshQueued = false
   /** Retires this session's subagent lifecycle subscriptions. */
   private readonly subagentSubscriptions: (() => void)[]
 
   private constructor(
     private readonly ctx: Context,
     private readonly handle: AgentHandle,
-    selection: ModelSelectionRef,
   ) {
-    this.selection = selection
     // The subagent lifecycle pair brackets a local activation, so the set holds
     // exactly the delegated work in flight; an idle resident child is absent
     // between its turns. External executions own no local child and are not
@@ -77,8 +82,15 @@ export class TuiSession {
     this.subagentSubscriptions = [
       ctx.on('subagent/start', ({ id, local }) => {
         if (local) this.runningSubagents.add(id)
+        void this.refreshSubagents()
       }),
-      ctx.on('subagent/end', ({ id }) => { this.runningSubagents.delete(id) }),
+      ctx.on('subagent/end', ({ id }) => {
+        this.runningSubagents.delete(id)
+        void this.refreshSubagents()
+      }),
+      ctx.on('session/event', (subject, event) => {
+        if (subject === this.session && event.type === 'subagent/catalog') void this.refreshSubagents()
+      }),
     ]
   }
 
@@ -90,14 +102,13 @@ export class TuiSession {
    */
   static async create(ctx: Context, options: TuiSessionOptions): Promise<TuiSession> {
     const initial = initialSelection(ctx, options)
-    const selection: ModelSelectionRef = { current: initial, assembled: undefined }
     const handle = await ctx.agents.create({
       sessionId: brandString<SessionId>(`session-${randomUUID()}`),
       meta: { cwd: options.cwd },
       agentOptions: { provider: initial.provider, model: initial.model },
-      setup: (agentCtx) => { installModelSelection(agentCtx, selection) },
+      setup: (agentCtx) => { installModelSelection(agentCtx) },
     })
-    return new TuiSession(ctx, handle, selection)
+    return new TuiSession(ctx, handle)
   }
 
   /**
@@ -109,13 +120,17 @@ export class TuiSession {
    */
   static async resume(ctx: Context, sessionId: string, options: TuiSessionOptions): Promise<TuiSession> {
     const initial = initialSelection(ctx, options)
-    const selection: ModelSelectionRef = { current: initial, assembled: undefined }
     const handle = await ctx.agents.resume({
       resumeSessionId: brandString<SessionId>(sessionId),
       agentOptions: { provider: initial.provider, model: initial.model },
-      setup: (agentCtx) => { installModelSelection(agentCtx, selection) },
+      setup: (agentCtx, agent) => {
+        // An explicit command-line route replaces the recorded selection; an
+        // ordinary resume keeps the Session's own choice.
+        if (options.provider !== undefined && options.model !== undefined) agent.model.select(initial)
+        installModelSelection(agentCtx)
+      },
     })
-    return new TuiSession(ctx, handle, selection)
+    return new TuiSession(ctx, handle)
   }
 
   /** The Agent this session owns. */
@@ -130,7 +145,7 @@ export class TuiSession {
 
   /** The route in force for the next step. */
   get route(): ModelSelection {
-    return this.selection.current ?? { provider: '', model: '' }
+    return this.agent.model.current() ?? { provider: '', model: '' }
   }
 
   /**
@@ -172,38 +187,88 @@ export class TuiSession {
   }
 
   /**
-   * List the delegated children this session's catalogs record, in depth-first
-   * catalog order. The read uses the live projection of every resident Session
-   * and starts no turn, so it cannot steer or settle the Agent. A child whose
-   * Session is no longer resident contributes its own catalog row, but its
-   * descendants are not reached without a storage query.
-   * @returns the rows in depth-first catalog order; empty when none were delegated.
-   * @throws when the deployment mounts no session projection registry.
+   * The delegated children last read through the subagent service, in catalog
+   * pre-order. The panel and the footer read this cache; {@link refreshSubagents}
+   * updates it without blocking a render.
+   * @returns the cached rows; empty until the first refresh settles.
    */
-  subagents(): TuiSubagent[] {
-    const projections = this.ctx.get('sessionProjections')
-    if (projections === undefined) {
-      throw new Error('listing subagents requires the session projection registry')
+  subagents(): readonly TuiSubagent[] {
+    return this.subagentRows
+  }
+
+  /**
+   * The last descendant read's failure, for the panel to report instead of an
+   * empty list.
+   * @returns the failure message, or undefined after a successful read.
+   */
+  subagentsFailure(): string | undefined {
+    return this.subagentError
+  }
+
+  /**
+   * Read this session's delegated descendants through `ctx.subagents`, which
+   * owns catalog observation, cold-Session reads, and branch diagnostics.
+   * Concurrent callers share one refresh; a request that arrives mid-read runs
+   * again after it so the cache never settles on a stale catalog.
+   * @returns after the cache reflects the latest completed read.
+   */
+  refreshSubagents(): Promise<void> {
+    if (this.subagentRefresh !== undefined) {
+      this.subagentRefreshQueued = true
+      return this.subagentRefresh
     }
-    const rows: TuiSubagent[] = []
-    const visited = new Set<SessionId>([this.session.id])
-    const visit = (session: Session, depth: number): void => {
-      for (const child of projections.snapshot(session, ['subagentCatalog']).values.subagentCatalog ?? []) {
-        if (visited.has(child.id)) continue
-        visited.add(child.id)
-        rows.push({
-          id: child.id,
-          mode: child.mode,
-          ...child.label === undefined ? {} : { label: child.label },
-          depth,
-          running: this.runningSubagents.has(child.id),
-        })
-        const resident = this.ctx.sessions.get(child.id)
-        if (resident !== undefined) visit(resident, depth + 1)
+    this.subagentRefresh = (async () => {
+      do {
+        try {
+          const rows = await this.readSubagents()
+          this.subagentRows.splice(0, this.subagentRows.length, ...rows)
+          this.subagentError = undefined
+        } catch (error: unknown) {
+          this.subagentRows.length = 0
+          this.subagentError = error instanceof Error ? error.message : String(error)
+        }
+      } while (this.consumeRefreshRequest())
+    })().finally(() => { this.subagentRefresh = undefined })
+    return this.subagentRefresh
+  }
+
+  /**
+   * Take one pending refresh request.
+   * @returns whether another refresh was requested while the last read ran.
+   */
+  private consumeRefreshRequest(): boolean {
+    const queued = this.subagentRefreshQueued
+    this.subagentRefreshQueued = false
+    return queued
+  }
+
+  /**
+   * Read the service's descendant rows and project them for the terminal.
+   * @returns the rows in catalog pre-order.
+   * @throws when the composition mounts no subagent service.
+   */
+  private async readSubagents(): Promise<TuiSubagent[]> {
+    const subagents = this.ctx.get('subagents')
+    if (subagents === undefined) throw new Error('listing subagents requires the subagent service')
+    const entries = await subagents.listDescendants(this.session.id)
+    return entries.map((entry): TuiSubagent => {
+      if (entry.kind === 'diagnostic') {
+        return {
+          id: entry.id,
+          mode: 'unknown',
+          label: `${entry.reason} subagent`,
+          depth: entry.depth,
+          running: false,
+        }
       }
-    }
-    visit(this.session, 1)
-    return rows
+      return {
+        id: entry.id,
+        mode: entry.mode,
+        ...entry.label === undefined ? {} : { label: entry.label },
+        depth: entry.depth,
+        running: this.runningSubagents.has(entry.id) || this.ctx.get('agents')?.get(entry.id)?.status === 'running',
+      }
+    })
   }
 
   /**
@@ -254,7 +319,7 @@ export class TuiSession {
    * @param route - the new provider and model.
    */
   selectModel(route: ModelSelection): void {
-    this.selection.current = { ...route }
+    this.agent.model.select(route)
   }
 
   /** Drain this session's durable events to storage. */

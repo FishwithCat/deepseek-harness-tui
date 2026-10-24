@@ -1,181 +1,24 @@
 {
   "formatVersion": 2,
   "roots": [
-    {
-      "key": "event:approval/decided",
-      "kind": "event",
-      "event": "approval/decided",
-      "surface": false,
-      "digest": "9e19c5180611b84c128c8820dc3a432fac4b5780fe1897e7557fc1b99334fa69",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "data",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "ignorable",
-                "type": 8,
-                "optional": true
-              },
-              {
-                "name": "seq",
-                "type": 9,
-                "optional": false
-              },
-              {
-                "name": "time",
-                "type": 9,
-                "optional": false
-              },
-              {
-                "name": "type",
-                "type": 10,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "id",
-                "type": 2,
-                "optional": false
-              },
-              {
-                "name": "outcome",
-                "type": 3,
-                "optional": false
-              },
-              {
-                "name": "remembered",
-                "type": 8,
-                "optional": true
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "union",
-            "types": [
-              4,
-              5,
-              6,
-              7
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "allowed-once"
-          },
-          {
-            "kind": "literal",
-            "value": "cancelled"
-          },
-          {
-            "kind": "literal",
-            "value": "rejected"
-          },
-          {
-            "kind": "literal",
-            "value": "unavailable"
-          },
-          {
-            "kind": "literal",
-            "value": true
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "literal",
-            "value": "approval/decided"
-          }
-        ]
-      }
-    },
-    {
-      "key": "event:approval/grant",
-      "kind": "event",
-      "event": "approval/grant",
-      "surface": false,
-      "digest": "1525755c8d2d6ad380c2f42cc5b203dc4fa8b1f96bbd3cd9a8c7a8b9ce986db4",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "data",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "ignorable",
-                "type": 3,
-                "optional": true
-              },
-              {
-                "name": "seq",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "time",
-                "type": 4,
-                "optional": false
-              },
-              {
-                "name": "type",
-                "type": 5,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "toolName",
-                "type": 2,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "literal",
-            "value": true
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "literal",
-            "value": "approval/grant"
-          }
-        ]
-      }
-    }
+    {"key":"event:approval/decided","kind":"event","event":"approval/decided","surface":false,"digest":"9e19c5180611b84c128c8820dc3a432fac4b5780fe1897e7557fc1b99334fa69"},
+    {"key":"event:approval/grant","kind":"event","event":"approval/grant","surface":false,"digest":"1525755c8d2d6ad380c2f42cc5b203dc4fa8b1f96bbd3cd9a8c7a8b9ce986db4"}
   ],
-  "types": []
+  "types": [],
+  "nodes": {
+    "0657d3ca5ac4e7bf": {"kind":"primitive","type":"number"},
+    "1525755c8d2d6ad3": {"kind":"object","properties":[{"name":"data","type":"38a20918ad5257ce","optional":false},{"name":"ignorable","type":"dacf3d5f3e4ff619","optional":true},{"name":"seq","type":"0657d3ca5ac4e7bf","optional":false},{"name":"time","type":"0657d3ca5ac4e7bf","optional":false},{"name":"type","type":"a23e1b09cbd076d4","optional":false}],"indices":[]},
+    "2142e391b9ccb60d": {"kind":"literal","value":"cancelled"},
+    "2c4c21f19f426a58": {"kind":"literal","value":"unavailable"},
+    "378f90f9f6022a09": {"kind":"literal","value":"approval/decided"},
+    "38a20918ad5257ce": {"kind":"object","properties":[{"name":"toolName","type":"4cd48f3e5108bd6e","optional":false}],"indices":[]},
+    "4cd48f3e5108bd6e": {"kind":"primitive","type":"string"},
+    "811229eedcec5797": {"kind":"literal","value":"allowed-once"},
+    "851ba416ade82f5d": {"kind":"object","properties":[{"name":"id","type":"4cd48f3e5108bd6e","optional":false},{"name":"outcome","type":"930c1cd289def119","optional":false},{"name":"remembered","type":"dacf3d5f3e4ff619","optional":true}],"indices":[]},
+    "930c1cd289def119": {"kind":"union","types":["2142e391b9ccb60d","2c4c21f19f426a58","811229eedcec5797","fab35c4520883c0d"]},
+    "9e19c5180611b84c": {"kind":"object","properties":[{"name":"data","type":"851ba416ade82f5d","optional":false},{"name":"ignorable","type":"dacf3d5f3e4ff619","optional":true},{"name":"seq","type":"0657d3ca5ac4e7bf","optional":false},{"name":"time","type":"0657d3ca5ac4e7bf","optional":false},{"name":"type","type":"378f90f9f6022a09","optional":false}],"indices":[]},
+    "a23e1b09cbd076d4": {"kind":"literal","value":"approval/grant"},
+    "dacf3d5f3e4ff619": {"kind":"literal","value":true},
+    "fab35c4520883c0d": {"kind":"literal","value":"rejected"}
+  }
 }

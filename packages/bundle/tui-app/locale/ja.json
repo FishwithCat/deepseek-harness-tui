@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "ターミナル UI",
+    "description": "dsh-base 上で単一の Agent と Session を操作する全画面対話型ターミナル。"
+  }
+}

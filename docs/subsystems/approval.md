@@ -160,7 +160,7 @@ grant(session: Session, toolName: string): void
 isGranted(agent: Agent, toolName: string): boolean
 
 /**
- * The session's effective policy: its own `approval/policy` fold, else the
+ * The session's effective policy: its projected override, else the
  * configured default (the schema already defaulted an omitted policy to
  * `'ask'`; the `??` only narrows the optional-input TYPE).
  * @param session - the exact accepted session whose policy applies.

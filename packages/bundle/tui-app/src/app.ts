@@ -214,7 +214,6 @@ export class TuiApp implements InteractionHost {
   /** Footer measurement cached against the session and log position it was read at. */
   private measurementCache: { session: Session; seq: number; value: TuiMeasurement } | undefined
   /** Footer subagent counts cached against the session and log position they were read at. */
-  private subagentsCache: { session: Session; seq: number; value: TuiSubagentStatus | undefined } | undefined
 
   private constructor(
     private readonly options: TuiAppOptions,
@@ -305,6 +304,7 @@ export class TuiApp implements InteractionHost {
       this.options.ctx.logger.warn(`subagent watch: cleanup failed: ${String(error)}`)
     }), 'tui-app.subagent-watch')
     this.activateWatch(this.session)
+    this.reloadSubagents()
     this.refresh()
     this.tui.setFocus(this.composer)
     this.tui.start()
@@ -366,7 +366,8 @@ export class TuiApp implements InteractionHost {
         return
       }
       // Every appended event can move a footer fact, including the ones the
-      // transcript does not show.
+      // transcript does not show. A catalog fact also moves the delegated rows.
+      if (event.type === 'subagent/catalog') this.reloadSubagents()
       this.applyEvent(event)
     }))
     this.sessionDisposers.push(this.options.ctx.on('agent/assistant-stream', ({ agent, frame }) => {
@@ -382,13 +383,11 @@ export class TuiApp implements InteractionHost {
     // at settlement, so the lifecycle edges bracket states no status flip covers.
     this.sessionDisposers.push(this.options.ctx.on('subagent/start', () => {
       // A lifecycle edge moves the running count without appending to this
-      // session's log, so the footer's cached counts must be re-read.
-      this.subagentsCache = undefined
-      this.refresh()
+      // session's log, so the delegated rows must be re-read.
+      this.reloadSubagents()
     }))
     this.sessionDisposers.push(this.options.ctx.on('subagent/end', () => {
-      this.subagentsCache = undefined
-      this.refresh()
+      this.reloadSubagents()
     }))
     this.sessionDisposers.push(installApprovalAnswerer(this.options.ctx, this, owned))
     this.sessionDisposers.push(installQuestionAnswerer(this.options.ctx, this, owned))
@@ -863,10 +862,12 @@ export class TuiApp implements InteractionHost {
   private subagentsCommand(): void {
     // Queue with the interaction prompts so an approval arriving while the
     // panel is open waits instead of stacking a second overlay over it.
+    this.reloadSubagents()
     void this.enqueuePrompt(() => new Promise<void>((resolve) => {
       const capacity = Math.max(1, this.promptRows(false))
       const panel = new SubagentPanel(
         () => this.session.subagents(),
+        () => this.session.subagentsFailure(),
         capacity,
         this.theme,
         () => { this.tui.requestRender() },
@@ -1064,8 +1065,9 @@ export class TuiApp implements InteractionHost {
    * @returns the continued calls in ask order; empty when no projection registry is mounted.
    */
   private continuedQuestions(): readonly PendingUserQuestion[] {
-    const state = this.options.ctx.get('sessionProjections')?.stateOf(this.session.session, 'userQuestions')
-    return (state?.questions.active ?? []).filter(question => question.state === 'continued')
+    const view = this.options.ctx.get('sessionProjections')
+      ?.snapshot(this.session.session, ['userQuestions']).values.userQuestions
+    return (view?.active ?? []).filter(question => question.state === 'continued')
   }
 
   /**
@@ -1209,16 +1211,18 @@ export class TuiApp implements InteractionHost {
    * @returns the counts, or `undefined` while no child is recorded or the registry is absent.
    */
   private delegatedSubagents(session: TuiSession): TuiSubagentStatus | undefined {
-    if (this.options.ctx.get('sessionProjections') === undefined) return undefined
-    const root = session.session
-    const cached = this.subagentsCache
-    if (cached !== undefined && cached.session === root && cached.seq === root.seq) return cached.value
     const rows = session.subagents()
-    const value = rows.length === 0
+    return rows.length === 0
       ? undefined
       : { total: rows.length, running: rows.filter(row => row.running).length }
-    this.subagentsCache = { session: root, seq: root.seq, value }
-    return value
+  }
+
+  /**
+   * Refresh the delegated rows and repaint when the asynchronous read settles.
+   * The footer and panel read the session's cache, so this never blocks a frame.
+   */
+  private reloadSubagents(): void {
+    void this.session.refreshSubagents().then(() => { console.error('SUB', this.session.subagentsFailure(), this.session.subagents().length); this.refresh() })
   }
 
   /**

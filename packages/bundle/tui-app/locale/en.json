@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Terminal UI",
+    "description": "The interactive full-screen terminal surface that drives one Agent and Session over dsh-base."
+  }
+}

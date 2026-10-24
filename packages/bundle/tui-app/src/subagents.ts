@@ -29,17 +29,17 @@ export class SubagentPanel implements Component {
   onClose?: () => void
   /** First row of the list currently shown. */
   private offset = 0
-  /** Catalog failure retained after the first read that raised it. */
-  private failure: string | undefined
 
   /**
-   * @param read - current children, read on every render and key event.
+   * @param read - cached children, read on every render and key event.
+   * @param failure - why the last descendant read failed, if it did.
    * @param capacity - body rows the panel may draw, summary and scroll hint included.
    * @param theme - the surface theme.
    * @param repaint - requests a render after the panel scrolls itself.
    */
   constructor(
     private readonly read: () => readonly TuiSubagent[],
+    private readonly failure: () => string | undefined,
     private readonly capacity: number,
     private readonly theme: TuiTheme,
     private readonly repaint: () => void,
@@ -84,8 +84,9 @@ export class SubagentPanel implements Component {
    */
   render(width: number): string[] {
     const rows = this.rows()
-    if (this.failure !== undefined) {
-      return [truncateToWidth(this.theme.error(`! ${this.failure}`), Math.max(1, width), '…')]
+    const failure = this.failure()
+    if (failure !== undefined) {
+      return [truncateToWidth(this.theme.error(`! ${failure}`), Math.max(1, width), '…')]
     }
     const lines: string[] = rows.length === 0
       ? [this.theme.dim('no subagents in this session')]
@@ -106,18 +107,11 @@ export class SubagentPanel implements Component {
   }
 
   /**
-   * Read the current children, retaining a read failure so the panel can show
-   * it instead of an empty list.
+   * Read the cached children, or none while the last read failure stands.
    * @returns the children, or an empty list after a failure.
    */
   private rows(): readonly TuiSubagent[] {
-    if (this.failure !== undefined) return []
-    try {
-      return this.read()
-    } catch (error: unknown) {
-      this.failure = error instanceof Error ? error.message : String(error)
-      return []
-    }
+    return this.failure() === undefined ? this.read() : []
   }
 
   /** Rows one page of the scroll spends. */

@@ -15,14 +15,14 @@
   en: d152484eb41ac6b4
   zh: 09388d293f9be9cb
 /deepseek-ai-dsh-user-approval/use-this-package:
-  en: dd034141bc1a7634
-  zh: a44f1f90dac2a444
+  en: 7e3d08b4dbea2a91
+  zh: 8a6aecaef1afe61c
 /deepseek-ai-dsh-user-approval/use-this-package/composing-answerers:
   en: 3618ddc3386e65f0
   zh: d6c0ac91aae122bb
 /deepseek-ai-dsh-user-approval/use-this-package/setting-the-policy:
-  en: 7748826baed65c2e
-  zh: d31462b09240326d
+  en: 63fb9a4f615b88fe
+  zh: 134429410e1a6573
 /deepseek-ai-dsh-user-approval/use-this-package/remembering-a-tool:
   en: a6e89af700f2d9d7
   zh: 6656ecddf02ea6bb
@@ -30,20 +30,20 @@
   en: dc465de82799bab0
   zh: 51144cc77bb15689
 /deepseek-ai-dsh-user-approval/use-this-package/what-the-model-and-user-see:
-  en: 2418e1d07c9af65b
-  zh: f120a32eb9367f3d
+  en: 1969e658964c8d31
+  zh: 9d374260b90199d2
 /deepseek-ai-dsh-user-approval/understand-the-implementation:
   en: d07be7ba08baf010
   zh: 665e68e9188e5d60
 /deepseek-ai-dsh-user-approval/understand-the-implementation/source-map:
-  en: 41d47e43e8b2823e
-  zh: b3f73f3f48931085
+  en: 13e36326803e0d1e
+  zh: ce9b175b3b318e21
 /deepseek-ai-dsh-user-approval/understand-the-implementation/dispatch:
   en: 47f97100ae37720e
   zh: 61a6c01408183076
 /deepseek-ai-dsh-user-approval/understand-the-implementation/policy-and-the-runtime-context-snapshot:
-  en: a8df8823aa0b015d
-  zh: ed0906f11645e7fd
+  en: a1aa2178ce3a4b85
+  zh: db06e4d2e8e259f1
 /deepseek-ai-dsh-user-approval/understand-the-implementation/audit:
   en: 0a583521364521cc
   zh: 916bedea94f5c0e1
@@ -57,14 +57,17 @@
   en: d23980f003b42fbb
   zh: 532f0174de5d87b5
 /deepseek-ai-dsh-user-approval/model-experience/current-approval-policy-context/what-the-model-sees:
-  en: a38775858ccd61f3
-  zh: c19c76827be7aabf
+  en: eb41f1a4972c07f5
+  zh: 4264f408eb951951
 /deepseek-ai-dsh-user-approval/model-experience/current-approval-policy-context/what-the-model-sees/ask-policy-contribution:
   en: b9f1262c97ec7568
   zh: 8a6613695f896f70
 /deepseek-ai-dsh-user-approval/model-experience/current-approval-policy-context/what-the-model-sees/never-policy-contribution:
   en: f13f09fc2466513b
   zh: 4a755a682551c481
+/deepseek-ai-dsh-user-approval/model-experience/current-approval-policy-context/what-the-model-sees/switch-notice:
+  en: e87e1e28ae7d7243
+  zh: c6daddb5a131565a
 /deepseek-ai-dsh-user-approval/model-experience/current-approval-policy-context/token-effect:
   en: e96807422bdce44d
   zh: 9fdcfafcc96bd004
@@ -84,8 +87,8 @@
   en: f5d5f97a153f7c70
   zh: 4db81881ebdcfcc4
 /deepseek-ai-dsh-user-approval/known-limitations-and-deferred-work:
-  en: 69048422830248d4
-  zh: 4eb103bc1bdf88e2
+  en: bd3d35b5a8051db9
+  zh: fbd385cbba92298b
 /deepseek-ai-dsh-user-approval/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: 3bb0c20c93f16f98

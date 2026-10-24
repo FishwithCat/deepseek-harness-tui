@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "终端界面",
+    "description": "基于 dsh-base 驱动单个 Agent 与会话的全屏交互式终端界面。"
+  }
+}
