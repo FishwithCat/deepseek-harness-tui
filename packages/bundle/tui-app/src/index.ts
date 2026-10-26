@@ -31,8 +31,8 @@ export type { TuiStartupValues } from './startup.ts'
 /** Stable Cordis plugin name. */
 export const name = 'tui-app'
 
-/** Services required before the terminal UI can be built. */
-export const inject = ['agents', 'agentDefaultModel', 'llm', 'sessions']
+/** Services required before the terminal UI can be built, including remembered tool approvals. */
+export const inject = ['agents', 'agentDefaultModel', 'llm', 'sessions', 'approval']
 
 /**
  * Mount the interactive terminal application.

@@ -4369,7 +4369,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-tui-app`
 
-- `inject`: `agents` · `agentDefaultModel` · `llm` · `sessions`
+- `inject`: `agents` · `agentDefaultModel` · `llm` · `sessions` · `approval`
 - `source`: [`packages/bundle/tui-app/src/config.ts:31`](../packages/bundle/tui-app/src/config.ts)
 
 ```ts config-catalog

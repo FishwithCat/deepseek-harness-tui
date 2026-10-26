@@ -2321,7 +2321,7 @@ describe('TuiApp boot selection', () => {
 })
 
 describe('TuiApp as a Cordis plugin', () => {
-  it('declares every service it reads, so /model reaches the LLM registry', async () => {
+  it('accesses model routes and remembers approvals from its plugin context', async () => {
     const ctx = new Context()
     contexts.push(ctx)
     await ctx.plugin(SessionStore)
@@ -2329,6 +2329,7 @@ describe('TuiApp as a Cordis plugin', () => {
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(AgentDefaultModelConfig, { provider: 'test-provider', model: 'test-model' })
     await ctx.plugin(LlmRuntime)
+    await ctx.plugin(UserApprovalService)
     ctx.agents.setFactory({
       async createAgent(ownerCtx: Context, createOptions: CreateAgentOptions): Promise<AgentHandle> {
         const session = ctx.sessions.create(createOptions.sessionId)
@@ -2366,6 +2367,26 @@ describe('TuiApp as a Cordis plugin', () => {
     await vi.waitFor(() => { expect(terminal.output).toContain('no model route is registered') })
     expect(inject).toContain('llm')
     expect(terminal.output).not.toContain('without inject')
+
+    const agent = ctx.agents.list()[0]!
+    agent.session.append('turn/start', { turn: 1 })
+    const once = ctx.approval.request({ agent, toolName: 'read_file' })
+    await vi.waitFor(() => { expect(terminal.output).toContain('Allow read_file?') })
+    terminal.feed('\r')
+    await expect(once).resolves.toBe('allowed-once')
+    expect(ctx.approval.isGranted(agent, 'read_file')).toBe(false)
+
+    terminal.output = ''
+    const always = ctx.approval.request({ agent, toolName: 'bash' })
+    await vi.waitFor(() => { expect(terminal.output).toContain('Always allow bash') })
+    terminal.feed('\x1b[B')
+    terminal.feed('\r')
+    await expect(always).resolves.toBe('allowed-once')
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'approval/grant'))
+      .toMatchObject([{ data: { toolName: 'bash' } }])
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'approval/decided').at(-1)?.data)
+      .toMatchObject({ outcome: 'allowed-once', remembered: true })
+    await expect(ctx.approval.request({ agent, toolName: 'bash' })).resolves.toBe('allowed-once')
   })
 })
 
