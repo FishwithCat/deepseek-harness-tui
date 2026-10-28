@@ -49,7 +49,7 @@ Program-only SDK bindings:
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
 interface ToolArgsMap {
-  /** Ask the user a concise question when you need confirmation, a choice, or missing information before proceeding. */
+  /** Ask the user a concise question when you need confirmation, a choice, or missing information before proceeding. An answer item with empty selected and no custom means the user skipped that question: continue without it, do not ask it again, and do not treat the skip as permission. */
   ask_user_question: {
     /** Questions to ask the user before continuing. */
     questions: ({
@@ -380,9 +380,12 @@ interface ToolArgsMap {
 
 interface ToolOutputMap {
   ask_user_question: {
+    /** Submitted answer batch with one item per question. A skipped question has empty selected and no custom. */
     answers: {
       id: string;
+      /** Selected option labels. Empty with no custom means the user explicitly skipped this question. */
       selected: string[];
+      /** Optional free-form answer; omitted for a skipped question. */
       custom?: string;
     }[];
   };
