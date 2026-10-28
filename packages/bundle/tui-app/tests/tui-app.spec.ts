@@ -1525,6 +1525,33 @@ describe('TuiApp', () => {
     expect(test.exits).toEqual([0])
   })
 
+  it('puts console diagnostics in the transcript instead of over the composer', async () => {
+    const originals = { log: console.log, warn: console.warn, error: console.error }
+    const stderr = vi.spyOn(process.stderr, 'write')
+    const test = await bench({ afterPrompt: () => {} }, { screen: 'alternate' })
+    try {
+      console.error('[llm-deepseek-api-key] model listing loaded 2 model(s), skipped 0 row(s)')
+      await vi.waitFor(() => {
+        expect(screen(test.app).some(row => row.includes('[llm-deepseek-api-key] model listing'))).toBe(true)
+      })
+      // The listing tag names the producer on a normal notice row, and the
+      // write never reached the terminal outside the renderer: the composer's
+      // content row still shows its own placeholder.
+      expect(screen(test.app).some(row => row.startsWith('· [llm-deepseek-api-key]'))).toBe(true)
+      const rows = screen(test.app)
+      expect(rows[rows.length - 4]).not.toContain('[llm-deepseek-api-key]')
+      expect(rows[rows.length - 4]).toContain('Enter send')
+      expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join('')).not.toContain('model listing loaded 2 model(s)')
+      expect(console.error).not.toBe(originals.error)
+      await test.app.stop(0)
+    } finally {
+      stderr.mockRestore()
+    }
+    expect(console.error).toBe(originals.error)
+    expect(console.log).toBe(originals.log)
+    expect(console.warn).toBe(originals.warn)
+  })
+
   it.each([true, false])('reports native clipboard success=%s after mouse selection', async (success) => {
     const copy = vi.fn(async () => success)
     const test = await bench({

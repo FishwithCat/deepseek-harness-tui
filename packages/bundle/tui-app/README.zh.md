@@ -120,6 +120,8 @@ dsh
 
 应用拥有一个 `TuiSession` 与一个终端界面。它先等待组合完成（`ctx.get('loader')?.await()`），以确保 Agent 的 scoped 工具与适配器已挂载，再通过核心注册表创建或恢复 Agent，然后订阅持久的 `session/event` 日志、实时的 `agent/assistant-stream` 流、`agent/status`，以及用于报告委派工作、供页脚与取消按键跟踪的 `subagent/start` / `subagent/end`。恢复会话中较早的事件早于这些订阅，因此应用会通过 [`TuiSession.history()`](src/session.ts) 从持久化后端读回它们——读到 Session 的首个实时序列号为止，避免恢复后追加的事件被折叠两次——并在接受输入前将其折叠进对话记录；若读取期间有新事件到达，会先缓冲，待已存储行折叠完后再应用，从而保持日志顺序。
 
+渲染器拥有终端期间，已挂载插件写入 console 的内容会被捕获并作为普通通知行追加。直接写入会落在光标所在行，而差分渲染器在该行自身内容变化前不会重绘它。
+
 ### 渲染
 
 [`src/transcript.ts`](src/transcript.ts) 把这些事件折叠为有序行——提示、assistant 消息、保留的 reasoning、带最终结果的工具调用、审批决定与应用通知——并通过修订计数器使其渲染行失效；而视图只重新渲染该修订真正改动的行：它按行身份与视口宽度缓存每一行的渲染结果，因此一次流式增量只渲染实时行，而不是整份对话记录。提示会先渲染其图片标记、再渲染文本，每个标记按内容顺序对应一张已附图片，因为终端没有缩略图，而持久内容块才是所附内容的记录。消息行带有角色侧栏：提示以 `›` 开头，其后的每一行都在提示色的 `│` 竖线下续行；assistant 消息以 `◆` 开头，并在自身颜色的 `│` 竖线下续行，因此即使没有颜色，两种角色也能区分。注入的上下文是模型输入而非对话，因此只有生产者声明了一行式 `notice` 形式时才产生行：工作区指令、技能目录与运行时上下文消息只留在会话日志中，而模型切换、plan 模式变化与 goal 以应用通知呈现。两种屏幕策略下页脚都位于输入框之下，共两行：第一行是工作区与 Agent 状态，其右侧右对齐路由模型名及其推理档位；第二行是「下一次请求相对路由模型容量的占用」，其右下角是整段会话的 token 数字。一旦本会话委派过子代理，占用之后会跟随一个 `● subagents (运行中/总数)` 标记——`●` 表示仍有子代理激活在运行，`○` 表示已记录的子代理全部结束——它读取的子代理目录与 `/subagents` 列出的是同一份；尚未得知占用时该标记单独显示。这些数字分别是解码吞吐量（每秒 token 数）、计费的提示词加输出 token 总量，以及计费提示词 token 中由缓存读取提供的占比；每项在有数据前都不显示，速率是 Web 统计条所报的整段会话平均值而非实时瞬时值，终端宽度不足时这一组会先于占用被丢弃。plan 模式开启时会在 Agent 状态旁显示 `plan` 标记，由 `Shift+Tab` 通过 `ctx.planMode` 切换。快捷键提示是空输入框的 placeholder 而非页脚的一行：应用包装了输入框，使其内容行在用户键入第一个字符前显示这些提示，因为编辑器组件本身不渲染 placeholder。占用与容量取自已挂载 `ctx.tokenMeter` 的 `contextPressure` 投影，总量取自其 `tokenUsage` 投影，吞吐量取自本 bundle 插入的 `sessionStats` 投影；`(auto)` 标记取自 `ctx.compaction.autoCompactionEnabled`；只有当部署注册了多个 provider 时，模型标签才会带上 provider。[`src/views.ts`](src/views.ts) 使用 [`@earendil-works/pi-tui`](https://www.npmjs.com/package/@earendil-works/pi-tui) 组件把行转为终端行，并把每一行截断到视口宽度，因为渲染器会把超宽行视为组件缺陷；工具标题还会被压成单行，因为一行只拥有一个终端行：多行参数否则会打印出自身的换行，使该行越出转录区压到固定页脚上。选择器或提示以普通输出而非对话框的形式呈现——一行普通标题、一行空行和主体——在备用屏幕布局中紧贴输入框上方，并把每一行填充到视口宽度，因此转录内容不会从旁边透出。滚动由备用屏幕渲染器负责：对话记录是它的主滚动视图，因此 PageUp/PageDown 与滚轮移动对话记录，而页脚与输入框保持固定。停止渲染器时会把整份对话记录写回普通屏幕，因此退出后输出仍可选择。`stop()` 随后落盘会话，并把 resume 命令写到 stderr：写在恢复屏幕之后，因为此时界面已不再拥有屏幕；且仅在挂载了持久化后端时写出。工具声明的 Host 呈现决定其行：折叠事件时通过 `ctx.tools` 解析出的调用与结果视图，会分别渲染为 `card: 'diff'` 的统一 diff（含工具自己的标题与 `+新增 -删除` 计数）、`card: 'terminal'` 的命令及其描述、工作目录、输出与退出状态标记、`card: 'read'` 的带行号窗口、`card: 'search'` 的分组匹配或路径列表及其截断信号、`card: 'web'` 的来源引用或抓取摘要，以及 `card: 'generic'` 的标题与关键输入。卡片主体超过限定行数后折叠；已结算的结果视图替换待定卡片，结果视图缺省时保留调用时卡片，失败的变更则回退为普通的名称加摘要行并显示错误文本。工具行的普通结果主体以调色板的工具结果灰渲染，而非 assistant 主体的终端前景色。调色板跟随终端背景：`colorScheme` 固定深色或浅色，`auto` 读取终端的 `COLORFGBG` 背景信号，读不到时默认深色。 切换会话时会释放对话记录视图缓存的行和 Markdown 组件。 模型的思考内容在流式输出结束后仍保留显示，恢复会话时也会从会话日志中还原。
@@ -145,6 +147,7 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 | [`src/index.ts`](src/index.ts) | `tui-app` 插件：启动器事实、启动与失败退出 |
 | [`src/startup.ts`](src/startup.ts) | `tui-startup` provider：参数族与 `--help` |
 | [`src/app.ts`](src/app.ts) | 界面构建、事件接线、输入路由与收尾 |
+| [`src/diagnostics.ts`](src/diagnostics.ts) | 界面拥有终端期间的 console 捕获 |
 | [`src/session.ts`](src/session.ts) | Agent 创建／恢复、历史读取、提示提交、路由切换 |
 | [`src/transcript.ts`](src/transcript.ts) | 把事件折叠为可渲染行 |
 | [`src/diff.ts`](src/diff.ts) | 纯文件 diff 行模型 |
@@ -164,6 +167,7 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 | [`cordis.patch.yml`](cordis.patch.yml) | 基于 `dsh-base` 的终端补丁 |
 | — | 不发布运行时 invariant 伴随模块；应用不注册任何注册表，查看记录是可丢弃的运行时数据而非 Session 状态。 |
 | [`tests/tui-app.spec.ts`](tests/tui-app.spec.ts) | 输入路由、剪贴板粘贴、渲染、模态应答与退出 |
+| [`tests/diagnostics.spec.ts`](tests/diagnostics.spec.ts) | console 格式化、纯文本净化与方法恢复 |
 | [`tests/transcript.spec.ts`](tests/transcript.spec.ts) | 事件折叠、页脚、placeholder 输入框与行宽边界 |
 | [`tests/clipboard.spec.ts`](tests/clipboard.spec.ts) | 各平台读取器路径与暂存文件适配器 |
 | [`tests/images.spec.ts`](tests/images.spec.ts) | 输入框标记解析 |

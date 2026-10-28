@@ -51,6 +51,7 @@ import { copyClipboardText, readClipboardImage } from './clipboard.ts'
 import type { ClipboardImage } from './clipboard.ts'
 import type { Config } from './config.ts'
 import { commandCatalog, executeCommand, listEffortChoices, listModelChoices, parseCommand, slashAutocomplete } from './commands.ts'
+import { captureConsole } from './diagnostics.ts'
 import { imageMarker, parseImageMarkers } from './images.ts'
 import { answerQuestion, installApprovalAnswerer, installQuestionAnswerer } from './interactions.ts'
 import type { InteractionHost, InteractionTitle, PromptOutcome } from './interactions.ts'
@@ -99,6 +100,8 @@ export const internals: {
   readClipboardImage: () => Promise<ClipboardImage | undefined>
   /** Copy selected text through the host clipboard or terminal. */
   copyClipboardText: typeof copyClipboardText
+  /** Route console writes away from the terminal the app owns; returns the restore function. */
+  captureConsole: (sink: (text: string) => void) => () => void
   /** Sink for boot failures and the exit resume hint, neither of which the terminal surface can show. */
   stderr: { write(chunk: string): unknown }
 } = {
@@ -106,6 +109,7 @@ export const internals: {
   isInteractive: () => process.stdin.isTTY && process.stdout.isTTY,
   readClipboardImage: () => readClipboardImage(),
   copyClipboardText,
+  captureConsole,
   stderr: process.stderr,
 }
 
@@ -211,6 +215,8 @@ export class TuiApp implements InteractionHost {
   private readonly autoCompaction: boolean
   /** Whether a compaction transaction is in flight; the footer reports its wait. */
   private compacting = false
+  /** Restores the console methods; a no-op until the renderer installs its capture. */
+  private restoreConsole: () => void = () => {}
   /** Footer measurement cached against the session and log position it was read at. */
   private measurementCache: { session: Session; seq: number; value: TuiMeasurement } | undefined
   /** Footer subagent counts cached against the session and log position they were read at. */
@@ -307,6 +313,9 @@ export class TuiApp implements InteractionHost {
     this.reloadSubagents()
     this.refresh()
     this.tui.setFocus(this.composer)
+    // A console call otherwise lands on the row under the terminal cursor and
+    // survives there until that row's own content changes.
+    this.restoreConsole = internals.captureConsole((text) => { this.diagnostic(text) })
     this.tui.start()
     this.tui.renderNow(true)
   }
@@ -1222,7 +1231,7 @@ export class TuiApp implements InteractionHost {
    * The footer and panel read the session's cache, so this never blocks a frame.
    */
   private reloadSubagents(): void {
-    void this.session.refreshSubagents().then(() => { console.error('SUB', this.session.subagentsFailure(), this.session.subagents().length); this.refresh() })
+    void this.session.refreshSubagents().then(() => { this.refresh() })
   }
 
   /**
@@ -1249,6 +1258,19 @@ export class TuiApp implements InteractionHost {
   private notice(level: 'info' | 'error', text: string): void {
     this.transcript.notice(level, text)
     this.refresh()
+  }
+
+  /**
+   * Put one captured console write into the transcript.
+   *
+   * The console method names the stream, not the user-facing severity: the
+   * DeepSeek listing diagnostics report routine loads through `console.error`
+   * because stdout belongs to the protocol. A transcript row therefore stays an
+   * ordinary notice, keeping the tag that names its producer.
+   * @param text - the plain-text message.
+   */
+  private diagnostic(text: string): void {
+    this.notice('info', text)
   }
 
   /**
@@ -1509,7 +1531,14 @@ export class TuiApp implements InteractionHost {
     void this.watch.close().catch((error: unknown) => {
       this.options.ctx.logger.warn(`subagent watch: cleanup failed: ${String(error)}`)
     })
-    this.tui.stop()
+    try {
+      this.tui.stop()
+    } finally {
+      // The renderer has restored the screen, so a late console write belongs
+      // to the process console again.
+      this.restoreConsole()
+      this.restoreConsole = () => {}
+    }
   }
 }
 
