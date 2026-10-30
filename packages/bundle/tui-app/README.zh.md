@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-`dsh-tui-app` 是 dsh 的交互式终端界面。运行 `dsh` 即在当前目录启动一个 Agent，其模型、工具、沙箱与审批默认值与其他界面完全一致，但以全屏终端应用呈现：可滚动的对话记录、位于固定页脚之上的输入框，以及报告工作区、上下文占用、路由模型、token 吞吐量、token 总量、缓存命中率和委派子代理数量的状态行。Agent 运行在同一进程内。它唯一的监听器是首个本地 subagent 启动时的回环查看服务，使另一个终端可以读取该子会话的对话记录与实时流，而无需创建第二个 Agent。主要边界：每次调用只有一个会话，没有浏览器与文件侧栏。
+`dsh-tui-app` 是 dsh 的交互式终端界面。运行 `dsh` 即在当前目录启动一个 Agent，其模型、沙箱与审批默认值与其他界面一致，工具为 base 工具外加 `apply_patch`，但以全屏终端应用呈现：可滚动的对话记录、位于固定页脚之上的输入框，以及报告工作区、上下文占用、路由模型、token 吞吐量、token 总量、缓存命中率和委派子代理数量的状态行。Agent 运行在同一进程内。它唯一的监听器是首个本地 subagent 启动时的回环查看服务，使另一个终端可以读取该子会话的对话记录与实时流，而无需创建第二个 Agent。主要边界：每次调用只有一个会话，没有浏览器与文件侧栏。
 
 ## 目录
 
@@ -138,7 +138,7 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 
 ### 基于 base 的补丁面
 
-补丁叠加在 `dsh-base` 之上，不添加任何 Host 或浏览器行。它重述其他界面设置的编码 persona，插入启动 provider 与应用本身，并把 base 的面向模型的行保留在 host 平面：本界面是单会话的，其 Agent 进程级组合这些行，而非按会话组合。启动 provider（[`src/startup.ts`](src/startup.ts)）注入 `ctx.cmdlineArgs`（[`dsh-cmdline`](../../boot/cmdline/README.zh.md)），解析 `--resume`、`--provider`、`--model` 与 `--watch`，并提供 `tuiStartup`；应用行注入该服务，因此 `--help` 与被拒绝的调用完全不会挂载终端界面。`--watch` 与会话参数互斥，并启动 [`src/watch/viewer.ts`](src/watch/viewer.ts) 而不是交互应用。首个本地 subagent 会启动由 [`src/watch/server.ts`](src/watch/server.ts) 拥有的进程内 Node HTTP 监听器；它只服务该 TUI 的本地 subagent 树，并随 TUI 退出。补丁还以 `mode: timed` 形式挂载 `tool-ask-user`，因为 base 层提供提问服务但不提供提问工具。补丁还把 `session-log-deepseek` 设为 `enabled: false`，因此本 fork 让 Session 日志留在本机，而不会向官方 DeepSeek 请求附带上游的 `dsh_session_log` 后缀；需要该后缀的部署可通过 `--patch` 覆盖层或 profile 自带的 `cordis.patch.yml` 重新启用该行。补丁还把 `subagent.delegatedApproval` 设为 `inherit`，因此本地子代理继承父会话当前生效的审批策略，应用的子代理应答者可以决定其请求；需要无人值守委派的部署可恢复包默认值 `never`。
+补丁叠加在 `dsh-base` 之上，不添加任何 Host 或浏览器行。它重述其他界面设置的编码 persona，插入启动 provider 与应用本身，并把 base 的面向模型的行保留在 host 平面：本界面是单会话的，其 Agent 进程级组合这些行，而非按会话组合。启动 provider（[`src/startup.ts`](src/startup.ts)）注入 `ctx.cmdlineArgs`（[`dsh-cmdline`](../../boot/cmdline/README.zh.md)），解析 `--resume`、`--provider`、`--model` 与 `--watch`，并提供 `tuiStartup`；应用行注入该服务，因此 `--help` 与被拒绝的调用完全不会挂载终端界面。`--watch` 与会话参数互斥，并启动 [`src/watch/viewer.ts`](src/watch/viewer.ts) 而不是交互应用。首个本地 subagent 会启动由 [`src/watch/server.ts`](src/watch/server.ts) 拥有的进程内 Node HTTP 监听器；它只服务该 TUI 的本地 subagent 树，并随 TUI 退出。补丁还以 `mode: timed` 形式挂载 `tool-ask-user`，因为 base 层提供提问服务但不提供提问工具。补丁把 `tool-fs.applyPatch` 设为 `true`，在 `edit` 旁加入 `apply_patch`；`dsh-base` 为其他界面保持该工具关闭。补丁还把 `session-log-deepseek` 设为 `enabled: false`，因此本 fork 让 Session 日志留在本机，而不会向官方 DeepSeek 请求附带上游的 `dsh_session_log` 后缀；需要该后缀的部署可通过 `--patch` 覆盖层或 profile 自带的 `cordis.patch.yml` 重新启用该行。补丁还把 `subagent.delegatedApproval` 设为 `inherit`，因此本地子代理继承父会话当前生效的审批策略，应用的子代理应答者可以决定其请求；需要无人值守委派的部署可恢复包默认值 `never`。
 
 ### 源码索引
 
@@ -204,15 +204,15 @@ Ctrl+V 通过平台自带的读取器读取系统剪贴板（[`src/clipboard.ts`
 
 #### 模型看到什么
 
-应用把输入的提示作为普通用户消息提交，并把模型自身的输出渲染回来；`/help`、`/quit`、`/new`、`/sessions`、`/resume` 与 `/model` 永远不会到达模型。切换模型会追加共享的模型选择通知，与其他界面完全一致。`Shift+Tab` 通过与 `/plan` 相同的 service 进入或退出 plan 模式，因此模型看到的是与手输命令相同的 plan 策略段落与用户切换通知。剪贴板粘贴会像其他界面的上传一样，把已准入图片作为持久的图片引用加入同一条消息；输入框中的 `[Image N]` 标记只是输入框文本，永远不会到达模型。
+组合启用了 `apply_patch`，因此每次请求都会在 base 文件工具旁携带该工具的 schema 与其系统提示指导。应用把输入的提示作为普通用户消息提交，并把模型自身的输出渲染回来；`/help`、`/quit`、`/new`、`/sessions`、`/resume` 与 `/model` 永远不会到达模型。切换模型会追加共享的模型选择通知，与其他界面完全一致。`Shift+Tab` 通过与 `/plan` 相同的 service 进入或退出 plan 模式，因此模型看到的是与手输命令相同的 plan 策略段落与用户切换通知。剪贴板粘贴会像其他界面的上传一样，把已准入图片作为持久的图片引用加入同一条消息；输入框中的 `[Image N]` 标记只是输入框文本，永远不会到达模型。
 
 #### Token 影响
 
-提示与回复承担其常规 token 成本。终端渲染的任何内容——页脚、工具行折叠或滚动窗口——都不会增加请求或 token；占用、吞吐量与 token 总量数字读取自本地测量投影，而非额外的 provider 调用。切换 plan 模式本身不新增请求，只改变下一次请求的 plan 策略段落。当路由模型声明了图片计价时，所附图片按该计价计入，因此页脚反映的是模型实际会收到的请求。
+提示与回复承担其常规 token 成本。`apply_patch` 的 schema 与指导会计入每次请求的输入 token。终端渲染的任何内容——页脚、工具行折叠或滚动窗口——都不会增加请求或 token；占用、吞吐量与 token 总量数字读取自本地测量投影，而非额外的 provider 调用。切换 plan 模式本身不新增请求，只改变下一次请求的 plan 策略段落。当路由模型声明了图片计价时，所附图片按该计价计入，因此页脚反映的是模型实际会收到的请求。
 
 #### KV Cache 影响
 
-应用不向请求前缀添加任何内容；它只把用户输入的提示送入已组合的树中。
+profile 额外加入的 `apply_patch` schema 与指导属于稳定的请求前缀，不随 turn 变化；除此之外应用不向请求前缀添加内容，只把用户输入的提示送入已组合的树中。
 
 ## 已知限制与延期工作
 
