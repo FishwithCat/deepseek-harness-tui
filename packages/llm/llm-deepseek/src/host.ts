@@ -26,8 +26,9 @@ export function createModelListingCache(
   const cache = new ModelListingCache({
     ...dependencies,
     now: () => Date.now(),
-    // ACP reserves stdout for protocol messages, including during successful catalog loads.
-    info: (message) => { console.error(tag, message) },
+    // ACP reserves stdout for protocol messages, so failures still go to stderr;
+    // a successful load is debug-only and stays out of a surface transcript.
+    debug: (message) => { ctx.logger.debug(`${tag} ${message}`) },
     warn: (message) => { console.warn(tag, message) },
     changed: () => { ctx.emit('llm/models-updated', provider) },
   })

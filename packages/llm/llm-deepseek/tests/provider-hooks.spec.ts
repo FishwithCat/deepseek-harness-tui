@@ -1,9 +1,9 @@
 /** Provider-owned connection readiness and model admission on the shared DeepSeek adapter. */
-import { afterEach, expect, it } from 'vitest'
-import { Context } from '@deepseek-ai/cordis'
+import { afterEach, expect, it, vi } from 'vitest'
+import { Context, LoggerLevel } from '@deepseek-ai/cordis'
 import LlmRuntime, { LlmError } from '@deepseek-ai/dsh-llm'
 import type { AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
-import { DeepSeekAdapter, registerDeepSeekProvider, resolveAdapterOptions } from '../src/index.ts'
+import { createModelListingCache, DeepSeekAdapter, registerDeepSeekProvider, resolveAdapterOptions } from '../src/index.ts'
 import type { DeepSeekAdapterOptions, DeepSeekCatalogModel } from '../src/index.ts'
 import { options as request, prepareExtensions } from './helpers.ts'
 
@@ -54,6 +54,30 @@ it('refuses a model before a prepared call exists', async () => {
   await expect(ctx.llm.prepareCall({ provider: 'fixture-route', model: 'blocked' }))
     .rejects.toMatchObject({ code: 'CLIENT_UPGRADE_REQUIRED' })
   await expect(ctx.llm.prepareCall({ provider: 'fixture-route', model: 'open' })).resolves.toBeDefined()
+})
+
+it('reports a successful listing load at debug level instead of stderr', async () => {
+  const ctx = new Context()
+  contexts.push(ctx)
+  const logs: string[] = []
+  ctx.logger.exporter({
+    levels: { default: LoggerLevel.DEBUG },
+    export: ({ type, args }) => { if (type === 'debug') logs.push(String(args[0])) },
+  })
+  const stderr = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    const settings = { url: 'https://api.example/models', timeoutMs: 1_000, maxAgeMs: 0 }
+    const cache = createModelListingCache(ctx, 'fixture-route', 'fixture-route', {
+      settings: () => settings,
+      credential: () => Promise.resolve('token'),
+      load: () => Promise.resolve({ entries: [], skipped: 0 }),
+    })
+    await cache.view(settings)
+    expect(logs).toContain('[fixture-route] model listing from https://api.example/models loaded 0 model(s), skipped 0 row(s)')
+    expect(stderr).not.toHaveBeenCalled()
+  } finally {
+    stderr.mockRestore()
+  }
 })
 
 it('refuses a model on a direct adapter stream', () => {

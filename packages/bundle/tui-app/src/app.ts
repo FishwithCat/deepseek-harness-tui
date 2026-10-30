@@ -1263,10 +1263,9 @@ export class TuiApp implements InteractionHost {
   /**
    * Put one captured console write into the transcript.
    *
-   * The console method names the stream, not the user-facing severity: the
-   * DeepSeek listing diagnostics report routine loads through `console.error`
-   * because stdout belongs to the protocol. A transcript row therefore stays an
-   * ordinary notice, keeping the tag that names its producer.
+   * A console write carries no severity of its own: plugins that reserve stdout
+   * for protocol messages may report through `console.error`. A transcript row
+   * therefore stays an ordinary notice, keeping the tag that names its producer.
    * @param text - the plain-text message.
    */
   private diagnostic(text: string): void {

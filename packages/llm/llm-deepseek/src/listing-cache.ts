@@ -16,8 +16,8 @@ export interface ListingCacheDependencies {
   readonly load: (url: string, credential: string, signal: AbortSignal) => Promise<ModelListing>
   /** Wall clock used for listing age. */
   readonly now: () => number
-  /** Report a loaded listing. */
-  readonly info: (message: string) => void
+  /** Report a loaded listing at debug level. */
+  readonly debug: (message: string) => void
   /** Report the first failure of a failing streak. */
   readonly warn: (message: string) => void
   /** Publish a changed view; readers can immediately read `current()`. */
@@ -135,7 +135,7 @@ export class ModelListingCache {
         this.listing = listing
         this.settledAt = this.dependencies.now()
         this.failing = false
-        this.dependencies.info(`model listing from ${settings.url} loaded ${listing.entries.length} model(s), skipped ${listing.skipped} row(s)`)
+        this.dependencies.debug(`model listing from ${settings.url} loaded ${listing.entries.length} model(s), skipped ${listing.skipped} row(s)`)
         if (changed) this.notify()
       }, (error: unknown) => {
         if (generation !== this.generation) return

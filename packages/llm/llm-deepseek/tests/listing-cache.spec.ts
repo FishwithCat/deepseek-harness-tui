@@ -17,7 +17,7 @@ function harness(timeoutMs = 60_000, honorsAbort = true) {
   let clock = 0
   let token: string | undefined = 'token-a'
   const loads: Array<{ token: string; signal: AbortSignal; settle: PromiseWithResolvers<ModelListing> }> = []
-  const info = vi.fn()
+  const debug = vi.fn()
   const warn = vi.fn()
   const changed = vi.fn()
   const settings: { -readonly [K in keyof ListingSettings]: ListingSettings[K] } = { url: 'https://api.example/models', timeoutMs, maxAgeMs: 100 }
@@ -33,7 +33,7 @@ function harness(timeoutMs = 60_000, honorsAbort = true) {
       return settle.promise
     },
     now: () => clock,
-    info,
+    debug,
     warn,
     changed,
   })
@@ -47,7 +47,7 @@ function harness(timeoutMs = 60_000, honorsAbort = true) {
     dispose: () => cache.dispose(),
   }
   return {
-    catalog, loads, info, warn, changed, flush, settings, resolveSettings, resolveCredential,
+    catalog, loads, debug, warn, changed, flush, settings, resolveSettings, resolveCredential,
     advance: (ms: number) => { clock += ms },
     credential: (value: string | undefined) => { token = value },
   }
@@ -61,7 +61,7 @@ it('reports an unauthenticated view without loading', async () => {
 })
 
 it('shares one first load between concurrent callers', async () => {
-  const { catalog, loads, info, flush } = harness()
+  const { catalog, loads, debug, flush } = harness()
   const first = catalog.view()
   const second = catalog.view()
   await flush()
@@ -70,7 +70,7 @@ it('shares one first load between concurrent callers', async () => {
   await expect(first).resolves.toEqual({ authenticated: true, listing: listing('a') })
   await expect(second).resolves.toEqual({ authenticated: true, listing: listing('a') })
   expect(catalog.current()).toEqual({ authenticated: true, listing: listing('a') })
-  expect(info).toHaveBeenCalledExactlyOnceWith('model listing from https://api.example/models loaded 1 model(s), skipped 0 row(s)')
+  expect(debug).toHaveBeenCalledExactlyOnceWith('model listing from https://api.example/models loaded 1 model(s), skipped 0 row(s)')
 })
 
 it('bounds the first wait by the request deadline and serves no listing after a failure', async () => {
