@@ -8,6 +8,12 @@
     personaPrefix: >-
       You are a coding agent powered by the {{model}} model.
 
+# The terminal surface is where multi-file, multi-region edits are most useful:
+# the transcript already renders diff cards for the tool. Base keeps it off.
+- id: tool-fs
+  config:
+    applyPatch: true
+
 # This fork keeps Session logs on the machine. The base row now contributes the
 # `dsh_session_log` request field by default, which sends a Session-log suffix
 # with official DeepSeek requests; patch it off here and re-enable per

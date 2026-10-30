@@ -23,7 +23,7 @@ interface PatchEntry {
 }
 
 describe('dsh-tui-app bundle', () => {
-  it('keeps Session-log upload off and inserts the terminal rows', () => {
+  it('keeps Session-log upload off, enables apply_patch, and inserts the terminal rows', () => {
     const root = fileURLToPath(new URL('..', import.meta.url))
     const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
       dsh?: { bundle?: { patch?: string } }
@@ -34,6 +34,7 @@ describe('dsh-tui-app bundle', () => {
       { schema: entryListSchema },
     ) as PatchEntry[]
     expect(patches.find(patch => patch.id === 'session-log-deepseek')?.config).toMatchObject({ enabled: false })
+    expect(patches.find(patch => patch.id === 'tool-fs')?.config).toMatchObject({ applyPatch: true })
     const rows = patches.flatMap(patch => patch.insert ?? [])
     expect(rows.find(row => row.id === 'tool-ask-user')?.name).toBe('@deepseek-ai/dsh-tool-ask-user')
     expect(rows.find(row => row.id === 'tool-ask-user')?.config).toMatchObject({ mode: 'timed' })
