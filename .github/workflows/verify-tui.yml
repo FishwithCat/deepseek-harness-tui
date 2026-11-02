@@ -1,0 +1,49 @@
+# Verify a published TUI version by installing it from the registry.
+#
+# This runs only after the staged release has been approved; a staged version is
+# not installable, so running this before approval fails with a missing version.
+# The version is an explicit input because the workflow does not check out the
+# release commit and must not guess which version to accept.
+name: Verify TUI (npm)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published version to install, for example 0.2.2-alpha.2
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-tui
+  cancel-in-progress: false
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v5.0.0
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify the published install
+        env:
+          TUI_VERSION: ${{ inputs.version }}
+        run: pnpm run release:verify-tui-install -- --version "$TUI_VERSION"

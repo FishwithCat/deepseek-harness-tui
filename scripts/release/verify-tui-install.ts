@@ -15,6 +15,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
+import { valid } from 'semver'
 import { TUI_SCOPE } from './pack-tui.ts'
 import { attemptEchoed, capture } from './process.ts'
 
@@ -51,6 +52,9 @@ function main(): void {
   })
   const version = values.version
   if (version === undefined) throw new Error('verify-tui-install: pass --version <published-version>')
+  if (valid(version) === null) {
+    throw new Error(`verify-tui-install: ${JSON.stringify(version)} is not a single published version`)
+  }
 
   const prefix = mkdtempSync(join(tmpdir(), 'dsh-tui-install-'))
   const home = join(prefix, '.dsh')

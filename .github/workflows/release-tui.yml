@@ -1,10 +1,15 @@
-# Publish the npm-installable terminal distribution under @fishwithcat.
+# Stage the npm-installable terminal distribution under @fishwithcat.
 #
-# The workflow is manual-only: the fork packages carry the upstream version and
-# publication is a reviewed act. `pack-tui` produces every tarball from one
-# commit; `publish-tui` uploads exactly those bytes in dependency order; the
-# verification job then installs the published launcher into a throwaway prefix.
-name: Release TUI (npm)
+# The workflow is manual-only and stops at npm's staging area: staging defers
+# 2FA to approval, so the upload token needs no bypass-2FA grant, and nothing
+# becomes installable until an owner approves each stage id in dependency order.
+# Verification is a separate manual workflow (`verify-tui.yml`) that runs after
+# approval, because a staged version does not exist on the registry yet.
+#
+# `pack-tui` produces every tarball from one commit and `publish-tui --stage`
+# uploads exactly those bytes. Approve the printed ids with
+# `npm stage approve <id>` (npm 12) or the npm website.
+name: Stage TUI (npm)
 
 on:
   workflow_dispatch:
@@ -21,7 +26,7 @@ env:
   DSH_TELEMETRY_DISABLED: '1'
 
 jobs:
-  publish:
+  stage:
     runs-on: ubuntu-24.04
     environment: npm-publish
     steps:
@@ -38,6 +43,12 @@ jobs:
           node-version: '24'
           registry-url: https://registry.npmjs.org
 
+      # Node 24 ships npm 11, which has no `npm stage`.
+      - name: Install npm 12
+        run: |
+          npm install --global npm@12
+          npm --version
+
       - name: Install (immutable)
         run: pnpm install --frozen-lockfile
 
@@ -47,17 +58,40 @@ jobs:
       - name: Pack the terminal distribution
         run: pnpm run release:pack-tui
 
-      - name: Publish
+      - name: Stage
+        # A granular token without bypass 2FA can stage; approval performs the
+        # 2FA check. Remove this env once trusted publishing is configured for
+        # all 11 packages, and npm will authenticate through the OIDC token.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         # The version tracks upstream's prerelease line, so npm requires an
         # explicit dist-tag. `latest` keeps `npx @fishwithcat/dsh-tui` working;
         # switch this to `next`/`alpha` when a stable line exists.
-        run: pnpm run release:publish-tui -- --provenance --tag latest
+        run: pnpm run release:publish-tui -- --stage --provenance --tag latest
 
-      - name: Verify the published install
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Record the stage ids
         run: |
-          version=$(node -p "require('./package.json').version")
-          pnpm run release:verify-tui-install -- --version "$version"
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs'
+          const staged = JSON.parse(readFileSync('dist/tui/stage-ids.json', 'utf8'))
+          const lines = [
+            '## Staged TUI packages',
+            '',
+            'Approve these stage ids in order with `npm stage approve <id>` (npm 12) and 2FA. Each approval publishes that package and applies the `latest` tag.',
+            '',
+            '| Package | Version | Stage id |',
+            '| --- | --- | --- |',
+            ...staged.map(({ name, version, stageId }) => `| \`${name}\` | ${version} | \`${stageId}\` |`),
+            '',
+            'Then run the **Verify TUI (npm)** workflow with this version.',
+            '',
+          ]
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`)
+          NODE
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: tui-stage-ids
+          path: dist/tui/stage-ids.json
+          if-no-files-found: error
+          retention-days: 30
