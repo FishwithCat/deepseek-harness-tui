@@ -68,7 +68,7 @@ pnpm run setup:dsh
 
 完整构建这一点很关键：`pnpm run build` 还会构建原生系统插件与两个编译面，缺少它们的 checkout 虽然能启动终端界面，却会在退出时卡在会话落盘。随后安装器把 `apps/cli/lib/bin.js` 链接到 `$HOME/.local/bin`（Windows 为 `%APPDATA%\npm`），因此在任何目录都能运行 `dsh` 与终端界面。它是幂等的：重新构建后再次运行 `pnpm run link:dsh`，或修复因仓库移动、`clean` 而断开的链接。`pnpm run link:dsh -- --dir <path>` 可安装到其他位置，`DSH_LINK_BIN_DIR` 设置目标目录；`pnpm run unlink:dsh` 删除本 checkout 安装的链接。属于其他程序的同名条目会被拒绝，而不是被覆盖。
 
-从 registry 安装（`npx @deepseek-ai/dsh` 或 `npm install -g`）无法带上本 fork 的终端界面，因为 `@deepseek-ai/dsh-tui-app` 未发布，而启动器的其他依赖会解析到上游包。
+本 fork 也在 `@fishwithcat` scope 下发布终端相关包。使用 `npx --registry=https://registry.npmjs.org/ @fishwithcat/dsh-tui` 或 `npm install -g @fishwithcat/dsh-tui --registry=https://registry.npmjs.org/` 安装启动器及其别名的 fork 包，并与上游运行时并存。请使用 npm 或 npx：pnpm 或 yarn 的全局安装可能同时保留一份上游核心包。
 
 ## 社区与支持
 
