@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { valid } from 'semver'
-import { TUI_SCOPE } from './pack-tui.ts'
+import { forkBase, TUI_SCOPE } from './pack-tui.ts'
 import { attemptEchoed, capture } from './process.ts'
 
 /** Path of the installed launcher entry inside an npm prefix. */
@@ -27,6 +27,16 @@ export function launcherEntry(prefix: string): string {
 /** Path of the aliased agent package inside an npm prefix. */
 export function aliasedAgent(prefix: string): string {
   return join(prefix, 'node_modules', '@deepseek-ai', 'dsh-agent', 'package.json')
+}
+
+/** Path of the aliased CLI package inside an npm prefix. */
+export function aliasedCli(prefix: string): string {
+  return join(prefix, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
+}
+
+/** Path of the installed launcher manifest inside an npm prefix. */
+export function launcherManifest(prefix: string): string {
+  return join(prefix, 'node_modules', ...TUI_SCOPE.split('/'), 'dsh-tui', 'package.json')
 }
 
 /**
@@ -55,6 +65,7 @@ function main(): void {
   if (valid(version) === null) {
     throw new Error(`verify-tui-install: ${JSON.stringify(version)} is not a single published version`)
   }
+  const base = forkBase(version)
 
   const prefix = mkdtempSync(join(tmpdir(), 'dsh-tui-install-'))
   const home = join(prefix, '.dsh')
@@ -76,8 +87,22 @@ function main(): void {
       throw new Error(`verify-tui-install: expected one @deepseek-ai/dsh-agent, found ${String(copies.length)}:\n${copies.join('\n')}`)
     }
     const agent = JSON.parse(readFileSync(aliasedAgent(prefix), 'utf8')) as { name: string; version: string }
-    if (agent.name !== `${TUI_SCOPE}/dsh-agent` || agent.version !== version) {
+    if (agent.name !== `${TUI_SCOPE}/dsh-agent` || agent.version !== base) {
       throw new Error(`verify-tui-install: agent resolves to ${agent.name}@${agent.version}`)
+    }
+    const cli = JSON.parse(readFileSync(aliasedCli(prefix), 'utf8')) as { name: string; version: string }
+    if (cli.name !== `${TUI_SCOPE}/dsh` || cli.version !== version) {
+      throw new Error(`verify-tui-install: CLI resolves to ${cli.name}@${cli.version}`)
+    }
+    const launcher = JSON.parse(readFileSync(launcherManifest(prefix), 'utf8')) as {
+      dependencies?: Record<string, string>
+    }
+    const dependencies = launcher.dependencies ?? {}
+    if (dependencies['@deepseek-ai/dsh'] !== `npm:${TUI_SCOPE}/dsh@${version}`) {
+      throw new Error(`verify-tui-install: launcher pins the CLI as ${String(dependencies['@deepseek-ai/dsh'])}`)
+    }
+    if (dependencies['@deepseek-ai/dsh-agent'] !== `npm:${TUI_SCOPE}/dsh-agent@${base}`) {
+      throw new Error(`verify-tui-install: launcher pins the agent as ${String(dependencies['@deepseek-ai/dsh-agent'])}`)
     }
 
     const environment = { ...process.env, DSH_HOME: home }

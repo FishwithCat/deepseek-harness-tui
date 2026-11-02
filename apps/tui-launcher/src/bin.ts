@@ -18,10 +18,15 @@ function fail(message: string, code: number): never {
 }
 
 const require = createRequire(import.meta.url)
+const { version } = require('../package.json') as { version: string }
 const invocation = ((): { args: string[]; entry: string } => {
   try {
     const args = launcherCliArgs(process.argv.slice(2))
-    if (!isVersionRequest(args)) ensureTuiProfile()
+    if (isVersionRequest(args)) {
+      process.stdout.write(`${version}\n`)
+      process.exit(0)
+    }
+    ensureTuiProfile()
     return { args, entry: resolveCliEntry(require.resolve) }
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error), 1)

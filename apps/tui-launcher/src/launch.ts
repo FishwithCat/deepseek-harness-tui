@@ -72,8 +72,9 @@ export function resolveCliEntry(resolve: (specifier: string) => string): string 
 }
 
 /**
- * Whether the invocation only asks for the CLI version and must not create a
- * profile.
+ * Whether the invocation only asks for the launcher version. The launcher
+ * answers it from its own manifest, without creating a profile or resolving
+ * the installed CLI.
  * @param argv - normalized CLI arguments.
  * @returns true when the invocation carries a version flag.
  */

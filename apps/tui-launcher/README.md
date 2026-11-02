@@ -10,11 +10,13 @@ the fork's launcher rather than the upstream package. The launcher owns the
 profile choice: `--profile`, `--from-default-profile`, and `dsh plugin` are
 rejected.
 
-The published package is `@fishwithcat/dsh-tui`. Its packed manifest replaces
-the workspace dependencies with `npm:` aliases for the fork-only packages, so
-the upstream CLI resolves those names to the fork's builds. Keep the launcher
-and every aliased package on the upstream version; a `-fork.N` version does
-not satisfy the exact ranges upstream packages declare.
+The published package is `@fishwithcat/dsh-tui`. Its packed manifest aliases
+the TUI layer (`@fishwithcat/dsh` and `@fishwithcat/dsh-tui-app`) at the fork
+version and the eight core-overlay packages at the upstream version, so the
+upstream CLI resolves every name to the fork's builds while upstream exact
+ranges and required peers keep one copy. A fork version has the form
+`<upstream>.fork.<n>`.
 
 `dsh-tui watch <session-id>` is translated to `--watch <session-id>`, and
-`dsh-tui --version` does not create a profile.
+`dsh-tui --version` prints the launcher's fork version without creating a
+profile or resolving the installed CLI.

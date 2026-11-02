@@ -2,20 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { npmMajor, parseStageResult, publishArgs, requireStageNpm, stagePublishArgs } from './publish-tui.ts'
 
 describe('publishArgs', () => {
-  it('passes the required dist-tag before the optional provenance flag', () => {
-    expect(publishArgs('/tmp/pkg.tgz', { provenance: true, tag: 'latest' })).toEqual([
+  it('passes the required dist-tag', () => {
+    expect(publishArgs('/tmp/pkg.tgz', { tag: 'latest' })).toEqual([
       'publish',
       '/tmp/pkg.tgz',
       '--access',
       'public',
       '--tag',
       'latest',
-      '--provenance',
     ])
   })
 
-  it('omits provenance when it was not requested', () => {
-    expect(publishArgs('/tmp/pkg.tgz', { provenance: false, tag: 'next' })).toEqual([
+  it('passes a non-default tag', () => {
+    expect(publishArgs('/tmp/pkg.tgz', { tag: 'next' })).toEqual([
       'publish',
       '/tmp/pkg.tgz',
       '--access',
@@ -26,14 +25,13 @@ describe('publishArgs', () => {
   })
 
   it('appends the rehearsal flag last', () => {
-    expect(publishArgs('/tmp/pkg.tgz', { provenance: true, tag: 'latest', dryRun: true })).toEqual([
+    expect(publishArgs('/tmp/pkg.tgz', { tag: 'latest', dryRun: true })).toEqual([
       'publish',
       '/tmp/pkg.tgz',
       '--access',
       'public',
       '--tag',
       'latest',
-      '--provenance',
       '--dry-run',
     ])
   })
@@ -41,7 +39,7 @@ describe('publishArgs', () => {
 
 describe('stagePublishArgs', () => {
   it('asks npm for the stage id as JSON', () => {
-    expect(stagePublishArgs('/tmp/pkg.tgz', { provenance: true, tag: 'latest' })).toEqual([
+    expect(stagePublishArgs('/tmp/pkg.tgz', { tag: 'latest' })).toEqual([
       'stage',
       'publish',
       '/tmp/pkg.tgz',
@@ -50,12 +48,11 @@ describe('stagePublishArgs', () => {
       '--tag',
       'latest',
       '--json',
-      '--provenance',
     ])
   })
 
-  it('rehearses without provenance when it was not requested', () => {
-    expect(stagePublishArgs('/tmp/pkg.tgz', { provenance: false, tag: 'next', dryRun: true })).toEqual([
+  it('rehearses without uploading', () => {
+    expect(stagePublishArgs('/tmp/pkg.tgz', { tag: 'next', dryRun: true })).toEqual([
       'stage',
       'publish',
       '/tmp/pkg.tgz',

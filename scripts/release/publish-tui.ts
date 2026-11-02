@@ -36,12 +36,12 @@ const STAGE_NPM_MAJOR = 12
 /**
  * Build the npm publish arguments for one packed tarball.
  * @param tarball - absolute tarball path.
- * @param options - provenance, the required dist-tag, and whether to rehearse.
+ * @param options - the required dist-tag and whether to rehearse.
  * @returns npm arguments.
  */
 export function publishArgs(
   tarball: string,
-  options: { provenance: boolean; tag: string; dryRun?: boolean },
+  options: { tag: string; dryRun?: boolean },
 ): string[] {
   return [
     'publish',
@@ -50,7 +50,6 @@ export function publishArgs(
     'public',
     '--tag',
     options.tag,
-    ...options.provenance ? ['--provenance'] : [],
     ...options.dryRun === true ? ['--dry-run'] : [],
   ]
 }
@@ -58,12 +57,12 @@ export function publishArgs(
 /**
  * Build the `npm stage publish` arguments for one packed tarball.
  * @param tarball - absolute tarball path.
- * @param options - provenance, the required dist-tag, and whether to rehearse.
+ * @param options - the required dist-tag and whether to rehearse.
  * @returns npm arguments.
  */
 export function stagePublishArgs(
   tarball: string,
-  options: { provenance: boolean; tag: string; dryRun?: boolean },
+  options: { tag: string; dryRun?: boolean },
 ): string[] {
   return [
     'stage',
@@ -74,7 +73,6 @@ export function stagePublishArgs(
     '--tag',
     options.tag,
     '--json',
-    ...options.provenance ? ['--provenance'] : [],
     ...options.dryRun === true ? ['--dry-run'] : [],
   ]
 }
@@ -131,7 +129,6 @@ function main(): void {
   const { values } = parseArgs({
     options: {
       from: { type: 'string' },
-      provenance: { type: 'boolean' },
       tag: { type: 'string' },
       stage: { type: 'boolean' },
       'dry-run': { type: 'boolean' },
@@ -158,7 +155,6 @@ function main(): void {
     }
     if (manifest.private === true) throw new Error(`publish-tui: ${filename} is private`)
     const options = {
-      provenance: values.provenance === true,
       tag,
       dryRun,
     }

@@ -8,10 +8,11 @@ manifest 把这个 CLI 依赖别名到本 fork 的构建，因此实际解析到
 而不是上游包。profile 由启动器固定：`--profile`、`--from-default-profile` 和
 `dsh plugin` 会被拒绝。
 
-实际发布的包名是 `@fishwithcat/dsh-tui`。打包后的 manifest 会把 workspace
-依赖替换成指向 fork 包的 `npm:` 别名，让上游 CLI 按同一批依赖名解析到 fork 的
-构建。启动器和所有被别名的包必须与上游同号；`-fork.N` 不满足上游包声明的精确
-范围。
+实际发布的包名是 `@fishwithcat/dsh-tui`。打包后的 manifest 把 TUI 层
+（`@fishwithcat/dsh` 与 `@fishwithcat/dsh-tui-app`）别名到 fork 版本，把 8 个
+核心覆盖包别名到上游版本，让上游 CLI 按同一批依赖名解析到 fork 的构建，同时让
+上游的精确范围与 required peer 只保留一份副本。fork 版本的形式为
+`<upstream>.fork.<n>`。
 
 `dsh-tui watch <session-id>` 会转换成 `--watch <session-id>`，`dsh-tui --version`
-不会创建 profile。
+会打印启动器的 fork 版本，不创建 profile，也不解析已安装的 CLI。

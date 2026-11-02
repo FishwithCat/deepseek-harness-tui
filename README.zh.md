@@ -46,7 +46,7 @@ npm install -g @fishwithcat/dsh-tui
 dsh-tui
 ```
 
-启动器首次运行时创建 `$DSH_HOME/profiles/tui`，并用该 profile 运行 fork 的 CLI（通过 npm 别名安装为 `@deepseek-ai/dsh`）。请使用 npm 或 npx：fork 包通过 `npm:` 别名接入上游依赖树，pnpm 或 yarn 的全局安装可能同时保留一份上游核心包。发行版中的每个包都与上游同号，因此 fork 版本跟随上游发布。
+启动器首次运行时创建 `$DSH_HOME/profiles/tui`，并用该 profile 运行 fork 的 CLI（通过 npm 别名安装为 `@deepseek-ai/dsh`）。请使用 npm 或 npx：fork 包通过 `npm:` 别名接入上游依赖树，pnpm 或 yarn 的全局安装可能同时保留一份上游核心包。启动器与 TUI bundle 使用 `<upstream>.fork.<n>` 形式的 fork 版本，8 个打过补丁的核心包则保持上游版本，使上游的精确范围与 required peer 只解析到一份副本。因此 TUI 层可以独立于上游发布；核心补丁的变更仍需跟随上游发布。
 
 <a id="run-from-source"></a>
 

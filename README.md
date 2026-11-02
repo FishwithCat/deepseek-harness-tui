@@ -46,7 +46,7 @@ npm install -g @fishwithcat/dsh-tui
 dsh-tui
 ```
 
-The launcher creates `$DSH_HOME/profiles/tui` on first use and runs the fork's CLI, installed as `@deepseek-ai/dsh` through an npm alias, with that profile. Use npm or npx: the fork packages are wired into the upstream dependency tree with `npm:` aliases, and pnpm or yarn global installs may keep a second upstream core package beside them. Every package in the distribution carries the upstream version, so a fork release follows an upstream release.
+The launcher creates `$DSH_HOME/profiles/tui` on first use and runs the fork's CLI, installed as `@deepseek-ai/dsh` through an npm alias, with that profile. Use npm or npx: the fork packages are wired into the upstream dependency tree with `npm:` aliases, and pnpm or yarn global installs may keep a second upstream core package beside them. The launcher and TUI bundle carry a fork version of the form `<upstream>.fork.<n>`, while the eight patched core packages keep the upstream version so upstream exact ranges and required peers resolve to one copy. A TUI-layer release therefore does not wait for an upstream release; a change to the patched core still does.
 
 ### Run from source
 

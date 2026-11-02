@@ -6,13 +6,28 @@
 # Verification is a separate manual workflow (`verify-tui.yml`) that runs after
 # approval, because a staged version does not exist on the registry yet.
 #
-# `pack-tui` produces every tarball from one commit and `publish-tui --stage`
-# uploads exactly those bytes. Approve the printed ids with
+# `pack-tui` produces the selected tarballs from one commit and
+# `publish-tui --stage` uploads exactly those bytes. Approve the printed ids with
 # `npm stage approve <id>` (npm 12) or the npm website.
+#
+# A normal dispatch publishes the TUI layer at `<upstream>.fork.<n>`. The eight
+# core-overlay packages keep upstream's version because upstream packages
+# declare exact ranges and required peers on them; `with_core` republishes that
+# overlay only when adopting a new upstream base.
 name: Stage TUI (npm)
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Fork version for the TUI layer, for example 0.2.2-alpha.2.fork.1'
+        type: string
+        required: true
+      with_core:
+        description: 'Also publish the eight core-overlay packages; set only after merging a new upstream base'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -49,6 +64,19 @@ jobs:
           npm install --global npm@12
           npm --version
 
+      - name: Check the core overlay is published
+        if: ${{ !inputs.with_core }}
+        run: |
+          base=$(node -p "require('./package.json').version")
+          for package in \
+            dsh-agent dsh-session dsh-user-approval dsh-tool-ask-user \
+            dsh-compaction dsh-compaction-basic dsh-subagent dsh-tool-todo; do
+            if ! npm view "@fishwithcat/$package@$base" version >/dev/null 2>&1; then
+              echo "::error::@fishwithcat/$package@$base is not published; dispatch again with with_core=true after merging that upstream base"
+              exit 1
+            fi
+          done
+
       - name: Install (immutable)
         run: pnpm install --frozen-lockfile
 
@@ -56,7 +84,13 @@ jobs:
         run: pnpm run build:lib:host
 
       - name: Pack the terminal distribution
-        run: pnpm run release:pack-tui
+        env:
+          TUI_VERSION: ${{ inputs.version }}
+          WITH_CORE: ${{ inputs.with_core }}
+        run: |
+          args=(--version "$TUI_VERSION")
+          if [ "$WITH_CORE" = "true" ]; then args+=(--with-core); fi
+          pnpm run release:pack-tui -- "${args[@]}"
 
       - name: Stage
         # A granular token without bypass 2FA can stage; approval performs the
@@ -64,10 +98,10 @@ jobs:
         # all 11 packages, and npm will authenticate through the OIDC token.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        # The version tracks upstream's prerelease line, so npm requires an
-        # explicit dist-tag. `latest` keeps `npx @fishwithcat/dsh-tui` working;
-        # switch this to `next`/`alpha` when a stable line exists.
-        run: pnpm run release:publish-tui -- --stage --provenance --tag latest
+        # The fork version is a prerelease, so npm requires an explicit
+        # dist-tag. `latest` keeps `npx @fishwithcat/dsh-tui` working; switch
+        # this to `next`/`alpha` when a stable line exists.
+        run: pnpm run release:publish-tui -- --stage --tag latest
 
       - name: Record the stage ids
         run: |
@@ -83,11 +117,13 @@ jobs:
             '| --- | --- | --- |',
             ...staged.map(({ name, version, stageId }) => `| \`${name}\` | ${version} | \`${stageId}\` |`),
             '',
-            'Then run the **Verify TUI (npm)** workflow with this version.',
+            `Then run the **Verify TUI (npm)** workflow with version \`${process.env.TUI_VERSION}\`.`,
             '',
           ]
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`)
           NODE
+        env:
+          TUI_VERSION: ${{ inputs.version }}
 
       - uses: actions/upload-artifact@v7.0.1
         with:
