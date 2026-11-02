@@ -37,12 +37,12 @@ The installer is idempotent: re-run `pnpm run link:dsh` after a rebuild, or to r
 
 ### From npm
 
-The fork publishes its terminal packages under the `@fishwithcat` scope:
+The fork publishes its terminal packages under the `@fishwithcat` scope on the public npm registry. Pass `--registry=https://registry.npmjs.org/` when npm defaults to a mirror such as `registry.npmmirror.com`: the mirror may not carry the fork packages, and npm 12 rejects tarballs served from a host other than the configured registry.
 
 ```sh
-npx @fishwithcat/dsh-tui
+npx --registry=https://registry.npmjs.org/ @fishwithcat/dsh-tui
 
-npm install -g @fishwithcat/dsh-tui
+npm install -g @fishwithcat/dsh-tui --registry=https://registry.npmjs.org/
 dsh-tui
 ```
 

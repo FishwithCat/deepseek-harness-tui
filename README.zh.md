@@ -37,12 +37,12 @@ dsh
 
 ### 从 npm 安装
 
-本 fork 在 `@fishwithcat` scope 下发布终端相关包：
+本 fork 在 `@fishwithcat` scope 下把终端相关包发布到公共 npm registry。若 npm 默认使用镜像（例如 `registry.npmmirror.com`），请加 `--registry=https://registry.npmjs.org/`：镜像可能尚未收录 fork 包，且 npm 12 会拒绝与配置 registry 主机不同的 tarball。
 
 ```sh
-npx @fishwithcat/dsh-tui
+npx --registry=https://registry.npmjs.org/ @fishwithcat/dsh-tui
 
-npm install -g @fishwithcat/dsh-tui
+npm install -g @fishwithcat/dsh-tui --registry=https://registry.npmjs.org/
 dsh-tui
 ```
 
