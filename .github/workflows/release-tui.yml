@@ -92,12 +92,18 @@ jobs:
           if [ "$WITH_CORE" = "true" ]; then args+=(--with-core); fi
           pnpm run release:pack-tui -- "${args[@]}"
 
+      - name: Check OIDC availability
+        run: |
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::GitHub did not expose an OIDC token; the workflow needs permissions: id-token: write"
+            exit 1
+          fi
+
       - name: Stage
-        # A granular token without bypass 2FA can stage; approval performs the
-        # 2FA check. Remove this env once trusted publishing is configured for
-        # all 11 packages, and npm will authenticate through the OIDC token.
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # Trusted publishing exchanges the GitHub OIDC token for a short-lived
+        # package token; no npm secret is read. Every staged package needs a
+        # trust relationship for this repository, workflow, and environment.
+        # Approval still performs the 2FA check.
         # The fork version is a prerelease, so npm requires an explicit
         # dist-tag. `latest` keeps `npx @fishwithcat/dsh-tui` working; switch
         # this to `next`/`alpha` when a stable line exists.
