@@ -58,7 +58,7 @@ pnpm run setup:dsh
 
 The complete build matters: `pnpm run build` also builds the native system addon and both compiler faces, and a checkout built without them starts the terminal UI but hangs when the session flushes on exit. The installer then links `apps/cli/lib/bin.js` into `$HOME/.local/bin` (`%APPDATA%\npm` on Windows), so `dsh` — and therefore the terminal UI — runs from any directory. It is idempotent: re-run `pnpm run link:dsh` after a rebuild, or to repair a link left dangling by a moved or cleaned checkout. `pnpm run link:dsh -- --dir <path>` installs elsewhere, and `DSH_LINK_BIN_DIR` sets the target; `pnpm run unlink:dsh` removes a link this checkout installed. An entry owned by another program is refused rather than overwritten.
 
-A registry install (`npx @deepseek-ai/dsh` or `npm install -g`) cannot carry this fork's terminal surface, because `@deepseek-ai/dsh-tui-app` is not published and the launcher's other dependencies would resolve to the upstream packages.
+The fork also publishes its terminal packages under `@fishwithcat`; `npx @fishwithcat/dsh-tui` (or `npm install -g @fishwithcat/dsh-tui`) installs the launcher and its aliased fork packages beside the upstream runtime. Use npm or npx: pnpm and yarn global installs may keep a second upstream core package beside the fork's.
 
 ## Community and support
 

@@ -35,7 +35,18 @@ The quick start's `pnpm run setup:dsh` is the complete path: it builds the nativ
 
 The installer is idempotent: re-run `pnpm run link:dsh` after a rebuild, or to repair a link left dangling by a moved or cleaned checkout. `pnpm run link:dsh -- --dir <path>` installs elsewhere, `DSH_LINK_BIN_DIR` sets the target, and `pnpm run unlink:dsh` removes a link this checkout installed. An entry owned by another program is refused rather than overwritten.
 
-A registry install (`npx @deepseek-ai/dsh` or `npm install -g`) cannot carry this fork's terminal surface, because `@deepseek-ai/dsh-tui-app` is not published and the launcher's other dependencies would resolve to the upstream packages.
+### From npm
+
+The fork publishes its terminal packages under the `@fishwithcat` scope:
+
+```sh
+npx @fishwithcat/dsh-tui
+
+npm install -g @fishwithcat/dsh-tui
+dsh-tui
+```
+
+The launcher creates `$DSH_HOME/profiles/tui` on first use and runs the fork's CLI, installed as `@deepseek-ai/dsh` through an npm alias, with that profile. Use npm or npx: the fork packages are wired into the upstream dependency tree with `npm:` aliases, and pnpm or yarn global installs may keep a second upstream core package beside them. Every package in the distribution carries the upstream version, so a fork release follows an upstream release.
 
 ### Run from source
 

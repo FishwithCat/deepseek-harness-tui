@@ -35,7 +35,18 @@ dsh
 
 安装器是幂等的：重新构建后再次运行 `pnpm run link:dsh`，或修复因仓库移动、`clean` 而断开的链接。`pnpm run link:dsh -- --dir <path>` 可安装到其他位置，`DSH_LINK_BIN_DIR` 设置目标目录，`pnpm run unlink:dsh` 删除本 checkout 安装的链接。属于其他程序的同名条目会被拒绝，而不是被覆盖。
 
-从 registry 安装（`npx @deepseek-ai/dsh` 或 `npm install -g`）无法带上本 fork 的终端界面，因为 `@deepseek-ai/dsh-tui-app` 未发布，而启动器的其他依赖会解析到上游包。
+### 从 npm 安装
+
+本 fork 在 `@fishwithcat` scope 下发布终端相关包：
+
+```sh
+npx @fishwithcat/dsh-tui
+
+npm install -g @fishwithcat/dsh-tui
+dsh-tui
+```
+
+启动器首次运行时创建 `$DSH_HOME/profiles/tui`，并用该 profile 运行 fork 的 CLI（通过 npm 别名安装为 `@deepseek-ai/dsh`）。请使用 npm 或 npx：fork 包通过 `npm:` 别名接入上游依赖树，pnpm 或 yarn 的全局安装可能同时保留一份上游核心包。发行版中的每个包都与上游同号，因此 fork 版本跟随上游发布。
 
 <a id="run-from-source"></a>
 

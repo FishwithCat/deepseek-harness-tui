@@ -1,0 +1,345 @@
+/**
+ * Pack the npm-installable terminal distribution.
+ *
+ * The distribution cannot publish under `@deepseek-ai`: that scope belongs to
+ * upstream, and `@deepseek-ai/dsh-tui-app` does not exist on the registry.
+ * This script repacks the fork-only packages under `@fishwithcat` and turns
+ * every dependency on one of them into an `npm:` alias, so the upstream CLI
+ * still resolves the original names while the launcher's installation tree
+ * carries the fork's builds. The launcher manifest also pins the upstream
+ * packages the TUI composes.
+ *
+ * Versions stay equal to upstream: a `-fork.N` version does not satisfy the
+ * exact ranges upstream packages declare, so npm would install a second
+ * upstream copy beside the fork's.
+ *
+ * @module scripts/release/pack-tui
+ */
+
+import { cpSync, globSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join, resolve, sep } from 'node:path'
+import { parseArgs } from 'node:util'
+import { capture } from './process.ts'
+import { packedManifest, PUBLISH_ORDER_FILE, tarballFiles } from './tarball.ts'
+
+/** Registry scope the packed distribution publishes under. */
+export const TUI_SCOPE = '@fishwithcat'
+
+/** One package name in the publishing scope. */
+function tuiPackage(name: string): string {
+  return `${TUI_SCOPE}/${name}`
+}
+
+/** Packages the distribution carries, in publish order. */
+export const TUI_MEMBERS: readonly {
+  readonly directory: string
+  readonly launcher?: true
+  readonly cli?: true
+  readonly published?: string
+}[] = [
+  { directory: 'packages/core/agent' },
+  { directory: 'packages/core/session' },
+  { directory: 'packages/interaction/user-approval' },
+  { directory: 'packages/interaction/tool-ask-user' },
+  { directory: 'packages/compaction/compaction' },
+  { directory: 'packages/compaction/compaction-basic' },
+  { directory: 'packages/subagent/subagent' },
+  { directory: 'packages/todo/tool-todo' },
+  { directory: 'packages/bundle/tui-app' },
+  { directory: 'apps/cli', cli: true, published: tuiPackage('dsh') },
+  { directory: 'apps/tui-launcher', launcher: true, published: tuiPackage('dsh-tui') },
+]
+
+/** Source package name → published package name. */
+export const TUI_ALIASES: Readonly<Record<string, string>> = {
+  '@deepseek-ai/dsh': tuiPackage('dsh'),
+  '@deepseek-ai/dsh-agent': tuiPackage('dsh-agent'),
+  '@deepseek-ai/dsh-session': tuiPackage('dsh-session'),
+  '@deepseek-ai/dsh-user-approval': tuiPackage('dsh-user-approval'),
+  '@deepseek-ai/dsh-tool-ask-user': tuiPackage('dsh-tool-ask-user'),
+  '@deepseek-ai/dsh-compaction': tuiPackage('dsh-compaction'),
+  '@deepseek-ai/dsh-compaction-basic': tuiPackage('dsh-compaction-basic'),
+  '@deepseek-ai/dsh-subagent': tuiPackage('dsh-subagent'),
+  '@deepseek-ai/dsh-tool-todo': tuiPackage('dsh-tool-todo'),
+  '@deepseek-ai/dsh-tui-app': tuiPackage('dsh-tui-app'),
+}
+
+/**
+ * Rewrite the ownership field of a generated Typert manifest.
+ *
+ * The Typert loader rejects a manifest whose `package` differs from the
+ * package that exports it. Type symbols intentionally keep the source name:
+ * they are cross-package type identities, not ownership fields.
+ * @param text - generated Typert module contents.
+ * @param sourceName - package name the generator embedded.
+ * @param publishedName - package name the packed manifest declares.
+ * @returns the contents with ownership fields updated.
+ */
+export function rewriteTypertManifest(text: string, sourceName: string, publishedName: string): string {
+  return text
+    .replaceAll(`package: '${sourceName}'`, `package: '${publishedName}'`)
+    .replaceAll(`package: "${sourceName}"`, `package: "${publishedName}"`)
+}
+
+/** Upstream bundle layer the launcher pins beside the aliased TUI. */
+const BASE_PACKAGE = '@deepseek-ai/dsh-base'
+
+/** Dependency sections a packed manifest rewrites. */
+const DEPENDENCY_SECTIONS = ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies'] as const
+
+/** One rewrite input for {@link rewriteTuiManifest}. */
+export interface TuiRewriteContext {
+  /** Name the packed package declares. */
+  readonly publishedName: string
+  /** Version every packed package carries; equal to upstream's. */
+  readonly version: string
+  /** Workspace package name → version, for every `workspace:` range. */
+  readonly versions: ReadonlyMap<string, string>
+  /** Whether the package is the launcher that pins the composed packages. */
+  readonly launcher?: boolean | undefined
+  /** Whether the packed CLI's `dsh` bin must be removed. */
+  readonly stripBin?: boolean | undefined
+}
+
+/** Whether a value is a plain object. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Resolve one `workspace:` range against the package version it names.
+ * @param spec - the workspace range from the source manifest.
+ * @param name - dependency name, used in the failure message.
+ * @param versions - workspace package versions.
+ * @returns the published range.
+ * @throws when the workspace has no manifest for the dependency.
+ */
+function workspaceRange(spec: string, name: string, versions: ReadonlyMap<string, string>): string {
+  const version = versions.get(name)
+  if (version === undefined) throw new Error(`pack-tui: no workspace version for ${name}`)
+  const range = spec.slice('workspace:'.length)
+  if (range === '' || range === '*') return version
+  if (range === '^') return `^${version}`
+  if (range === '~') return `~${version}`
+  return range
+}
+
+/**
+ * Rewrite one source manifest into its packed form.
+ *
+ * Dependencies on a fork-only package become `npm:` aliases; every other
+ * workspace range becomes the exact upstream version. The launcher additionally
+ * pins the upstream base bundle and every aliased package, because the profile
+ * resolves bundle names from the launcher's installation.
+ * @param manifest - the source package.json.
+ * @param context - published identity, version, and workspace versions.
+ * @returns a new manifest for the packed package.
+ */
+export function rewriteTuiManifest(
+  manifest: Readonly<Record<string, unknown>>,
+  context: TuiRewriteContext,
+): Record<string, unknown> {
+  const next = structuredClone(manifest) as Record<string, unknown>
+  next.name = context.publishedName
+  next.version = context.version
+  delete next.private
+  if (context.stripBin === true) delete next.bin
+
+  for (const section of DEPENDENCY_SECTIONS) {
+    const dependencies = next[section]
+    if (!isRecord(dependencies)) continue
+    for (const [name, spec] of Object.entries(dependencies)) {
+      if (typeof spec !== 'string' || !spec.startsWith('workspace:')) continue
+      const alias = section === 'dependencies' || section === 'optionalDependencies' ? TUI_ALIASES[name] : undefined
+      dependencies[name] = alias === undefined
+        ? workspaceRange(spec, name, context.versions)
+        : `npm:${alias}@${context.version}`
+    }
+  }
+
+  if (context.launcher === true) {
+    const dependencies = isRecord(next.dependencies) ? next.dependencies : {}
+    dependencies[BASE_PACKAGE] = workspaceRange('workspace:*', BASE_PACKAGE, context.versions)
+    for (const [source, published] of Object.entries(TUI_ALIASES)) {
+      dependencies[source] = `npm:${published}@${context.version}`
+    }
+    next.dependencies = dependencies
+  }
+
+  return next
+}
+
+/**
+ * Read every workspace package's name and version.
+ * @param root - repository root.
+ * @returns name → version for app, package, vendor, and native platform manifests.
+ */
+export function readWorkspaceVersions(root: string): Map<string, string> {
+  const versions = new Map<string, string>()
+  const manifests = [
+    ...globSync('apps/*/package.json', { cwd: root }),
+    ...globSync('packages/*/*/package.json', { cwd: root }),
+    ...globSync('vendor/*/package.json', { cwd: root }),
+    ...globSync('native/system/packages/*/package.json', { cwd: root }),
+  ]
+  for (const relative of manifests) {
+    const manifest = JSON.parse(readFileSync(join(root, relative), 'utf8')) as { name?: unknown; version?: unknown }
+    if (typeof manifest.name !== 'string' || typeof manifest.version !== 'string') continue
+    versions.set(manifest.name, manifest.version)
+  }
+  return versions
+}
+
+/** One member resolved for packing. */
+interface ResolvedMember {
+  /** Absolute source directory. */
+  readonly directory: string
+  /** Source package name. */
+  readonly sourceName: string
+  /** Published package name. */
+  readonly publishedName: string
+  /** Whether this member is the launcher. */
+  readonly launcher: boolean
+  /** Relative `lib/` file the tarball must contain. */
+  readonly entry: string
+  /** Whether the packed CLI's `dsh` bin must be removed. */
+  readonly stripBin: boolean
+}
+
+/**
+ * Resolve the pack set against the checkout.
+ * @param root - repository root.
+ * @param version - release version every member must declare.
+ * @param versions - workspace package versions.
+ * @returns resolved members in publish order.
+ * @throws when a member's version differs from the release version.
+ */
+export function resolveMembers(
+  root: string,
+  version: string,
+): ResolvedMember[] {
+  return TUI_MEMBERS.map(({ directory, launcher, cli, published }) => {
+    const absolute = join(root, directory)
+    const manifest = JSON.parse(readFileSync(join(absolute, 'package.json'), 'utf8')) as {
+      name: string
+      version: string
+    }
+    if (manifest.version !== version) {
+      throw new Error(`pack-tui: ${manifest.name} declares ${manifest.version}, expected ${version}`)
+    }
+    const publishedName = published ?? (launcher === true
+      ? tuiPackage('dsh-tui')
+      : (TUI_ALIASES[manifest.name] ?? `${TUI_SCOPE}/${manifest.name.slice('@deepseek-ai/'.length)}`)
+    )
+    return {
+      directory: absolute,
+      sourceName: manifest.name,
+      publishedName,
+      launcher: launcher === true,
+      entry: launcher === true || cli === true ? 'lib/bin.js' : 'lib/index.js',
+      stripBin: cli === true,
+    }
+  })
+}
+
+/** Copy a package into a staging directory without its dependency tree. */
+function stageMember(member: ResolvedMember, versions: ReadonlyMap<string, string>, version: string): string {
+  const staging = mkdtempSync(join(tmpdir(), 'dsh-tui-pack-'))
+  cpSync(member.directory, staging, {
+    recursive: true,
+    filter: source => !source.split(sep).includes('node_modules'),
+  })
+  const manifestPath = join(staging, 'package.json')
+  const source = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+  for (const file of globSync('lib/typert*.js', { cwd: staging })) {
+    const path = join(staging, file)
+    const text = readFileSync(path, 'utf8')
+    const rewritten = rewriteTypertManifest(text, member.sourceName, member.publishedName)
+    if (rewritten !== text) writeFileSync(path, rewritten)
+  }
+  writeFileSync(manifestPath, `${JSON.stringify(rewriteTuiManifest(source, {
+    publishedName: member.publishedName,
+    version,
+    versions,
+    launcher: member.launcher,
+    stripBin: member.stripBin,
+  }), undefined, 2)}\n`)
+  return staging
+}
+
+/** Pack one staged member and return its tarball path. */
+function packStaged(staging: string, destination: string, publishedName: string, version: string): string {
+  const stdout = capture('npm', ['pack', '--json', '--pack-destination', destination], { cwd: staging })
+  const [record] = JSON.parse(stdout) as [{ filename: string }]
+  const target = join(destination, `${publishedName.slice(1).replace('/', '-')}-${version}.tgz`)
+  renameSync(join(destination, record.filename), target)
+  return target
+}
+
+/**
+ * Validate one packed tarball's identity, members, and dependency ranges.
+ * @param tarball - absolute tarball path.
+ * @param member - the member it should contain.
+ * @param version - release version.
+ */
+export function validateTarball(tarball: string, member: ResolvedMember, version: string): void {
+  const manifest = packedManifest(tarball)
+  if (manifest.name !== member.publishedName) {
+    throw new Error(`pack-tui: ${tarball} declares ${String(manifest.name)}, expected ${member.publishedName}`)
+  }
+  if (manifest.version !== version) {
+    throw new Error(`pack-tui: ${tarball} declares ${String(manifest.version)}, expected ${version}`)
+  }
+  if (JSON.stringify(manifest).includes('workspace:')) {
+    throw new Error(`pack-tui: ${tarball} still contains a workspace range`)
+  }
+  const files = tarballFiles(tarball)
+  const entry = `package/${member.entry}`
+  if (!files.includes(entry)) throw new Error(`pack-tui: ${tarball} is missing ${entry}`)
+  if (!files.includes('package/package.json')) throw new Error(`pack-tui: ${tarball} is missing package.json`)
+}
+
+/**
+ * Pack every member into `destination`, in publish order.
+ * @param root - repository root.
+ * @param destination - absolute output directory.
+ * @returns tarball filenames in publish order.
+ */
+export function packTui(root: string, destination: string): string[] {
+  const version = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string }).version
+  const versions = readWorkspaceVersions(root)
+  const members = resolveMembers(root, version)
+  rmSync(destination, { recursive: true, force: true })
+  mkdirSync(destination, { recursive: true })
+  const order: string[] = []
+  for (const member of members) {
+    const staging = stageMember(member, versions, version)
+    try {
+      const tarball = packStaged(staging, destination, member.publishedName, version)
+      validateTarball(tarball, member, version)
+      order.push(basename(tarball))
+    } finally {
+      rmSync(staging, { recursive: true, force: true })
+    }
+  }
+  writeFileSync(join(destination, PUBLISH_ORDER_FILE), `${order.join('\n')}\n`)
+  return order
+}
+
+/** Parse the pack command. */
+function main(): void {
+  const argv = process.argv.slice(2)
+  const { values } = parseArgs({
+    options: { out: { type: 'string' } },
+    allowPositionals: false,
+    args: argv[0] === '--' ? argv.slice(1) : argv,
+  })
+  const root = resolve(import.meta.dirname, '../..')
+  const destination = resolve(root, values.out ?? 'dist/tui')
+  const order = packTui(root, destination)
+  console.log(`pack-tui: ${String(order.length)} tarball(s) in ${destination}`)
+  for (const filename of order) console.log(`  ${filename}`)
+}
+
+if (import.meta.main) main()

@@ -1,0 +1,63 @@
+# Publish the npm-installable terminal distribution under @fishwithcat.
+#
+# The workflow is manual-only: the fork packages carry the upstream version and
+# publication is a reviewed act. `pack-tui` produces every tarball from one
+# commit; `publish-tui` uploads exactly those bytes in dependency order; the
+# verification job then installs the published launcher into a throwaway prefix.
+name: Release TUI (npm)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-tui
+  cancel-in-progress: false
+
+env:
+  DSH_TELEMETRY_DISABLED: '1'
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment: npm-publish
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v5.0.0
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+
+      - name: Install (immutable)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build host artifacts
+        run: pnpm run build:lib:host
+
+      - name: Pack the terminal distribution
+        run: pnpm run release:pack-tui
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        # The version tracks upstream's prerelease line, so npm requires an
+        # explicit dist-tag. `latest` keeps `npx @fishwithcat/dsh-tui` working;
+        # switch this to `next`/`alpha` when a stable line exists.
+        run: pnpm run release:publish-tui -- --provenance --tag latest
+
+      - name: Verify the published install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          pnpm run release:verify-tui-install -- --version "$version"

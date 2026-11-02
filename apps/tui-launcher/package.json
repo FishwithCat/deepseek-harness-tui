@@ -1,0 +1,27 @@
+{
+  "name": "@deepseek-ai/dsh-tui-launcher",
+  "description": "The npm-installable terminal entry: creates the tui profile and launches the installed dsh CLI",
+  "version": "0.2.2-alpha.2",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "dsh-tui": "lib/bin.js"
+  },
+  "files": [
+    "lib/*.js",
+    "lib/types/*.d.ts"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FishwithCat/deepseek-harness-tui.git",
+    "directory": "apps/tui-launcher"
+  },
+  "engines": {
+    "node": ">=24.9.0"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "workspace:*",
+    "@deepseek-ai/dsh-app-boot": "workspace:*"
+  }
+}
