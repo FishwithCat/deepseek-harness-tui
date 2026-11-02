@@ -16,13 +16,13 @@ export type Styler = (text: string) => string
 
 /** Semantic styles the transcript, status bar, and prompts share. */
 export interface TuiTheme {
-  /** Human prompt role marker and its continuation rule. */
+  /** Human prompt role marker. */
   user: Styler
   /** Assistant message body. */
   assistant: Styler
-  /** Assistant message role marker and its continuation rule. */
-  assistantRule: Styler
-  /** Provider reasoning text, shown while it streams. */
+  /** Assistant message role marker. */
+  assistantMarker: Styler
+  /** Provider reasoning text, shown while it streams in a muted light grey. */
   reasoning: Styler
   /** Tool-call heading. */
   tool: Styler
@@ -76,7 +76,7 @@ export interface ThemeOptions {
  */
 interface PaletteSpec {
   user: string
-  assistantRule: string
+  assistantMarker: string
   reasoning: string
   tool: string
   toolOk: string
@@ -97,8 +97,8 @@ interface PaletteSpec {
 /** Palette for a dark terminal background (the default). */
 const DARK: PaletteSpec = {
   user: '1;38;5;81',
-  assistantRule: '38;5;79',
-  reasoning: '38;5;110',
+  assistantMarker: '38;5;79',
+  reasoning: '38;5;245',
   tool: '1;38;5;214',
   toolOk: '38;5;114',
   toolError: '1;38;5;203',
@@ -118,8 +118,8 @@ const DARK: PaletteSpec = {
 /** Palette for a light terminal background. */
 const LIGHT: PaletteSpec = {
   user: '1;38;5;25',
-  assistantRule: '38;5;29',
-  reasoning: '38;5;60',
+  assistantMarker: '38;5;29',
+  reasoning: '38;5;245',
   tool: '1;38;5;130',
   toolOk: '38;5;28',
   toolError: '1;38;5;124',
@@ -188,7 +188,7 @@ export function createTheme(options: ThemeOptions): TuiTheme {
   return {
     user: style(spec.user),
     assistant: text => text,
-    assistantRule: style(spec.assistantRule),
+    assistantMarker: style(spec.assistantMarker),
     reasoning: style(spec.reasoning),
     tool: style(spec.tool),
     toolOk: style(spec.toolOk),

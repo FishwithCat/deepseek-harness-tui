@@ -29,16 +29,14 @@ const DIFF_MAX_LINES = 24
 const TOOL_SUMMARY_MAX_CHARS = 96
 /** Argument keys worth showing alone, in preference order. */
 const TOOL_SUMMARY_KEYS = ['command', 'path', 'file_path', 'pattern', 'query', 'url', 'prompt', 'description', 'name']
-/** Columns a message row's role gutter occupies: one glyph and one space. */
+/** Columns a message row's first-line marker or continuation indent occupies. */
 const MESSAGE_GUTTER_WIDTH = 2
 /** First-line glyph of a human prompt row. */
 const USER_MARKER = '› '
-/** Continuation glyph of a human prompt row. */
-const USER_RULE = '│ '
 /** First-line glyph of an assistant message row. */
 const ASSISTANT_MARKER = '◆ '
-/** Continuation glyph of an assistant message row. */
-const ASSISTANT_RULE = '│ '
+/** Indent that aligns a message's later lines under its first-line content. */
+const MESSAGE_INDENT = ' '.repeat(MESSAGE_GUTTER_WIDTH)
 /** Narrowest gap between a shell row's command and its right-aligned label. */
 const SHELL_LABEL_GAP = 2
 /** Glyph every streamed shell output line starts with. */
@@ -335,15 +333,15 @@ export class TranscriptView implements Component {
   private renderEntry(entry: TranscriptEntry, width: number): string[] {
     switch (entry.kind) {
       case 'user':
-        return prefixBody(promptText(entry), width, this.theme.user(USER_MARKER), this.theme.user(USER_RULE))
+        return prefixBody(promptText(entry), width, this.theme.user(USER_MARKER), MESSAGE_INDENT)
       case 'assistant': {
         const body = this.assistantMarkdown(entry.id, entry.text, Math.max(1, width - MESSAGE_GUTTER_WIDTH))
         const lines = body.map((line, index) => (
-          index === 0 ? this.theme.assistantRule(ASSISTANT_MARKER) : this.theme.assistantRule(ASSISTANT_RULE)
+          index === 0 ? this.theme.assistantMarker(ASSISTANT_MARKER) : MESSAGE_INDENT
         ) + line)
         if (!entry.interrupted) return lines
         const cancelled = wrap('[cancelled]', Math.max(1, width - MESSAGE_GUTTER_WIDTH))
-        return [...lines, ...cancelled.map(line => this.theme.assistantRule(ASSISTANT_RULE) + this.theme.dim(line))]
+        return [...lines, ...cancelled.map(line => MESSAGE_INDENT + this.theme.dim(line))]
       }
       case 'reasoning':
         return prefixBody(entry.text, width, this.theme.reasoning('✻ '), this.theme.reasoning('  '))

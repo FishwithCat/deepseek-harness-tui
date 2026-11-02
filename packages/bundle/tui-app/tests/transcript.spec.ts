@@ -675,7 +675,7 @@ describe('TranscriptView', () => {
     expect(view.render(60).join('\n')).toContain('› [Image #1] what is this?')
   })
 
-  it('gives prompts and replies distinct role gutters', async () => {
+  it('marks prompt and reply roles on the first line and indents the rest', async () => {
     const session = await makeSession()
     session.append('turn/start', { turn: 1 })
     session.append('user/message', createUserMessage({
@@ -696,12 +696,13 @@ describe('TranscriptView', () => {
     const lines = new TranscriptView(transcript, createTheme({ enabled: false, palette: 'dark' })).render(60)
     const rendered = lines.join('\n')
     expect(rendered).toContain('› first line')
-    expect(rendered).toContain('│ second line')
+    expect(rendered).toContain('\n  second line')
     expect(rendered).toContain('◆ reply one')
-    expect(rendered).toContain('│ reply two')
+    expect(rendered).toContain('\n  reply two')
+    expect(rendered).not.toContain('│')
   })
 
-  it('colors the assistant gutter with its own role color', async () => {
+  it('colors the assistant role marker', async () => {
     const session = await makeSession()
     session.append('turn/start', { turn: 1 })
     session.append('assistant/message', {
@@ -717,7 +718,8 @@ describe('TranscriptView', () => {
     for (const event of session.ownEvents()) transcript.applyEvent(event)
     const rendered = new TranscriptView(transcript, createTheme({ enabled: true, palette: 'dark' })).render(60).join('\n')
     expect(rendered).toContain('\x1b[38;5;79m◆ \x1b[0m')
-    expect(rendered).toContain('\x1b[38;5;79m│ \x1b[0m')
+    expect(rendered).toContain('\n  reply two')
+    expect(rendered).not.toContain('│')
   })
 
   it('folds a long tool result and summarizes its arguments', async () => {
