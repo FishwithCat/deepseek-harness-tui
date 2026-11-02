@@ -85,6 +85,9 @@ export function rewriteTypertManifest(text: string, sourceName: string, publishe
 /** Upstream bundle layer the launcher pins beside the aliased TUI. */
 const BASE_PACKAGE = '@deepseek-ai/dsh-base'
 
+/** Repository URL every packed manifest declares, so provenance matches the publishing repository. */
+export const FORK_REPOSITORY = 'https://github.com/FishwithCat/deepseek-harness-tui'
+
 /** Dependency sections a packed manifest rewrites. */
 const DEPENDENCY_SECTIONS = ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies'] as const
 
@@ -145,6 +148,9 @@ export function rewriteTuiManifest(
   next.version = context.version
   delete next.private
   if (context.stripBin === true) delete next.bin
+  if (isRecord(next.repository)) {
+    next.repository = { ...next.repository, type: 'git', url: FORK_REPOSITORY }
+  }
 
   for (const section of DEPENDENCY_SECTIONS) {
     const dependencies = next[section]

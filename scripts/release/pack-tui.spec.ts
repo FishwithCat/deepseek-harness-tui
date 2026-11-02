@@ -113,6 +113,27 @@ describe('rewriteTuiManifest', () => {
       .toBe('npm:@fishwithcat/dsh-tui-app@0.2.2-alpha.2')
   })
 
+  it('points the packed repository at the publishing repository', () => {
+    const rewritten = rewriteTuiManifest({
+      name: '@deepseek-ai/dsh-agent',
+      version: '0.2.2-alpha.2',
+      repository: {
+        type: 'git',
+        url: 'git+https://github.com/deepseek-ai/deepseek-harness.git',
+        directory: 'packages/core/agent',
+      },
+    }, {
+      publishedName: '@fishwithcat/dsh-agent',
+      version: '0.2.2-alpha.2',
+      versions: VERSIONS,
+    })
+    expect(rewritten.repository).toEqual({
+      type: 'git',
+      url: 'https://github.com/FishwithCat/deepseek-harness-tui',
+      directory: 'packages/core/agent',
+    })
+  })
+
   it('rejects a workspace dependency without a version', () => {
     expect(() => rewriteTuiManifest({
       name: '@deepseek-ai/dsh-agent',
