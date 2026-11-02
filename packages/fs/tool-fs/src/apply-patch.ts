@@ -48,6 +48,6 @@ export function applyApplyPatchTool(ctx: Context, sandbox: FsSandboxController):
       return patchToolValue(await executePatch(ctx, sandbox, exec, { patch: args.input, sandboxPolicy }))
     },
     presentCall: args => presentPatchCall(args.input),
-    presentResult: (_args, result) => presentPatchResult(result),
+    presentResult: (args, result) => presentPatchResult(args.input, result),
   }))
 }

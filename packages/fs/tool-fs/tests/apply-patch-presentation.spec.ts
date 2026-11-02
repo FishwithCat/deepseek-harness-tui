@@ -6,7 +6,7 @@ import { renderPatch, patchPresentationMeta, type PatchToolValue } from '../src/
 import { stoppedFromMeta } from '../src/diff.ts'
 import { add, move, patch, remove, setup, update } from './patch/harness.ts'
 
-it('previews every operation using raw paths, counting distinct files including move endpoints', async () => {
+it('previews every operation using raw paths, naming one file and counting several', async () => {
   const text = patch(add('a'), update('b'), remove('c'), move('d', 'e'), '*** Update File: empty\n@@\n+insert', update('b', 'new', 'last'))
   const expected = { card: 'diff', title: 'Apply patch (6 files)', diffs: [
     { path: 'a', oldText: null, newText: 'new\n' }, { path: 'b', oldText: 'old', newText: 'new' },
@@ -16,7 +16,9 @@ it('previews every operation using raw paths, counting distinct files including 
   expect(presentPatchCall(text)).toEqual(expected)
   const t = await setup()
   expect(t.ctx.tools.get('apply_patch')?.presentCall?.({ input: text })).toEqual(expected)
-  expect(presentPatchCall(patch(remove('only')))).toEqual({ card: 'diff', title: 'Apply patch (1 file)', diffs: [], locations: [{ path: 'only' }] })
+  expect(presentPatchCall(patch(update('src/a.ts')))).toMatchObject({ title: 'Apply patch src/a.ts' })
+  expect(presentPatchCall(patch(remove('only')))).toEqual({ card: 'diff', title: 'Apply patch only', diffs: [], locations: [{ path: 'only' }] })
+  expect(presentPatchCall(patch())).toMatchObject({ title: 'Apply patch (0 files)' })
   expect(presentPatchCall('invalid')).toBeUndefined()
 })
 
@@ -26,17 +28,24 @@ it('propagates unexpected parser defects', () => {
   try { expect(() => presentPatchCall('text')).toThrow(defect) } finally { spy.mockRestore() }
 })
 
-it('falls back on failed or missing metadata and titles known stopped diffs', async () => {
+it('names a settled single file, counts several, and marks a stopped patch', async () => {
+  const text = patch(update('a'))
   const diffs = [{ path: 'a', oldText: 'old', newText: 'new' }]
   const result = { isError: false, content: [], meta: { diffs } }
-  expect(presentPatchResult({ ...result, isError: true })).toBeUndefined()
-  expect(presentPatchResult({ isError: false, content: [] })).toBeUndefined()
-  expect(presentPatchResult(result)).toEqual({ card: 'diff', title: 'Apply patch', diffs })
+  expect(presentPatchResult(text, { ...result, isError: true })).toBeUndefined()
+  expect(presentPatchResult(text, { isError: false, content: [] })).toBeUndefined()
+  expect(presentPatchResult(text, result)).toEqual({ card: 'diff', title: 'Apply patch a', diffs })
+  expect(presentPatchResult(patch(update('a'), update('b')), result))
+    .toEqual({ card: 'diff', title: 'Apply patch (2 files)', diffs })
+  expect(presentPatchResult('invalid', result)).toEqual({ card: 'diff', title: 'Apply patch', diffs })
   const stopped = { ...result, meta: { diffs, stopped: true } }
-  expect(presentPatchResult(stopped)).toEqual({ card: 'diff', title: 'Apply patch (stopped)', diffs })
+  expect(presentPatchResult(text, stopped)).toEqual({ card: 'diff', title: 'Apply patch a (stopped)', diffs })
+  expect(presentPatchResult(patch(update('a'), update('b')), stopped))
+    .toEqual({ card: 'diff', title: 'Apply patch (2 files, stopped)', diffs })
+  expect(presentPatchResult('invalid', stopped)).toEqual({ card: 'diff', title: 'Apply patch (stopped)', diffs })
   const t = await setup()
-  expect(t.ctx.tools.get('apply_patch')?.presentResult?.({ input: patch() }, stopped))
-    .toEqual({ card: 'diff', title: 'Apply patch (stopped)', diffs })
+  expect(t.ctx.tools.get('apply_patch')?.presentResult?.({ input: text }, stopped))
+    .toEqual({ card: 'diff', title: 'Apply patch a (stopped)', diffs })
 })
 
 it.each([undefined, null, [], 'stopped', {}, { stopped: 'true' }, { stopped: false }])('rejects a malformed stopped flag %j', (meta) => {
