@@ -263,7 +263,7 @@ describe('subagent watch service', () => {
     const { ctx, agent, history, setStatus } = hubContext(child)
     const hub = new SubagentWatchHub(ctx)
     const command = await published(hub, ctx, child, rootId)
-    expect(command).toBe('dsh watch session-child')
+    expect(command).toBe('dsh-tui watch session-child')
 
     const record = await readWatchRecord('session-child')
     expect(record).toBeDefined()
@@ -384,8 +384,8 @@ describe('subagent watch service', () => {
     ctx.emit('subagent/start', { runId: SubagentRunId('run-2'), provider: 'spawn', id: grandchild.id, local: true })
     await vi.waitFor(() => { expect(publishedCommands).toHaveLength(2) })
     expect(publishedCommands).toEqual([
-      'dsh watch session-child',
-      'dsh watch session-grandchild',
+      'dsh-tui watch session-child',
+      'dsh-tui watch session-grandchild',
     ])
     await hub.close()
   })

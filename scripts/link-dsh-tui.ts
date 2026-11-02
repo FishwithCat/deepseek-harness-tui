@@ -1,22 +1,24 @@
 /**
- * Install, refresh, or remove the global `dsh` command that runs this
- * checkout's launcher.
+ * Install, refresh, or remove the global `dsh-tui` command that runs this
+ * checkout's terminal launcher.
  *
- * A fork cannot be installed from the npm registry: its `apps/cli` manifest
- * depends on `@deepseek-ai/dsh-tui-app`, which is not published, while
- * `workspace:^` ranges resolve to the upstream packages. Linking the built
- * launcher into a directory on `PATH` keeps every profile resolving the
- * checkout's own bundles, and the link is stable across branches because it
- * names the build output rather than a revision.
+ * The launcher creates the `tui` profile under the Harness home when none
+ * exists and resolves the checkout's built CLI, so the linked command behaves
+ * like the npm-installed `dsh-tui`. The link is stable across branches because
+ * it names the build output rather than a revision.
  *
  * Installation is idempotent and atomic: re-running refreshes the command in
- * place, a POSIX install never leaves a window where `dsh` is missing, and an
- * entry owned by another program — a regular file, a shim of another shape, or
- * a symlink whose target still exists — is refused and named rather than
+ * place, a POSIX install never leaves a window where `dsh-tui` is missing, and
+ * an entry owned by another program — a regular file, a shim of another shape,
+ * or a symlink whose target still exists — is refused and named rather than
  * overwritten. A dangling symlink is refreshed, which is what a moved or
  * cleaned checkout leaves behind.
  *
- * @module scripts/link-dsh
+ * Installing or removing `dsh-tui` also removes a `dsh` command this checkout
+ * installed from `apps/cli/lib/bin.js`, while a `dsh` entry owned by another
+ * program is left alone.
+ *
+ * @module scripts/link-dsh-tui
  */
 
 import {
@@ -37,11 +39,17 @@ import { fileURLToPath } from 'node:url'
 /** Repository root, resolved from this script's location. */
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 
-/** The built launcher every installed command runs. */
-export const CLI_BIN = join(ROOT, 'apps', 'cli', 'lib', 'bin.js')
+/** The built terminal launcher every installed command runs. */
+export const LAUNCHER_BIN = join(ROOT, 'apps', 'tui-launcher', 'lib', 'bin.js')
 
 /** Command name installed into the target directory. */
-const COMMAND = 'dsh'
+const COMMAND = 'dsh-tui'
+
+/** Command name earlier checkouts installed. */
+const LEGACY_COMMAND = 'dsh'
+
+/** CLI entry the earlier command linked. */
+const LEGACY_CLI_BIN = join(ROOT, 'apps', 'cli', 'lib', 'bin.js')
 
 /** Environment variable that overrides the target bin directory. */
 export const BIN_DIR_ENV = 'DSH_LINK_BIN_DIR'
@@ -64,6 +72,8 @@ export interface CommandPaths {
   binDir: string
   /** Platform selector; `'win32'` selects the shim files instead of a symlink. */
   platform: NodeJS.Platform
+  /** Built CLI path an older `dsh` link named; defaults to this checkout's `apps/cli` build. */
+  legacyBinPath?: string
 }
 
 /** Outcome of one install. */
@@ -89,15 +99,16 @@ export function parseArgs(argv: readonly string[]): LinkInvocation {
   let help = false
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
-    if (argument === '--remove') remove = true
+    if (argument === '--') continue
+    else if (argument === '--remove') remove = true
     else if (argument === '--help' || argument === '-h') help = true
     else if (argument === '--dir') {
       const value = argv[index + 1]
-      if (value === undefined || value === '') throw new Error('link-dsh: --dir needs a path')
+      if (value === undefined || value === '') throw new Error('link-dsh-tui: --dir needs a path')
       dir = value
       index += 1
     } else {
-      throw new Error(`link-dsh: unknown argument ${JSON.stringify(argument)}`)
+      throw new Error(`link-dsh-tui: unknown argument ${JSON.stringify(argument)}`)
     }
   }
   return { remove, dir, help }
@@ -140,11 +151,16 @@ export function isOnPath(pathValue: string, binDir: string, platform: NodeJS.Pla
   return pathValue.split(separator).some(entry => entry !== '' && normalize(entry) === target)
 }
 
-/** The command file names this platform installs. */
-function commandFiles(paths: CommandPaths): string[] {
+/**
+ * The command file names this platform installs.
+ * @param paths - the target directory and platform.
+ * @param command - command name; defaults to the current `dsh-tui`.
+ * @returns the absolute command files for the platform.
+ */
+function commandFiles(paths: CommandPaths, command: string = COMMAND): string[] {
   return paths.platform === 'win32'
-    ? [join(paths.binDir, `${COMMAND}.cmd`), join(paths.binDir, `${COMMAND}.ps1`)]
-    : [join(paths.binDir, COMMAND)]
+    ? [join(paths.binDir, `${command}.cmd`), join(paths.binDir, `${command}.ps1`)]
+    : [join(paths.binDir, command)]
 }
 
 /**
@@ -171,14 +187,16 @@ function ps1Shim(binPath: string): string {
 }
 
 /**
- * Whether a Windows shim has this script's shape, whatever launcher it names.
+ * Whether a Windows shim has this script's shape.
  * @param path - the existing shim file.
+ * @param binPath - launcher the shim must name, or undefined to accept any launcher.
  * @returns true when the file is a forwarding shim this script may replace.
  */
-function shimIsOurs(path: string): boolean {
+function shimIsOurs(path: string, binPath?: string): boolean {
   try {
     const content = readFileSync(path, 'utf8')
-    return content.startsWith('@ECHO OFF\r\nnode "') || content.startsWith('node "')
+    const forwarding = content.startsWith('@ECHO OFF\r\nnode "') || content.startsWith('node "')
+    return forwarding && (binPath === undefined || content.includes(binPath))
   } catch {
     // An unreadable entry is not ours to replace.
     return false
@@ -191,16 +209,17 @@ function shimIsOurs(path: string): boolean {
  * is a Windows shim of this script's own shape.
  * @param path - the existing command file.
  * @param paths - the launcher path and platform.
+ * @param shimNamesLauncher - require a Windows shim to name {@link CommandPaths.binPath}.
  * @returns true when the entry is owned by this installer.
  */
-function ownsEntry(path: string, paths: CommandPaths): boolean {
+function ownsEntry(path: string, paths: CommandPaths, shimNamesLauncher = false): boolean {
   if (isSymlink(path)) {
     if (paths.platform === 'win32') return false
     const target = resolve(readlinkSync(path))
     return target === resolve(paths.binPath) || !existsSync(target)
   }
   if (!existsSync(path)) return false
-  return paths.platform === 'win32' && shimIsOurs(path)
+  return paths.platform === 'win32' && shimIsOurs(path, shimNamesLauncher ? paths.binPath : undefined)
 }
 
 /**
@@ -231,11 +250,11 @@ function writeAtomic(path: string, content: string): void {
  */
 export function installCommand(paths: CommandPaths): InstallResult {
   if (!existsSync(paths.binPath)) {
-    throw new Error(`link-dsh: ${paths.binPath} does not exist; build it first with 'pnpm run build'`)
+    throw new Error(`link-dsh-tui: ${paths.binPath} does not exist; build it first with 'pnpm run build'`)
   }
   const foreign = foreignEntries(paths)
   if (foreign.length > 0) {
-    throw new Error(`link-dsh: ${foreign.join(', ')} belongs to another program; remove it yourself`)
+    throw new Error(`link-dsh-tui: ${foreign.join(', ')} belongs to another program; remove it yourself`)
   }
   mkdirSync(paths.binDir, { recursive: true })
   if (paths.platform === 'win32') {
@@ -270,12 +289,30 @@ export function removeCommand(paths: CommandPaths): RemoveResult {
   return 'removed'
 }
 
-/** Usage text. */
-const USAGE = `Usage: pnpm run link:dsh [-- --dir <path>]
+/**
+ * Remove a `dsh` command an earlier checkout installed.
+ * @param paths - the target directory, platform, and the CLI path that command named.
+ * @returns the absolute command files removed.
+ */
+function removeLegacyCommand(paths: CommandPaths): string[] {
+  const legacy: CommandPaths = { ...paths, binPath: paths.legacyBinPath ?? LEGACY_CLI_BIN }
+  const removed: string[] = []
+  for (const path of commandFiles(legacy, LEGACY_COMMAND)) {
+    if (!existsSync(path) && !isSymlink(path)) continue
+    if (!ownsEntry(path, legacy, true)) continue
+    rmSync(path, { force: true })
+    removed.push(path)
+  }
+  return removed
+}
 
-Install or refresh a global 'dsh' command that runs this checkout's launcher.
-The command links apps/cli/lib/bin.js, so build it first
-('pnpm run build') and re-run this script after a rebuild.
+/** Usage text. */
+const USAGE = `Usage: pnpm run link:dsh-tui [-- --dir <path>]
+
+Install or refresh a global 'dsh-tui' command that runs this checkout's terminal
+launcher. The command links apps/tui-launcher/lib/bin.js, so build it first
+('pnpm run build') and re-run this script after a rebuild. An older 'dsh' link
+this checkout installed is removed; a foreign 'dsh' entry is left alone.
 
 Options:
   --dir <path>   install into <path> instead of the platform default
@@ -293,7 +330,8 @@ Environment:
  * @param env - the process environment.
  * @param home - the user's home directory.
  * @param platform - the platform whose command kind and defaults apply.
- * @param binPath - the launcher to install; defaults to this checkout's built bin.
+ * @param binPath - the launcher to install; defaults to this checkout's built terminal launcher.
+ * @param legacyBinPath - the CLI path an older `dsh` link named; defaults to this checkout's `apps/cli` build.
  * @returns the process exit code.
  */
 export function run(
@@ -301,7 +339,8 @@ export function run(
   env: Record<string, string | undefined>,
   home: string,
   platform: NodeJS.Platform = process.platform,
-  binPath: string = CLI_BIN,
+  binPath: string = LAUNCHER_BIN,
+  legacyBinPath: string = LEGACY_CLI_BIN,
 ): number {
   let invocation: LinkInvocation
   try {
@@ -315,27 +354,31 @@ export function run(
     return 0
   }
   const binDir = invocation.dir === undefined ? resolveBinDir(env, home, platform) : resolve(invocation.dir)
-  const paths: CommandPaths = { binPath, binDir, platform }
+  const paths: CommandPaths = { binPath, binDir, platform, legacyBinPath }
   try {
     if (invocation.remove) {
       const outcome = removeCommand(paths)
       if (outcome === 'foreign') {
-        process.stderr.write(`link-dsh: ${binDir}${sep}${COMMAND} belongs to another program; remove it yourself\n`)
+        process.stderr.write(`link-dsh-tui: ${binDir}${sep}${COMMAND} belongs to another program; remove it yourself\n`)
         return 1
       }
-      process.stdout.write(outcome === 'removed'
-        ? `link-dsh: removed ${binDir}${sep}${COMMAND}\n`
-        : `link-dsh: nothing installed in ${binDir}\n`)
+      const legacy = removeLegacyCommand(paths)
+      if (outcome === 'removed') process.stdout.write(`link-dsh-tui: removed ${binDir}${sep}${COMMAND}\n`)
+      else if (legacy.length === 0) process.stdout.write(`link-dsh-tui: nothing installed in ${binDir}\n`)
+      for (const path of legacy) process.stdout.write(`link-dsh-tui: removed legacy ${path}\n`)
       return 0
     }
     const installed = installCommand(paths)
-    process.stdout.write(`link-dsh: installed ${installed.path} -> ${binPath}\n`)
+    process.stdout.write(`link-dsh-tui: installed ${installed.path} -> ${binPath}\n`)
+    for (const path of removeLegacyCommand(paths)) {
+      process.stdout.write(`link-dsh-tui: removed legacy ${path}\n`)
+    }
     if (!isOnPath(env.PATH ?? '', binDir, platform)) {
       process.stdout.write(platform === 'win32'
-        ? `link-dsh: add ${binDir} to PATH (for example: setx PATH "%PATH%;${binDir}")\n`
-        : `link-dsh: add ${binDir} to PATH (for example: export PATH="${binDir}:$PATH")\n`)
+        ? `link-dsh-tui: add ${binDir} to PATH (for example: setx PATH "%PATH%;${binDir}")\n`
+        : `link-dsh-tui: add ${binDir} to PATH (for example: export PATH="${binDir}:$PATH")\n`)
     }
-    process.stdout.write('link-dsh: run `dsh` in any directory; `pnpm run unlink:dsh` removes it\n')
+    process.stdout.write('link-dsh-tui: run `dsh-tui` in any directory; `pnpm run unlink:dsh-tui` removes it\n')
     return 0
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)

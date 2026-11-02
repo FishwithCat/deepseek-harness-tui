@@ -2,11 +2,12 @@
 
 [English](README.md) | 中文
 
-npm 安装后的终端入口。`dsh-tui` 在 `tui` profile 不存在时创建它，解析已安装的
-`@deepseek-ai/dsh` CLI，并以 `--profile tui` 启动，原样转发应用参数。打包后的
-manifest 把这个 CLI 依赖别名到本 fork 的构建，因此实际解析到的是 fork 的启动器，
-而不是上游包。profile 由启动器固定：`--profile`、`--from-default-profile` 和
-`dsh plugin` 会被拒绝。
+npm 安装与源码 checkout 共用的终端入口。`dsh-tui` 在 `tui` profile 不存在时创建
+它，解析已安装的 `@deepseek-ai/dsh` CLI，并以 `--profile tui` 启动，原样转发应用
+参数。打包后的 manifest 把这个 CLI 依赖别名到本 fork 的构建，因此实际解析到的是
+fork 的启动器，而不是上游包。profile 由启动器固定：`--profile`、
+`--from-default-profile` 和 `dsh plugin` 会被拒绝。源码 checkout 用
+`pnpm run link:dsh-tui` 安装同一个命令，并用 `pnpm dsh-tui` 从源码运行。
 
 实际发布的包名是 `@fishwithcat/dsh-tui`。打包后的 manifest 把 TUI 层
 （`@fishwithcat/dsh` 与 `@fishwithcat/dsh-tui-app`）别名到 fork 版本，把 8 个

@@ -149,7 +149,7 @@ function isTeardown(error: unknown): boolean {
  * @returns the heading and the resume command, each on its own line.
  */
 function resumeHint(sessionId: string): string {
-  return `To resume this session:\n  dsh --resume ${sessionId}\n`
+  return `To resume this session:\n  dsh-tui --resume ${sessionId}\n`
 }
 
 /** The picker surface a list prompt's modal plumbing drives. */

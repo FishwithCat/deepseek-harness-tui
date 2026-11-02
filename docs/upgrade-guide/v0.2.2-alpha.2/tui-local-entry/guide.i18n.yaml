@@ -1,0 +1,16 @@
+# Bilingual-pair consistency record for guide.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/upgrade-guide/v0.2.2-alpha.2/tui-local-entry/guide.md
+/:
+  en: 6a315686c7ee8368
+  zh: d6e15ca8f6957669
+/local-terminal-entry-moves-to-dsh-tui:
+  en: bad7e7ad92274edf
+  zh: 876235b40f033c35
+/local-terminal-entry-moves-to-dsh-tui/change:
+  en: 222cd37c1afe7610
+  zh: 0718376854c176b8
+/local-terminal-entry-moves-to-dsh-tui/migration:
+  en: 3f7b7399290351e1
+  zh: 6faaee01e79b83a0

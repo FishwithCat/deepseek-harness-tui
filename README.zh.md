@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-本仓库是 DeepSeek Harness 的终端界面 fork。DeepSeek Harness 是由 [DeepSeek AI](https://deepseek.com) 开发的开源 agent harness（智能体框架）。裸 `dsh` 会在当前目录启动一个 Agent：一个会话、一个进程，没有浏览器服务器，也没有固定端口。该 Agent 使用的模型、工具、沙箱与审批默认值与其他界面完全一致，但以全屏终端应用呈现：可滚动的对话记录、位于固定页脚之上的输入框，以及报告工作区、上下文占用、路由模型、token 吞吐量、token 总量、缓存命中率与委派 subagent 数量的状态行。
+本仓库是 DeepSeek Harness 的终端界面 fork。DeepSeek Harness 是由 [DeepSeek AI](https://deepseek.com) 开发的开源 agent harness（智能体框架）。裸 `dsh-tui` 会在当前目录启动一个 Agent：一个会话、一个进程，没有浏览器服务器，也没有固定端口。该 Agent 使用的模型、工具、沙箱与审批默认值与其他界面完全一致，但以全屏终端应用呈现：可滚动的对话记录、位于固定页脚之上的输入框，以及报告工作区、上下文占用、路由模型、token 吞吐量、token 总量、缓存命中率与委派 subagent 数量的状态行。
 
 运行本项目前，请阅读[安全说明](SAFETY.zh.md)。
 
@@ -10,30 +10,30 @@
 
 ## 快速上手
 
-需要 Node.js 22.19+ 或 24+、通过 Corepack 安装的 pnpm、Git、交互式终端，以及一个 DeepSeek API key。在新克隆的仓库上，一条命令完成安装依赖、完整构建，并把 `dsh` 链接到 `PATH`：
+需要 Node.js 22.19+ 或 24+、通过 Corepack 安装的 pnpm、Git、交互式终端，以及一个 DeepSeek API key。在新克隆的仓库上，一条命令完成安装依赖、完整构建，并把 `dsh-tui` 链接到 `PATH`：
 
 ```sh
 git clone https://github.com/FishwithCat/deepseek-harness-tui.git
 cd deepseek-harness-tui
-pnpm run setup:dsh
+pnpm run setup:dsh-tui
 ```
 
 在启动环境中设置 API key —— PowerShell 中为 `$env:DEEPSEEK_API_KEY = "sk-..."` —— 然后在应作为工作区的目录中启动终端界面：
 
 ```sh
 export DEEPSEEK_API_KEY=sk-...
-dsh
+dsh-tui
 ```
 
-已存放于 `$DSH_HOME/.credentials.yaml` 的密钥同样可用。输入提示并按 Enter；`/help` 列出命令，`/model` 切换路由模型，`Ctrl+D` 退出。退出时会打印一条 `dsh --resume <session-id>` 命令，供之后继续该对话。安装器的链接选项与构建要求见[安装与运行](#run)。
+已存放于 `$DSH_HOME/.credentials.yaml` 的密钥同样可用。输入提示并按 Enter；`/help` 列出命令，`/model` 切换路由模型，`Ctrl+D` 退出。退出时会打印一条 `dsh-tui --resume <session-id>` 命令，供之后继续该对话。安装器的链接选项与构建要求见[安装与运行](#run)。
 
 <a id="run"></a>
 
 ## 安装与运行
 
-快速上手所用的 `pnpm run setup:dsh` 就是完整路径：它会构建原生系统插件与两个编译面，然后把 `apps/cli/lib/bin.js` 链接到 `$HOME/.local/bin`（Windows 为 `%APPDATA%\npm`），因此在任何目录都能运行 `dsh`。完整构建这一点很关键：缺少这些产物的 checkout 虽然能启动终端界面，却会在退出时卡在会话落盘。
+快速上手所用的 `pnpm run setup:dsh-tui` 就是完整路径：它会构建原生系统插件与两个编译面，然后把 `apps/tui-launcher/lib/bin.js` 链接到 `$HOME/.local/bin`（Windows 为 `%APPDATA%\npm`），因此在任何目录都能运行 `dsh-tui`。链接的启动器首次使用时创建 `tui` profile，并解析本 checkout 已构建的 CLI。完整构建这一点很关键：缺少这些产物的 checkout 虽然能启动终端界面，却会在退出时卡在会话落盘。
 
-安装器是幂等的：重新构建后再次运行 `pnpm run link:dsh`，或修复因仓库移动、`clean` 而断开的链接。`pnpm run link:dsh -- --dir <path>` 可安装到其他位置，`DSH_LINK_BIN_DIR` 设置目标目录，`pnpm run unlink:dsh` 删除本 checkout 安装的链接。属于其他程序的同名条目会被拒绝，而不是被覆盖。
+安装器是幂等的：重新构建后再次运行 `pnpm run link:dsh-tui`，或修复因仓库移动、`clean` 而断开的链接。`pnpm run link:dsh-tui -- --dir <path>` 可安装到其他位置，`DSH_LINK_BIN_DIR` 设置目标目录，`pnpm run unlink:dsh-tui` 删除本 checkout 安装的链接。安装或删除 `dsh-tui` 时，还会删除此前由 `setup:dsh` 从本 checkout 安装的全局 `dsh` 链接。属于其他程序的 `dsh` 条目会保持不变，而属于其他程序的 `dsh-tui` 条目会被拒绝，而不是被覆盖。
 
 ### 从 npm 安装
 
@@ -55,14 +55,14 @@ dsh-tui
 ```sh
 pnpm install
 pnpm run build
-pnpm dsh
+pnpm dsh-tui
 ```
 
-`pnpm run build` 会准备仓库产物，`pnpm dsh` 会直接使用这些产物，不会重新构建。`pnpm run build:tui` 只构建终端界面所需的原生系统插件与 host 编译面。
+`pnpm run build` 会准备仓库产物，`pnpm dsh-tui` 会从源码运行启动器并使用这些产物，不会重新构建。若要在 CLI 本身做源码面迭代，`pnpm dsh` 会通过 tsx 启动同一个终端 profile，而不依赖已构建的 CLI。`pnpm run build:tui` 只构建终端界面所需的原生系统插件与 host 编译面。
 
 ### 命令行参数
 
-`dsh` 打开终端界面；`dsh --profile tui` 显式指定该 profile。`--resume <session-id>` 继续已存储的会话，`--provider` / `--model` 为新会话选择路由模型。`--watch <session-id>` 打开本地 subagent 的只读查看器，且不能与会话参数组合。没有交互式终端时应用会拒绝启动，因此管道或重定向调用会明确报错，而不是等待无法读取的按键。
+`dsh-tui` 打开终端界面，并始终启动 `tui` profile。`--resume <session-id>` 继续已存储的会话，`--provider` / `--model` 为新会话选择路由模型。`--watch <session-id>` 打开本地 subagent 的只读查看器，且不能与会话参数组合。源码 checkout 中的其他 profile 仍通过 `pnpm dsh --profile <name>` 使用。没有交互式终端时应用会拒绝启动，因此管道或重定向调用会明确报错，而不是等待无法读取的按键。
 
 ## 终端界面功能
 
@@ -75,7 +75,7 @@ pnpm dsh
 - **提问。** `ask_user_question` 渲染为选择器（当问题设置 `multiSelect` 时可勾选）或自由文本输入；`Other…` 打开自由文本答案，Esc 跳到下一题，Ctrl+C 取消整批提问。已结算的调用会报告所选标签，而不是原始结果 JSON。
 - **委派 subagent。** 会话产生委派工作后，页脚显示 `● subagents (running/total)`。`/subagents` 打开一个固定的可滚动面板，列出所有委派 subagent（含 subagent 自身的下级 subagent）及其激活状态与 watch 命令；面板每次渲染都会重新读取实时会话，因此 subagent 会在面板打开期间加入或离开。
 - **本地 shell 命令。** 以 `!` 开头的行在会话工作区中运行，使用与 Agent 的 `bash` 工具相同的沙箱策略，不弹出审批提示，也不发起模型请求。其命令与输出仅保留在本进程。参见[本地 shell 命令](#local-shell-commands)。
-- **会话。** 退出时会打印一条 `dsh --resume <session-id>` 命令，`/sessions` 与 `/resume` 按标题浏览和恢复已存储的对话。
+- **会话。** 退出时会打印一条 `dsh-tui --resume <session-id>` 命令，`/sessions` 与 `/resume` 按标题浏览和恢复已存储的对话。
 - **压缩。** 当压缩在 turn 生命周期之外运行时，页脚报告 `● compacting` 而不是 `idle`。
 
 ## 键盘快捷键
@@ -123,10 +123,10 @@ pnpm dsh
 本地 subagent 启动时，TUI 会发布一个回环连接，并以普通通知的形式打印 watch 命令：
 
 ```
-· watch: dsh watch <session-id>
+· watch: dsh-tui watch <session-id>
 ```
 
-在另一个终端中运行该命令即可跟随该 subagent。`dsh tui --watch <session-id>` 是等效的显式写法。查看器是只读的：没有输入框，不会发送提示、审批工具或取消 subagent。它显示已提交的对话记录，以及当前正在流式传输的文本、推理、工具调用与审批行；其页脚报告 subagent 的状态与连接状态 —— `online`、`history` 或 `disconnected` —— 以及上下文占用、吞吐量、token 与缓存命中率。PageUp/PageDown、鼠标滚轮、选择复制与调色板的行为与交互界面一致；Esc、Ctrl+C 与 Ctrl+D 只会离开查看器。
+在另一个终端中运行该命令即可跟随该 subagent。`--watch <session-id>` 是等效的应用参数。查看器是只读的：没有输入框，不会发送提示、审批工具或取消 subagent。它显示已提交的对话记录，以及当前正在流式传输的文本、推理、工具调用与审批行；其页脚报告 subagent 的状态与连接状态 —— `online`、`history` 或 `disconnected` —— 以及上下文占用、吞吐量、token 与缓存命中率。PageUp/PageDown、鼠标滚轮、选择复制与调色板的行为与交互界面一致；Esc、Ctrl+C 与 Ctrl+D 只会离开查看器。
 
 没有可用的实时服务时，查看器会打开已存储的日志并标记 `history`；它不获取写锁、不恢复 Agent，也不发起模型请求。只有由 TUI 启动的本地 subagent 可以被查看，查看器连接中断时会提示断开，而不会自动重连。两个终端必须使用同一用户、同一 `$DSH_HOME` 以及兼容的 TUI 持久化设置。
 

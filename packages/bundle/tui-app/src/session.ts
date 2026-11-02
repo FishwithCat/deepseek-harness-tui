@@ -21,7 +21,7 @@ import type {} from '@deepseek-ai/dsh-subagent/client'
 
 /** One delegated child as the `/subagents` listing reports it. */
 export interface TuiSubagent {
-  /** Durable child session id, also the argument `dsh watch` takes. */
+  /** Durable child session id, also the argument `dsh-tui watch` takes. */
   readonly id: SessionId
   /** Catalog mode recorded by the parent when the child was created. */
   readonly mode: 'one-shot' | 'continuable' | 'external' | 'unknown'

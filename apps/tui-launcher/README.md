@@ -2,13 +2,15 @@
 
 English | [中文](README.zh.md)
 
-The npm-installed terminal entry. `dsh-tui` creates the `tui` profile when it
-is missing, resolves the installed `@deepseek-ai/dsh` CLI, and runs it with
-`--profile tui`, forwarding every application argument. The packed manifest
-aliases that CLI dependency to this fork's build, so the resolved command is
-the fork's launcher rather than the upstream package. The launcher owns the
-profile choice: `--profile`, `--from-default-profile`, and `dsh plugin` are
-rejected.
+The terminal entry for npm installs and source checkouts. `dsh-tui` creates
+the `tui` profile when it is missing, resolves the installed
+`@deepseek-ai/dsh` CLI, and runs it with `--profile tui`, forwarding every
+application argument. The packed manifest aliases that CLI dependency to this
+fork's build, so the resolved command is the fork's launcher rather than the
+upstream package. The launcher owns the profile choice: `--profile`,
+`--from-default-profile`, and `dsh plugin` are rejected. A source checkout
+installs the same command with `pnpm run link:dsh-tui` and runs it from source
+with `pnpm dsh-tui`.
 
 The published package is `@fishwithcat/dsh-tui`. Its packed manifest aliases
 the TUI layer (`@fishwithcat/dsh` and `@fishwithcat/dsh-tui-app`) at the fork

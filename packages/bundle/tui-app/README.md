@@ -57,17 +57,17 @@ Press Shift+Tab to toggle plan mode for the session's Agent. While plan mode is 
 | `Space` | Check or uncheck an option in a multi-select question |
 | `Ctrl+L` | Repaint from scratch |
 
-Exiting — Ctrl+C with nothing running, Ctrl+D, or `/quit` — restores the terminal and prints the session id as a `dsh --resume <session-id>` command, so a later invocation continues the same conversation. Resuming — that command at startup, or `/resume` in the composer — restores the stored conversation into the transcript before the composer accepts the next prompt, so the earlier prompts, replies, and Tool rows are back on screen instead of only their effects on the model. The `/resume` picker and `/sessions` label each stored session with its title — the leading words of the first human message, a generated title, or an explicit rename — beside its id, start time, and workspace. The hint is printed only where the deployment mounts a session-persistence backend; without one there is nothing for `--resume` to open.
+Exiting — Ctrl+C with nothing running, Ctrl+D, or `/quit` — restores the terminal and prints the session id as a `dsh-tui --resume <session-id>` command, so a later invocation continues the same conversation. Resuming — that command at startup, or `/resume` in the composer — restores the stored conversation into the transcript before the composer accepts the next prompt, so the earlier prompts, replies, and Tool rows are back on screen instead of only their effects on the model. The `/resume` picker and `/sessions` label each stored session with its title — the leading words of the first human message, a generated title, or an explicit rename — beside its id, start time, and workspace. The hint is printed only where the deployment mounts a session-persistence backend; without one there is nothing for `--resume` to open.
 
 ### Watching a subagent
 
 When a local subagent starts, the TUI publishes a loopback connection record and then prints a watch command as an ordinary notice:
 
 ```
-· watch: dsh watch <session-id>
+· watch: dsh-tui watch <session-id>
 ```
 
-The earlier `dsh tui --watch <session-id>` spelling also works.
+The `--watch <session-id>` application flag is equivalent.
 
 `/subagents` opens a pinned panel listing the session's delegated descendants through the subagent service, each with its activation state and the exact watch command. The read reaches stored children as well as resident ones, and a child catalog it cannot read appears as a diagnostic row. The panel refreshes when a catalog fact or lifecycle edge lands, so children that start or settle while it is open join or leave the list; the list never writes a transcript row, and the main Agent keeps streaming underneath without moving it. Up and Down or PageUp and PageDown scroll a list taller than the panel, and Enter, Esc, or Ctrl+C closes it without cancelling the Agent.
 

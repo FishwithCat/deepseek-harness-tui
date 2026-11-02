@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-This repository is the terminal-UI fork of DeepSeek Harness, the open-source agent harness from [DeepSeek AI](https://deepseek.com). A bare `dsh` starts one Agent in the current directory: one session, one process, no browser server and no fixed port. The Agent uses the same model, tools, sandbox, and approval defaults as every other surface, but renders into the terminal as a full-screen application with a scrolling transcript, a composer above a pinned footer, and status lines for the workspace, context occupancy, routed model, token throughput, total tokens, cache-hit rate, and delegated subagents.
+This repository is the terminal-UI fork of DeepSeek Harness, the open-source agent harness from [DeepSeek AI](https://deepseek.com). A bare `dsh-tui` starts one Agent in the current directory: one session, one process, no browser server and no fixed port. The Agent uses the same model, tools, sandbox, and approval defaults as every other surface, but renders into the terminal as a full-screen application with a scrolling transcript, a composer above a pinned footer, and status lines for the workspace, context occupancy, routed model, token throughput, total tokens, cache-hit rate, and delegated subagents.
 
 Review the [safety notice](SAFETY.md) before running the project.
 
@@ -10,30 +10,30 @@ Review the [safety notice](SAFETY.md) before running the project.
 
 ## Quick start
 
-You need Node.js 22.19+ or 24+, pnpm installed through Corepack, Git, an interactive terminal, and a DeepSeek API key. On a fresh clone, one command installs the dependencies, runs the complete build, and links `dsh` onto `PATH`:
+You need Node.js 22.19+ or 24+, pnpm installed through Corepack, Git, an interactive terminal, and a DeepSeek API key. On a fresh clone, one command installs the dependencies, runs the complete build, and links `dsh-tui` onto `PATH`:
 
 ```sh
 git clone https://github.com/FishwithCat/deepseek-harness-tui.git
 cd deepseek-harness-tui
-pnpm run setup:dsh
+pnpm run setup:dsh-tui
 ```
 
 Set the API key in the launch environment — `$env:DEEPSEEK_API_KEY = "sk-..."` in PowerShell — and start the terminal UI from the directory that should be the workspace:
 
 ```sh
 export DEEPSEEK_API_KEY=sk-...
-dsh
+dsh-tui
 ```
 
-A key already stored in `$DSH_HOME/.credentials.yaml` also works. Type a prompt and press Enter; `/help` lists the commands, `/model` switches the routed model, and `Ctrl+D` exits. Exiting prints a `dsh --resume <session-id>` command that continues the conversation later. See [Install and run](#run) for the installer's link options and the build's requirements.
+A key already stored in `$DSH_HOME/.credentials.yaml` also works. Type a prompt and press Enter; `/help` lists the commands, `/model` switches the routed model, and `Ctrl+D` exits. Exiting prints a `dsh-tui --resume <session-id>` command that continues the conversation later. See [Install and run](#run) for the installer's link options and the build's requirements.
 
 <a id="run"></a>
 
 ## Install and run
 
-The quick start's `pnpm run setup:dsh` is the complete path: it builds the native system addon and both compiler faces, then links `apps/cli/lib/bin.js` into `$HOME/.local/bin` (`%APPDATA%\npm` on Windows), so `dsh` runs from any directory. The complete build matters: a checkout built without those artifacts starts the terminal UI but hangs when the session flushes on exit.
+The quick start's `pnpm run setup:dsh-tui` is the complete path: it builds the native system addon and both compiler faces, then links `apps/tui-launcher/lib/bin.js` into `$HOME/.local/bin` (`%APPDATA%\npm` on Windows), so `dsh-tui` runs from any directory. The linked launcher creates the `tui` profile on first use and resolves this checkout's built CLI. The complete build matters: a checkout built without those artifacts starts the terminal UI but hangs when the session flushes on exit.
 
-The installer is idempotent: re-run `pnpm run link:dsh` after a rebuild, or to repair a link left dangling by a moved or cleaned checkout. `pnpm run link:dsh -- --dir <path>` installs elsewhere, `DSH_LINK_BIN_DIR` sets the target, and `pnpm run unlink:dsh` removes a link this checkout installed. An entry owned by another program is refused rather than overwritten.
+The installer is idempotent: re-run `pnpm run link:dsh-tui` after a rebuild, or to repair a link left dangling by a moved or cleaned checkout. `pnpm run link:dsh-tui -- --dir <path>` installs elsewhere, `DSH_LINK_BIN_DIR` sets the target, and `pnpm run unlink:dsh-tui` removes a link this checkout installed. Installing or removing `dsh-tui` also removes a global `dsh` link that the previous `setup:dsh` installed from this checkout. A `dsh` entry owned by another program is left untouched, and a `dsh-tui` entry owned by another program is refused rather than overwritten.
 
 ### From npm
 
@@ -53,14 +53,14 @@ The launcher creates `$DSH_HOME/profiles/tui` on first use and runs the fork's C
 ```sh
 pnpm install
 pnpm run build
-pnpm dsh
+pnpm dsh-tui
 ```
 
-`pnpm run build` prepares the repository artifacts, and `pnpm dsh` uses them without rebuilding. `pnpm run build:tui` builds only the native system addon and the host compiler face the terminal UI needs.
+`pnpm run build` prepares the repository artifacts, and `pnpm dsh-tui` runs the launcher from source over those artifacts without rebuilding. For source-plane iteration on the CLI itself, `pnpm dsh` starts the same terminal profile through tsx without the built CLI. `pnpm run build:tui` builds only the native system addon and the host compiler face the terminal UI needs.
 
 ### Flags
 
-`dsh` opens the terminal UI; `dsh --profile tui` names the profile explicitly. `--resume <session-id>` resumes a stored session, and `--provider` / `--model` select the routed model for a new session. `--watch <session-id>` opens the read-only viewer for a local subagent and cannot be combined with the session flags. The app refuses to start without an interactive terminal, so a piped or redirected invocation fails loudly instead of waiting for keys it cannot read.
+`dsh-tui` opens the terminal UI and always boots the `tui` profile. `--resume <session-id>` resumes a stored session, and `--provider` / `--model` select the routed model for a new session. `--watch <session-id>` opens the read-only viewer for a local subagent and cannot be combined with the session flags. A source checkout keeps the other profiles behind `pnpm dsh --profile <name>`. The app refuses to start without an interactive terminal, so a piped or redirected invocation fails loudly instead of waiting for keys it cannot read.
 
 ## What the terminal UI offers
 
@@ -73,7 +73,7 @@ pnpm dsh
 - **Questions.** `ask_user_question` renders as a picker — checkable when the question sets `multiSelect` — or a free-text input; `Other…` opens the free-text answer, Esc skips to the next question, and Ctrl+C cancels the batch. A settled call reports the chosen labels instead of raw result JSON.
 - **Delegated subagents.** Once the session has delegated work, the footer shows `● subagents (running/total)`. `/subagents` opens a pinned, scrollable panel with every delegated child, nested children included, and each child's activation state and watch command; it re-reads live sessions, so children join and leave while it is open.
 - **Local shell commands.** A line beginning with `!` runs in the session's workspace under the same sandbox policy as the Agent's `bash` tool, with no approval prompt and no model request. Its command and output stay local to this process. See [Local shell commands](#local-shell-commands).
-- **Sessions.** Exit prints a `dsh --resume <session-id>` command, and `/sessions` and `/resume` browse and restore stored conversations by title.
+- **Sessions.** Exit prints a `dsh-tui --resume <session-id>` command, and `/sessions` and `/resume` browse and restore stored conversations by title.
 - **Compaction.** While a compaction runs outside the turn lifecycle, the footer reports `● compacting` instead of `idle`.
 
 ## Keyboard shortcuts
@@ -119,10 +119,10 @@ The row is local only. Its command and output never enter the session log, are n
 When a local subagent starts, the TUI publishes a loopback connection and prints a watch command as an ordinary notice:
 
 ```
-· watch: dsh watch <session-id>
+· watch: dsh-tui watch <session-id>
 ```
 
-Run that command in another terminal to follow the child. `dsh tui --watch <session-id>` is the equivalent explicit spelling. The viewer is read-only: it has no composer and does not send prompts, approve tools, or cancel the child. It shows the committed transcript plus the text, reasoning, tool calls, and approval rows currently streaming, and its footer reports the child's state and connection — `online`, `history`, or `disconnected` — with context occupancy, throughput, tokens, and cache-hit share. PageUp/PageDown, the mouse wheel, selection copy, and the palette work as they do in the interactive surface; Esc, Ctrl+C, and Ctrl+D only leave the viewer.
+Run that command in another terminal to follow the child. `--watch <session-id>` is the equivalent application flag. The viewer is read-only: it has no composer and does not send prompts, approve tools, or cancel the child. It shows the committed transcript plus the text, reasoning, tool calls, and approval rows currently streaming, and its footer reports the child's state and connection — `online`, `history`, or `disconnected` — with context occupancy, throughput, tokens, and cache-hit share. PageUp/PageDown, the mouse wheel, selection copy, and the palette work as they do in the interactive surface; Esc, Ctrl+C, and Ctrl+D only leave the viewer.
 
 When no live service exists, the viewer opens the stored log and marks `history`; it takes no write lock, restores no Agent, and issues no model request. Only local subagents started by a TUI can be watched, and a dropped viewer connection reports the disconnect instead of reconnecting. Both terminals must use the same user, the same `$DSH_HOME`, and compatible TUI persistence settings.
 

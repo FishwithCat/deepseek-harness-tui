@@ -151,7 +151,7 @@ export class SubagentPanel implements Component {
     const label = (row.label ?? String(row.id).slice(-12)).replace(/\s+/g, ' ')
     const detail = row.mode === 'external'
       ? 'external · no local session'
-      : `${row.mode} · ${this.theme.accent(`dsh watch ${String(row.id)}`)}`
+      : `${row.mode} · ${this.theme.accent(`dsh-tui watch ${String(row.id)}`)}`
     return `${indent}${glyph} ${this.theme.bold(label)} · ${this.theme.dim(detail)}`
   }
 }

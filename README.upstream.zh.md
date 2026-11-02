@@ -58,15 +58,15 @@ pnpm dsh
 
 <a id="install-the-dsh-command"></a>
 
-### 在新机器上安装 `dsh` 命令
+### 在新机器上安装 `dsh-tui` 命令
 
-在新克隆的仓库上，一条命令完成安装依赖、完整构建，并把 `dsh` 链接到 `PATH` 上的目录：
+在新克隆的仓库上，一条命令完成安装依赖、完整构建，并把 `dsh-tui` 链接到 `PATH` 上的目录：
 
 ```sh
-pnpm run setup:dsh
+pnpm run setup:dsh-tui
 ```
 
-完整构建这一点很关键：`pnpm run build` 还会构建原生系统插件与两个编译面，缺少它们的 checkout 虽然能启动终端界面，却会在退出时卡在会话落盘。随后安装器把 `apps/cli/lib/bin.js` 链接到 `$HOME/.local/bin`（Windows 为 `%APPDATA%\npm`），因此在任何目录都能运行 `dsh` 与终端界面。它是幂等的：重新构建后再次运行 `pnpm run link:dsh`，或修复因仓库移动、`clean` 而断开的链接。`pnpm run link:dsh -- --dir <path>` 可安装到其他位置，`DSH_LINK_BIN_DIR` 设置目标目录；`pnpm run unlink:dsh` 删除本 checkout 安装的链接。属于其他程序的同名条目会被拒绝，而不是被覆盖。
+完整构建这一点很关键：`pnpm run build` 还会构建原生系统插件与两个编译面，缺少它们的 checkout 虽然能启动终端界面，却会在退出时卡在会话落盘。随后安装器把 `apps/tui-launcher/lib/bin.js` 链接到 `$HOME/.local/bin`（Windows 为 `%APPDATA%\npm`），因此在任何目录都能运行 `dsh-tui` 与终端界面。它是幂等的：重新构建后再次运行 `pnpm run link:dsh-tui`，或修复因仓库移动、`clean` 而断开的链接。`pnpm run link:dsh-tui -- --dir <path>` 可安装到其他位置，`DSH_LINK_BIN_DIR` 设置目标目录；`pnpm run unlink:dsh-tui` 删除本 checkout 安装的链接。安装或删除 `dsh-tui` 时，还会删除此前由 `setup:dsh` 从本 checkout 安装的全局 `dsh` 链接。属于其他程序的 `dsh` 条目会保持不变，而属于其他程序的 `dsh-tui` 条目会被拒绝，而不是被覆盖。
 
 本 fork 也在 `@fishwithcat` scope 下发布终端相关包。使用 `npx --registry=https://registry.npmjs.org/ @fishwithcat/dsh-tui` 或 `npm install -g @fishwithcat/dsh-tui --registry=https://registry.npmjs.org/` 安装启动器及其别名的 fork 包，并与上游运行时并存。请使用 npm 或 npx：pnpm 或 yarn 的全局安装可能同时保留一份上游核心包。
 

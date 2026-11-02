@@ -1,5 +1,5 @@
 /**
- * The global `dsh` installer: target resolution, idempotent install and
+ * The global `dsh-tui` installer: target resolution, idempotent install and
  * refresh, refusal to clobber another program's entry, and removal.
  */
 
@@ -16,7 +16,7 @@ import {
   resolveBinDir,
   run,
   type CommandPaths,
-} from './link-dsh.ts'
+} from './link-dsh-tui.ts'
 
 const tempDirs: string[] = []
 
@@ -30,21 +30,24 @@ afterEach(() => {
  * @returns the absolute directory.
  */
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'dsh-link-'))
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-link-'))
   tempDirs.push(dir)
   return dir
 }
 
 /**
- * Build a fake checkout with a built launcher.
- * @returns the launcher path and the bin directory to install into.
+ * Build a fake checkout with a built launcher and a built CLI.
+ * @returns the launcher and legacy CLI paths and the bin directory to install into.
  */
-function fixture(): { binPath: string; binDir: string } {
+function fixture(): { binPath: string; binDir: string; legacyBinPath: string } {
   const root = tempDir()
-  const binPath = join(root, 'repo', 'apps', 'cli', 'lib', 'bin.js')
+  const binPath = join(root, 'repo', 'apps', 'tui-launcher', 'lib', 'bin.js')
+  const legacyBinPath = join(root, 'repo', 'apps', 'cli', 'lib', 'bin.js')
+  mkdirSync(join(root, 'repo', 'apps', 'tui-launcher', 'lib'), { recursive: true })
   mkdirSync(join(root, 'repo', 'apps', 'cli', 'lib'), { recursive: true })
   writeFileSync(binPath, '#!/usr/bin/env node\n')
-  return { binPath, binDir: join(root, 'bin') }
+  writeFileSync(legacyBinPath, '#!/usr/bin/env node\n')
+  return { binPath, binDir: join(root, 'bin'), legacyBinPath }
 }
 
 /** Paths for one fixture install. */
@@ -55,6 +58,7 @@ function pathsFor(binPath: string, binDir: string, platform: NodeJS.Platform = '
 describe('parseArgs', () => {
   it('accepts the documented flags and rejects the rest', () => {
     expect(parseArgs([])).toEqual({ remove: false, dir: undefined, help: false })
+    expect(parseArgs(['--', '--dir', '/tmp/x'])).toEqual({ remove: false, dir: '/tmp/x', help: false })
     expect(parseArgs(['--remove'])).toEqual({ remove: true, dir: undefined, help: false })
     expect(parseArgs(['--dir', '/tmp/x'])).toEqual({ remove: false, dir: '/tmp/x', help: false })
     expect(parseArgs(['-h'])).toEqual({ remove: false, dir: undefined, help: true })
@@ -91,25 +95,25 @@ describe('installCommand', () => {
   it('installs a symlink to the built launcher', () => {
     const { binPath, binDir } = fixture()
     const installed = installCommand(pathsFor(binPath, binDir))
-    expect(installed).toEqual({ path: join(binDir, 'dsh'), kind: 'symlink' })
-    expect(lstatSync(join(binDir, 'dsh')).isSymbolicLink()).toBe(true)
-    expect(readlinkSync(join(binDir, 'dsh'))).toBe(binPath)
+    expect(installed).toEqual({ path: join(binDir, 'dsh-tui'), kind: 'symlink' })
+    expect(lstatSync(join(binDir, 'dsh-tui')).isSymbolicLink()).toBe(true)
+    expect(readlinkSync(join(binDir, 'dsh-tui'))).toBe(binPath)
   })
 
   it('is idempotent and leaves no temporary entries', () => {
     const { binPath, binDir } = fixture()
     installCommand(pathsFor(binPath, binDir))
     installCommand(pathsFor(binPath, binDir))
-    expect(readlinkSync(join(binDir, 'dsh'))).toBe(binPath)
-    expect(readdirSync(binDir)).toEqual(['dsh'])
+    expect(readlinkSync(join(binDir, 'dsh-tui'))).toBe(binPath)
+    expect(readdirSync(binDir)).toEqual(['dsh-tui'])
   })
 
   it('refreshes a dangling link a moved checkout left behind', () => {
     const { binPath, binDir } = fixture()
     mkdirSync(binDir, { recursive: true })
-    symlinkSync(join(binDir, 'gone', 'bin.js'), join(binDir, 'dsh'))
+    symlinkSync(join(binDir, 'gone', 'bin.js'), join(binDir, 'dsh-tui'))
     installCommand(pathsFor(binPath, binDir))
-    expect(readlinkSync(join(binDir, 'dsh'))).toBe(binPath)
+    expect(readlinkSync(join(binDir, 'dsh-tui'))).toBe(binPath)
   })
 
   it('refuses a foreign symlink and a regular file', () => {
@@ -117,10 +121,10 @@ describe('installCommand', () => {
     const other = join(binDir, 'other.js')
     mkdirSync(binDir, { recursive: true })
     writeFileSync(other, '#!/bin/sh\n')
-    symlinkSync(other, join(binDir, 'dsh'))
+    symlinkSync(other, join(binDir, 'dsh-tui'))
     expect(() => installCommand(pathsFor(binPath, binDir))).toThrow(/belongs to another program/)
-    rmSync(join(binDir, 'dsh'))
-    writeFileSync(join(binDir, 'dsh'), '#!/bin/sh\n')
+    rmSync(join(binDir, 'dsh-tui'))
+    writeFileSync(join(binDir, 'dsh-tui'), '#!/bin/sh\n')
     expect(() => installCommand(pathsFor(binPath, binDir))).toThrow(/belongs to another program/)
   })
 
@@ -134,17 +138,17 @@ describe('installCommand', () => {
     const { binPath, binDir } = fixture()
     const installed = installCommand(pathsFor(binPath, binDir, 'win32'))
     expect(installed.kind).toBe('shim')
-    expect(readFileSync(join(binDir, 'dsh.cmd'), 'utf8')).toContain(binPath)
-    expect(readFileSync(join(binDir, 'dsh.ps1'), 'utf8')).toContain(binPath)
+    expect(readFileSync(join(binDir, 'dsh-tui.cmd'), 'utf8')).toContain(binPath)
+    expect(readFileSync(join(binDir, 'dsh-tui.ps1'), 'utf8')).toContain(binPath)
     // Re-running refreshes its own shims.
     installCommand(pathsFor(binPath, binDir, 'win32'))
-    expect(readFileSync(join(binDir, 'dsh.cmd'), 'utf8')).toContain(binPath)
+    expect(readFileSync(join(binDir, 'dsh-tui.cmd'), 'utf8')).toContain(binPath)
   })
 
   it('refuses a foreign Windows shim', () => {
     const { binPath, binDir } = fixture()
     mkdirSync(binDir, { recursive: true })
-    writeFileSync(join(binDir, 'dsh.cmd'), '@ECHO OFF\r\necho other\r\n')
+    writeFileSync(join(binDir, 'dsh-tui.cmd'), '@ECHO OFF\r\necho other\r\n')
     expect(() => installCommand(pathsFor(binPath, binDir, 'win32'))).toThrow(/belongs to another program/)
   })
 })
@@ -155,24 +159,81 @@ describe('removeCommand', () => {
     expect(removeCommand(pathsFor(binPath, binDir))).toBe('absent')
     installCommand(pathsFor(binPath, binDir))
     expect(removeCommand(pathsFor(binPath, binDir))).toBe('removed')
-    expect(existsSync(join(binDir, 'dsh'))).toBe(false)
+    expect(existsSync(join(binDir, 'dsh-tui'))).toBe(false)
 
     const other = join(binDir, 'other.js')
     writeFileSync(other, '#!/bin/sh\n')
-    symlinkSync(other, join(binDir, 'dsh'))
+    symlinkSync(other, join(binDir, 'dsh-tui'))
     expect(removeCommand(pathsFor(binPath, binDir))).toBe('foreign')
-    expect(existsSync(join(binDir, 'dsh'))).toBe(true)
+    expect(existsSync(join(binDir, 'dsh-tui'))).toBe(true)
   })
 
   it('removes a dangling link from a previous checkout', () => {
     const { binPath, binDir } = fixture()
     mkdirSync(binDir, { recursive: true })
-    symlinkSync(join(binDir, 'gone', 'bin.js'), join(binDir, 'dsh'))
+    symlinkSync(join(binDir, 'gone', 'bin.js'), join(binDir, 'dsh-tui'))
     expect(removeCommand(pathsFor(binPath, binDir))).toBe('removed')
   })
 })
 
 describe('run', () => {
+  it('removes a dsh link this checkout installed', () => {
+    const { binPath, binDir, legacyBinPath } = fixture()
+    const out: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => { out.push(String(chunk)); return true })
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    mkdirSync(binDir, { recursive: true })
+    symlinkSync(legacyBinPath, join(binDir, 'dsh'))
+
+    expect(run(['--dir', binDir], { PATH: '/usr/bin' }, '/home/u', 'linux', binPath, legacyBinPath)).toBe(0)
+    expect(existsSync(join(binDir, 'dsh'))).toBe(false)
+    expect(existsSync(join(binDir, 'dsh-tui'))).toBe(true)
+    expect(out.join('')).toContain(`removed legacy ${join(binDir, 'dsh')}`)
+  })
+
+  it('leaves a dsh link owned by another program alone', () => {
+    const { binPath, binDir, legacyBinPath } = fixture()
+    const out: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => { out.push(String(chunk)); return true })
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    const other = join(binDir, 'other.js')
+    mkdirSync(binDir, { recursive: true })
+    writeFileSync(other, '#!/bin/sh\n')
+    symlinkSync(other, join(binDir, 'dsh'))
+
+    expect(run(['--dir', binDir], { PATH: '/usr/bin' }, '/home/u', 'linux', binPath, legacyBinPath)).toBe(0)
+    expect(existsSync(join(binDir, 'dsh'))).toBe(true)
+    expect(out.join('')).not.toContain('removed legacy')
+  })
+
+  it('removes legacy Windows shims that name this checkout', () => {
+    const { binPath, binDir, legacyBinPath } = fixture()
+    vi.spyOn(process.stdout, 'write').mockReturnValue(true)
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    mkdirSync(binDir, { recursive: true })
+    writeFileSync(join(binDir, 'dsh.cmd'), `@ECHO OFF\r\nnode "${legacyBinPath}" %*\r\n`)
+    writeFileSync(join(binDir, 'dsh.ps1'), `node "${legacyBinPath}" @args\r\n`)
+
+    expect(run(['--dir', binDir], {}, '/home/u', 'win32', binPath, legacyBinPath)).toBe(0)
+    expect(existsSync(join(binDir, 'dsh.cmd'))).toBe(false)
+    expect(existsSync(join(binDir, 'dsh.ps1'))).toBe(false)
+    expect(existsSync(join(binDir, 'dsh-tui.cmd'))).toBe(true)
+  })
+
+  it('removes the legacy link with --remove when dsh-tui is absent', () => {
+    const { binPath, binDir, legacyBinPath } = fixture()
+    const out: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => { out.push(String(chunk)); return true })
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true)
+    mkdirSync(binDir, { recursive: true })
+    symlinkSync(legacyBinPath, join(binDir, 'dsh'))
+
+    expect(run(['--remove', '--dir', binDir], {}, '/home/u', 'linux', binPath, legacyBinPath)).toBe(0)
+    expect(existsSync(join(binDir, 'dsh'))).toBe(false)
+    expect(out.join('')).toContain(`removed legacy ${join(binDir, 'dsh')}`)
+    expect(out.join('')).not.toContain('nothing installed')
+  })
+
   it('installs into --dir, reports a PATH miss, and removes again', () => {
     const { binPath, binDir } = fixture()
     const out: string[] = []
@@ -180,7 +241,7 @@ describe('run', () => {
     vi.spyOn(process.stderr, 'write').mockReturnValue(true)
 
     expect(run(['--dir', binDir], { PATH: '/usr/bin' }, '/home/u', 'linux', binPath)).toBe(0)
-    expect(out.join('')).toContain(`installed ${join(binDir, 'dsh')}`)
+    expect(out.join('')).toContain(`installed ${join(binDir, 'dsh-tui')}`)
     expect(out.join('')).toContain('add ')
     out.length = 0
 
@@ -200,12 +261,12 @@ describe('run', () => {
     vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => { err.push(String(chunk)); return true })
 
     expect(run(['--help'], {}, '/home/u', 'linux', binPath)).toBe(0)
-    expect(out.join('')).toContain('Usage: pnpm run link:dsh')
+    expect(out.join('')).toContain('Usage: pnpm run link:dsh-tui')
     expect(run(['--nope'], {}, '/home/u', 'linux', binPath)).toBe(1)
     expect(err.join('')).toContain('unknown argument')
 
     mkdirSync(binDir, { recursive: true })
-    writeFileSync(join(binDir, 'dsh'), '#!/bin/sh\n')
+    writeFileSync(join(binDir, 'dsh-tui'), '#!/bin/sh\n')
     expect(run(['--dir', binDir, '--remove'], {}, '/home/u', 'linux', binPath)).toBe(1)
     expect(err.join('')).toContain('belongs to another program')
   })

@@ -481,7 +481,7 @@ export class SubagentWatchHub {
         return
       }
       this.published.add(sessionId)
-      this.hooks?.published(sessionId, `dsh watch ${sessionId}`)
+      this.hooks?.published(sessionId, `dsh-tui watch ${sessionId}`)
     } catch (error: unknown) {
       if (!this.closed) this.hooks?.failed(sessionId, error)
     }

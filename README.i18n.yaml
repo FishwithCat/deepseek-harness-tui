@@ -3,26 +3,26 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write README.md
 /deepseek-harness-tui:
-  en: 231a6bcdd964b7b3
-  zh: 7fef4fdac2b7e806
+  en: 5b21dc8429c66a16
+  zh: 14796adbbf0a0dcd
 /deepseek-harness-tui/quick-start:
-  en: 604bc915b1f2bce4
-  zh: a02a1b3ca71dd26c
+  en: 33b94798f8a23ba3
+  zh: 3cee1a1364b99608
 /deepseek-harness-tui/install-and-run:
-  en: 64cb75c71658b1fc
-  zh: bf763a663719511c
+  en: 8f13068a57f2d710
+  zh: 3c35fe66e9700955
 /deepseek-harness-tui/install-and-run/from-npm:
   en: 017bdb7983a265be
   zh: a8036b17cb15dc87
 /deepseek-harness-tui/install-and-run/run-from-source:
-  en: 6305884c7234b517
-  zh: 754c4824f37c45c7
+  en: 8382c16f939bd1e7
+  zh: 9d3f3bcf78707bd2
 /deepseek-harness-tui/install-and-run/flags:
-  en: 56b3db74f604c338
-  zh: 5d886bb2ac2550c8
+  en: 9b98ed49f3577ade
+  zh: 8bdd503fe41f6425
 /deepseek-harness-tui/what-the-terminal-ui-offers:
-  en: 598b3cac5c898c3b
-  zh: ec4559aac26b3787
+  en: 6cbad77648c6a6cf
+  zh: 80b561c0ad565f66
 /deepseek-harness-tui/keyboard-shortcuts:
   en: 1444a384153f2e08
   zh: 5406102df470c93b
@@ -33,8 +33,8 @@
   en: e7aa9f3bb1e09702
   zh: 4661c743ea70917b
 /deepseek-harness-tui/watching-a-subagent:
-  en: e8c2a6fe1c448b75
-  zh: e328414d15d33e49
+  en: 6840af0c820df534
+  zh: 4b09a2c32ffdac12
 /deepseek-harness-tui/settings:
   en: 5f95abbb841d4051
   zh: 64a6e1e05b3c3f3b

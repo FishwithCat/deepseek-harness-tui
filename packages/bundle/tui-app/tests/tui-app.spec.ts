@@ -788,7 +788,7 @@ describe('TuiApp', () => {
     const summary = rows.findIndex(row => row.includes('subagents · 3 total · 1 running'))
     expect(rows[summary + 1]).toContain('● explore')
     expect(panel).toContain('↳ ○')
-    expect(panel).toContain('· one-shot · dsh watch session-subagent-leaf')
+    expect(panel).toContain('· one-shot · dsh-tui watch session-subagent-leaf')
     expect(panel).toContain('◇ remote review · external · no local session')
     // Pinned: a transcript frame lands behind the panel and the panel stays put.
     appendAnsweredTurn(root, createUserMessage({
@@ -1195,10 +1195,10 @@ describe('TuiApp', () => {
     test.startSubagent(child.agent.id)
 
     await vi.waitFor(() => {
-      expect(screen(test.app).some(row => row.includes('dsh watch watch-child'))).toBe(true)
+      expect(screen(test.app).some(row => row.includes('dsh-tui watch watch-child'))).toBe(true)
     })
     const rows = screen(test.app)
-    expect(rows.filter(row => row.includes('watch-child'))).toEqual(['· watch: dsh watch watch-child'])
+    expect(rows.filter(row => row.includes('watch-child'))).toEqual(['· watch: dsh-tui watch watch-child'])
     const record = await readWatchRecord('watch-child')
     expect(record?.sessionId).toBe('watch-child')
     await test.app.stop(0)
@@ -1620,7 +1620,7 @@ describe('TuiApp', () => {
     await vi.waitFor(() => { expect(plain(test.terminal.output)).toContain('ok') })
 
     await test.app.stop(0)
-    expect(writes.join('')).toBe(`To resume this session:\n  dsh --resume ${id}\n`)
+    expect(writes.join('')).toBe(`To resume this session:\n  dsh-tui --resume ${id}\n`)
     expect(test.exits).toEqual([0])
   })
 
@@ -1638,7 +1638,7 @@ describe('TuiApp', () => {
     expect(replacement).not.toBe(first)
 
     await test.app.stop(0)
-    expect(writes.join('')).toBe(`To resume this session:\n  dsh --resume ${replacement}\n`)
+    expect(writes.join('')).toBe(`To resume this session:\n  dsh-tui --resume ${replacement}\n`)
   })
 
   it.each(['/new', '/resume session-1'])('releases the previous session markdown cache on %s', async (command) => {
