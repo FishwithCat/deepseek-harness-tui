@@ -317,12 +317,14 @@ async function bench(
   const startSubagent = (id: SessionId): void => {
     const runId = SubagentRunId(`run-${String(id)}`)
     subagentRuns.set(id, runId)
-    ctx.emit('subagent/start', { runId, provider: 'spawn', id, local: true })
+    const parentSessionId = ctx.sessions.get(id)?.header.parentSession ?? id
+    ctx.emit('subagent/start', { runId, provider: 'spawn', id, parentSessionId, local: true })
   }
   const endSubagent = (id: SessionId): void => {
     const runId = subagentRuns.get(id) ?? SubagentRunId(`run-${String(id)}`)
     subagentRuns.delete(id)
-    ctx.emit('subagent/end', { runId, provider: 'spawn', id, local: true, stopReason: 'aborted' })
+    const parentSessionId = ctx.sessions.get(id)?.header.parentSession ?? id
+    ctx.emit('subagent/end', { runId, provider: 'spawn', id, parentSessionId, local: true, stopReason: 'aborted' })
   }
   // The real service owns catalog observation; this bench keeps the same
   // contract over the projections its fixtures append, including the failure a
@@ -1189,7 +1191,6 @@ describe('TuiApp', () => {
     const parent = owned(test)
     const child = await test.ctx.agents.create({
       sessionId: SessionId('watch-child'),
-      parentAgent: parent,
       meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
     })
     test.startSubagent(child.agent.id)
@@ -1304,7 +1305,6 @@ describe('TuiApp', () => {
 
     const child = await test.ctx.agents.create({
       sessionId: SessionId('grant-child'),
-      parentAgent: agent,
       meta: { parentSession: agent.session.id, origin: 'subagent', cwd: process.cwd() },
     })
     child.agent.session.append('turn/start', { turn: 1 })
@@ -1319,7 +1319,6 @@ describe('TuiApp', () => {
     const root = owned(test)
     const child = await test.ctx.agents.create({
       sessionId: SessionId('grant-child-root'),
-      parentAgent: root,
       meta: { parentSession: root.session.id, origin: 'subagent', cwd: process.cwd() },
     })
     child.agent.session.append('turn/start', { turn: 1 })
@@ -1370,7 +1369,6 @@ describe('TuiApp', () => {
     const parent = owned(test)
     const child = await test.ctx.agents.create({
       sessionId: SessionId('cancel-child'),
-      parentAgent: parent,
       meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
     })
     child.agent.session.append('turn/start', { turn: 1 })
@@ -1386,12 +1384,10 @@ describe('TuiApp', () => {
     const parent = owned(test)
     const child = await test.ctx.agents.create({
       sessionId: SessionId('approval-child'),
-      parentAgent: parent,
       meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
     })
     const grandchild = await test.ctx.agents.create({
       sessionId: SessionId('approval-grandchild'),
-      parentAgent: child.agent,
       meta: {
         parentSession: child.agent.session.id,
         origin: 'subagent',
@@ -1425,7 +1421,6 @@ describe('TuiApp', () => {
     const parent = owned(test)
     const child = await test.ctx.agents.create({
       sessionId: SessionId('child-y'),
-      parentAgent: parent,
       meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
     })
     child.agent.session.append('turn/start', { turn: 1 })
@@ -1444,7 +1439,6 @@ describe('TuiApp', () => {
     const parent = owned(test)
     const child = await test.ctx.agents.create({
       sessionId: SessionId('child-x'),
-      parentAgent: parent,
       meta: { parentSession: parent.session.id, origin: 'subagent', cwd: process.cwd() },
     })
     child.agent.session.append('turn/start', { turn: 1 })

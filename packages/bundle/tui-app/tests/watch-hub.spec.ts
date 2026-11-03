@@ -146,7 +146,13 @@ function publication(hub: SubagentWatchHub, ctx: Context, child: Session, rootId
       published: (_id, command) => { resolve({ command }) },
       failed: (_id, error) => { resolve({ error }) },
     })
-    ctx.emit('subagent/start', { runId: SubagentRunId('run-1'), provider: 'spawn', id: child.id, local: true })
+    ctx.emit('subagent/start', {
+      runId: SubagentRunId('run-1'),
+      provider: 'spawn',
+      id: child.id,
+      parentSessionId: rootId,
+      local: true,
+    })
   })
 }
 
@@ -224,7 +230,13 @@ describe('SubagentWatchHub lifecycle guards', () => {
     const hub = hubFor(ctx)
     await publication(hub, ctx, child, rootId)
     query.events.push(child.append('turn/start', { turn: 1 }))
-    ctx.emit('subagent/start', { runId: SubagentRunId('run-2'), provider: 'spawn', id: child.id, local: true })
+    ctx.emit('subagent/start', {
+      runId: SubagentRunId('run-2'),
+      provider: 'spawn',
+      id: child.id,
+      parentSessionId: rootId,
+      local: true,
+    })
     await vi.waitFor(async () => { expect(await readWatchRecord(child.id)).toBeDefined() })
   })
 
@@ -237,7 +249,12 @@ describe('SubagentWatchHub lifecycle guards', () => {
     const other = childSession(rootId, 'other-child')
     const otherAgent = { id: other.id, session: other, options: {}, status: 'running' } as Agent
     ctx.emit('subagent/end', {
-      runId: SubagentRunId('run-x'), provider: 'spawn', id: SessionId('unknown'), local: true, stopReason: 'completed',
+      runId: SubagentRunId('run-x'),
+      provider: 'spawn',
+      id: SessionId('unknown'),
+      parentSessionId: rootId,
+      local: true,
+      stopReason: 'completed',
     })
     ctx.emit('session/event', other, other.append('turn/start', { turn: 1 }))
     ctx.emit('agent/assistant-stream', {
@@ -331,7 +348,12 @@ describe('SubagentWatchHub live notifications', () => {
     const event = child.append('turn/start', { turn: 1 })
     query.events.push(event)
     ctx.emit('subagent/end', {
-      runId: SubagentRunId('run-1'), provider: 'spawn', id: child.id, local: true, stopReason: 'completed',
+      runId: SubagentRunId('run-1'),
+      provider: 'spawn',
+      id: child.id,
+      parentSessionId: child.header.parentSession ?? rootId,
+      local: true,
+      stopReason: 'completed',
     })
     ctx.emit('session/event', child, event)
     ctx.emit('agent/assistant-stream', {
@@ -367,7 +389,13 @@ describe('SubagentWatchHub live notifications', () => {
     } as never)
     const hub = hubFor(ctx)
     hub.activate(rootId, { published: () => {}, failed: () => {} })
-    ctx.emit('subagent/start', { runId: SubagentRunId('run-1'), provider: 'spawn', id: orphan.id, local: true })
+    ctx.emit('subagent/start', {
+      runId: SubagentRunId('run-1'),
+      provider: 'spawn',
+      id: orphan.id,
+      parentSessionId: rootId,
+      local: true,
+    })
     await expect(readWatchRecord(orphan.id)).resolves.toBeUndefined()
 
     const child = childSession(rootId)
@@ -400,9 +428,21 @@ describe('SubagentWatchHub live notifications', () => {
       published: (_id, command) => { commands.push(command) },
       failed: (_id, error) => { throw error },
     })
-    nested.emit('subagent/start', { runId: SubagentRunId('run-1'), provider: 'spawn', id: child.id, local: true })
+    nested.emit('subagent/start', {
+      runId: SubagentRunId('run-1'),
+      provider: 'spawn',
+      id: child.id,
+      parentSessionId: child.header.parentSession ?? rootId,
+      local: true,
+    })
     await vi.waitFor(() => { expect(commands).toHaveLength(1) })
-    nested.emit('subagent/start', { runId: SubagentRunId('run-2'), provider: 'spawn', id: grandchild.id, local: true })
+    nested.emit('subagent/start', {
+      runId: SubagentRunId('run-2'),
+      provider: 'spawn',
+      id: grandchild.id,
+      parentSessionId: grandchild.header.parentSession ?? rootId,
+      local: true,
+    })
     await vi.waitFor(() => { expect(commands).toHaveLength(2) })
   })
 
@@ -463,7 +503,13 @@ describe('SubagentWatchHub live notifications', () => {
     } as never)
     const hub = hubFor(ctx)
     hub.activate(rootId, { published: () => {}, failed: () => {} })
-    ctx.emit('subagent/start', { runId: SubagentRunId('run-1'), provider: 'spawn', id: foreign.id, local: true })
+    ctx.emit('subagent/start', {
+      runId: SubagentRunId('run-1'),
+      provider: 'spawn',
+      id: foreign.id,
+      parentSessionId: rootId,
+      local: true,
+    })
     await expect(readWatchRecord(foreign.id)).resolves.toBeUndefined()
   })
 

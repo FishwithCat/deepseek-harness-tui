@@ -124,6 +124,7 @@ function published(hub: SubagentWatchHub, ctx: Context, session: Session, rootId
       runId: SubagentRunId('run-1'),
       provider: 'spawn',
       id: session.id,
+      parentSessionId: rootId,
       local: true,
     })
   })
@@ -312,6 +313,7 @@ describe('subagent watch service', () => {
       runId: SubagentRunId('run-1'),
       provider: 'spawn',
       id: child.id,
+      parentSessionId: child.header.parentSession ?? child.id,
       local: true,
       stopReason: 'completed',
     })
@@ -379,9 +381,21 @@ describe('subagent watch service', () => {
       published: (_id, command) => { publishedCommands.push(command) },
       failed: (_id, error) => { throw error },
     })
-    ctx.emit('subagent/start', { runId: SubagentRunId('run-1'), provider: 'spawn', id: child.id, local: true })
+    ctx.emit('subagent/start', {
+      runId: SubagentRunId('run-1'),
+      provider: 'spawn',
+      id: child.id,
+      parentSessionId: child.header.parentSession ?? rootId,
+      local: true,
+    })
     await vi.waitFor(() => { expect(publishedCommands).toHaveLength(1) })
-    ctx.emit('subagent/start', { runId: SubagentRunId('run-2'), provider: 'spawn', id: grandchild.id, local: true })
+    ctx.emit('subagent/start', {
+      runId: SubagentRunId('run-2'),
+      provider: 'spawn',
+      id: grandchild.id,
+      parentSessionId: grandchild.header.parentSession ?? rootId,
+      local: true,
+    })
     await vi.waitFor(() => { expect(publishedCommands).toHaveLength(2) })
     expect(publishedCommands).toEqual([
       'dsh-tui watch session-child',
