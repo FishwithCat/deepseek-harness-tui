@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
   forkBase,
+  packedFilename,
   readWorkspaceVersions,
   releaseMembers,
   resolveMembers,
@@ -10,8 +12,10 @@ import {
   TUI_ALIASES,
 } from './pack-tui.ts'
 
-const BASE = '0.2.2-alpha.2'
-const FORK = '0.2.2-alpha.2.fork.1'
+const BASE = (
+  JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }
+).version
+const FORK = `${BASE}.fork.1`
 
 const VERSIONS = new Map([
   ['@deepseek-ai/dsh', BASE],
@@ -230,13 +234,27 @@ describe('workspace members', () => {
   })
 
   it('rejects a source manifest that is not on the base version', () => {
-    expect(() => resolveMembers(root, '0.2.2-alpha.3', '0.2.2-alpha.3.fork.1'))
-      .toThrow(/declares 0.2.2-alpha.2, expected 0.2.2-alpha.3/u)
+    expect(() => resolveMembers(root, '0.0.0-test', '0.0.0-test.fork.1'))
+      .toThrow(/declares .*, expected 0\.0\.0-test/u)
   })
 
   it('rejects a fork version based on another upstream version', () => {
-    expect(() => resolveMembers(root, BASE, '0.2.2-alpha.3.fork.1'))
-      .toThrow(/not based on 0.2.2-alpha.2/u)
+    expect(() => resolveMembers(root, BASE, '0.0.0-test.fork.1'))
+      .toThrow(/not based on /u)
+  })
+})
+
+describe('packedFilename', () => {
+  it('reads the filename from an array result', () => {
+    expect(packedFilename('[{"filename":"package-1.0.0.tgz"}]')).toBe('package-1.0.0.tgz')
+  })
+
+  it('reads the filename from a package-name-keyed object result', () => {
+    expect(packedFilename('{"package":{"filename":"package-1.0.0.tgz"}}')).toBe('package-1.0.0.tgz')
+  })
+
+  it('rejects a result without a filename', () => {
+    expect(() => packedFilename('{}')).toThrow(/no tarball filename/u)
   })
 })
 

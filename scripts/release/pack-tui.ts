@@ -325,12 +325,33 @@ function stageMember(
   return staging
 }
 
+/**
+ * Read the tarball filename from one `npm pack --json` result.
+ *
+ * npm returns an array in some versions and a package-name-keyed object in
+ * others; both forms describe the same single-file result here.
+ * @param stdout - `npm pack --json` standard output.
+ * @returns the packed tarball filename.
+ * @throws when the output carries no filename.
+ */
+export function packedFilename(stdout: string): string {
+  const parsed: unknown = JSON.parse(stdout)
+  const records: readonly unknown[] = Array.isArray(parsed)
+    ? parsed
+    : parsed !== null && typeof parsed === 'object' ? Object.values(parsed) : []
+  const [record] = records
+  if (record === null || typeof record !== 'object' || !('filename' in record) || typeof record.filename !== 'string') {
+    throw new Error('pack-tui: npm pack printed no tarball filename')
+  }
+  return record.filename
+}
+
 /** Pack one staged member and return its tarball path. */
 function packStaged(staging: string, destination: string, publishedName: string, version: string): string {
   const stdout = capture('npm', ['pack', '--json', '--pack-destination', destination], { cwd: staging })
-  const [record] = JSON.parse(stdout) as [{ filename: string }]
+  const filename = packedFilename(stdout)
   const target = join(destination, `${publishedName.slice(1).replace('/', '-')}-${version}.tgz`)
-  renameSync(join(destination, record.filename), target)
+  renameSync(join(destination, filename), target)
   return target
 }
 
