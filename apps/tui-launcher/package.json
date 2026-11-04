@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-tui-launcher",
   "description": "The npm-installable terminal entry: creates the tui profile and launches the installed dsh CLI",
-  "version": "0.2.2-alpha.2",
+  "version": "0.2.2-alpha.3",
   "private": true,
   "type": "module",
   "bin": {
